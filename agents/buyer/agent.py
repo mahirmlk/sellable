@@ -11,6 +11,7 @@ from pydantic import Field
 from agents.buyer.graph import build_buyer_graph
 from agents.buyer.policies import BuyerPolicy
 from agents.buyer.tools import BuyerTools
+from agents.llm.adapters.base import LLMAdapter
 from agents.seller.agent import SellerAction, SellerDecision, SellerRequest
 from sellable.contracts import (
     BuyerMission,
@@ -57,8 +58,9 @@ class BuyerGraphState(TypedDict):
 
 
 class BuyerAgent:
-    def __init__(self, gateway: AgentGateway) -> None:
+    def __init__(self, gateway: AgentGateway, llm: "LLMAdapter | None" = None) -> None:
         self.gateway = gateway
+        self.llm = llm
         self.tools = BuyerTools(gateway)
         self.policy = BuyerPolicy()
         self._graph = self._build_graph()
@@ -142,6 +144,7 @@ class BuyerAgent:
             {"result": action, "candidate_total_paise": decision.cart.total_paise if decision.cart else None},
             summary,
         )
+        summary = self._phrase_summary(summary, decision, state["mission"].message)
         return {
             "result": BuyerResult(
                 trace_id=state["trace_id"],
@@ -153,6 +156,43 @@ class BuyerAgent:
             ),
             "steps": [*state["steps"], "EVALUATE"],
         }
+
+    def _phrase_summary(self, deterministic_summary: str, decision: SellerDecision, mission: str) -> str:
+        """Rephrase the buyer-facing summary with the LLM when available.
+
+        The model only rephrases the deterministic evaluation outcome from the
+        grounded seller decision; it cannot alter the action, cart, or budget
+        verdict. On any failure the deterministic summary is kept.
+        """
+        if self.llm is None or decision.cart is None:
+            return deterministic_summary
+        payload = (
+            f"Buyer mission: {mission}\n"
+            f"Evaluation result: {deterministic_summary}\n"
+            f"Seller action: {decision.action}\n"
+            f"Cart total: {decision.cart.total_paise} paise\n"
+            f"Items: {', '.join(f'{i.sku} x{i.quantity}' for i in decision.cart.items)}\n"
+            f"Policy verdict: {decision.policy_decision.verdict if decision.policy_decision else 'n/a'}"
+        )
+        try:
+            reply = self.llm.complete(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an AI purchasing agent summarizing a completed evaluation for "
+                            "your human buyer. Use ONLY the facts in the payload. Never invent SKUs, "
+                            "prices, or outcomes. Reply in 1-2 concise sentences."
+                        ),
+                    },
+                    {"role": "user", "content": payload},
+                ]
+            ).strip()
+            if reply and len(reply) <= 1_000:
+                return reply
+        except Exception:
+            pass
+        return deterministic_summary
 
     def _create_order(self, state: BuyerGraphState) -> dict[str, object]:
         decision = state["seller_decision"]

@@ -16,7 +16,7 @@ from agents.llm.adapters.anthropic import AnthropicAdapter
 from agents.llm.adapters.base import LLMAdapter
 from agents.llm.adapters.mock import MockAdapter
 from agents.llm.config import LLMConfig
-from agents.llm.adapters.openai import GoogleAdapter, OpenAIAdapter, OpenRouterAdapter
+from agents.llm.adapters.openai import GoogleAdapter, OpenAIAdapter, OpenCodeZenAdapter, OpenRouterAdapter
 from sellable.config import settings
 
 _ADAPTER_BY_PROVIDER: dict[str, type[LLMAdapter]] = {
@@ -24,6 +24,7 @@ _ADAPTER_BY_PROVIDER: dict[str, type[LLMAdapter]] = {
     "deterministic": MockAdapter,
     "openai": OpenAIAdapter,
     "openrouter": OpenRouterAdapter,
+    "opencode": OpenCodeZenAdapter,
     "anthropic": AnthropicAdapter,
     "google": GoogleAdapter,
     "gemini": GoogleAdapter,

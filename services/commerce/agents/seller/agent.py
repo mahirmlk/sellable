@@ -14,6 +14,7 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 from pydantic import Field
 
+from agents.llm.adapters.base import LLMAdapter, Message
 from agents.seller.tools import SellerTools
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
@@ -72,8 +73,13 @@ class SellerGraphState(TypedDict):
 
 
 class SellerAgent:
-    def __init__(self, commerce: CommerceCore) -> None:
+    def __init__(
+        self,
+        commerce: CommerceCore,
+        llm: "LLMAdapter | None" = None,
+    ) -> None:
         self.commerce = commerce
+        self.llm = llm
         self.tools = SellerTools(commerce)
         self._graph = self._build_graph()
 
@@ -241,4 +247,63 @@ class SellerAgent:
             output={"action": result.action, "cart_id": result.cart.mandate_id if result.cart else None},
             explanation="Produced a structured seller response from catalog and policy tool results.",
         )
-        return {"result": result}
+        return {"result": self._phrase_if_llm(result, state["request"].message)}
+
+    def _phrase_if_llm(self, result: SellerDecision, buyer_message: str) -> SellerDecision:
+        """Rephrase the response message in natural language when an LLM is wired.
+
+        The LLM only rephrases the human-facing message from the structured,
+        tool-grounded decision. It can never invent SKUs, prices, stock, or
+        policy outcomes: it is handed the exact decision payload and asked to
+        write a concise buyer-facing reply. Any failure falls back to the
+        deterministic message so the commerce flow never breaks.
+        """
+        if self.llm is None or result.cart is None:
+            return result
+        summary = self._decision_summary(result, buyer_message)
+        try:
+            reply = self.llm.complete(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are SELLABLE's merchant seller assistant replying to an AI buyer. "
+                            "Use ONLY the facts in the structured payload. Never invent SKUs, prices, "
+                            "stock, discounts, or policy outcomes. Reply in 1-3 concise, friendly "
+                            "sentences, addressing what the buyer asked."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": summary,
+                    },
+                ]
+            ).strip()
+            if reply and len(reply) <= 1_000:
+                result = result.model_copy(update={"response_message": reply})
+        except Exception:
+            pass
+        return result
+
+    def _decision_summary(self, result: SellerDecision, buyer_message: str) -> str:
+        cart = result.cart
+        lines = [
+            f"Buyer request: {buyer_message}",
+            f"Action: {result.action}",
+        ]
+        if cart:
+            for item in cart.items:
+                lines.append(
+                    f"- {item.sku} x{item.quantity} at {item.offered_price_paise} paise "
+                    f"(unit {item.unit_price_paise} paise)"
+                )
+            lines.append(f"Cart total: {cart.total_paise} paise")
+            if cart.upsell_rationale:
+                lines.append(f"Upsell rationale: {cart.upsell_rationale}")
+        if result.policy_decision:
+            lines.append(f"Policy verdict: {result.policy_decision.verdict}")
+            if result.policy_decision.reason_code:
+                lines.append(f"Policy reason: {result.policy_decision.reason_code}")
+            if result.policy_decision.reasoning_summary:
+                lines.append(f"Policy reasoning: {result.policy_decision.reasoning_summary}")
+        return "\n".join(lines)

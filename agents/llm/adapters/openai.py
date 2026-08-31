@@ -52,3 +52,23 @@ class GoogleAdapter(_OpenAICompatibleAdapter):
     provider_name = "google"
     default_model = "gemini-2.0-flash"
     base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+class OpenCodeZenAdapter(_OpenAICompatibleAdapter):
+    """OpenCode Zen OpenAI-compatible endpoint.
+
+    Zen keys and models live behind ``opencode.ai/zen/v1`` (not OpenRouter).
+    A browser-style User-Agent is required to pass the Cloudflare edge.
+    """
+
+    provider_name = "opencode"
+    default_model = "deepseek-v4-flash"
+    base_url = "https://opencode.ai/zen/v1"
+    default_headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        ),
+        "HTTP-Referer": "https://sellable.dev",
+        "X-Title": "SELLABLE",
+    }

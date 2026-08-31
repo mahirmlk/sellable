@@ -148,9 +148,26 @@ initialise_database()
 # Load policy from DB if saved, otherwise use seed
 _db_policy = _load_policy_from_db()
 commerce_core = CommerceCore.from_seed(LedgerRepository(), policy_override=_db_policy)
-seller_agent = SellerAgent(commerce_core)
+
+
+def _make_llm():
+    """Return a real LLM adapter when a non-mock provider is configured."""
+    from agents.llm import get_llm
+
+    if settings.llm_provider in ("mock", "deterministic", ""):
+        return None
+    if not settings.llm_is_configured:
+        return None
+    try:
+        return get_llm()
+    except Exception:
+        return None
+
+
+_seller_llm = _make_llm()
+seller_agent = SellerAgent(commerce_core, llm=_seller_llm)
 agent_gateway = AgentGateway(commerce_core, seller_agent)
-buyer_agent = BuyerAgent(agent_gateway)
+buyer_agent = BuyerAgent(agent_gateway, llm=_make_llm())
 payment_service = PaymentService(commerce_core, RazorpayAdapter(settings))
 refund_service = RefundService(commerce_core)
 
@@ -884,9 +901,17 @@ def agents_status(
 ) -> dict:
     orders = commerce.all_orders()
     paid = sum(1 for o in orders if o.status is OrderStatus.PAID)
+    llm_mode = (
+        "live" if _seller_llm is not None else "scripted"
+    )
     return {
-        "buyer_agent": {"status": "online", "mode": "scripted"},
-        "seller_agent": {"status": "online", "mode": "scripted"},
+        "buyer_agent": {"status": "online", "mode": llm_mode},
+        "seller_agent": {"status": "online", "mode": llm_mode},
+        "llm": {
+            "provider": settings.llm_provider,
+            "model": settings.llm_model,
+            "enabled": _seller_llm is not None,
+        },
         "policy_engine": {"status": "healthy"},
         "agent_gateway": {"status": "online"},
         "payment_rail": {
