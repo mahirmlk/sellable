@@ -128,7 +128,12 @@ class Settings:
 
     @property
     def supabase_is_configured(self) -> bool:
-        return bool(self.supabase_url and self.supabase_jwt_secret)
+        # Offline JWT verification needs the JWT secret; online verification needs anon + service role.
+        if self.supabase_url and self.supabase_jwt_secret:
+            return True
+        return bool(
+            self.supabase_url and self.supabase_anon_key and self.supabase_service_role_key
+        )
 
     @property
     def llm_is_configured(self) -> bool:

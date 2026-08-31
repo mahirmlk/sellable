@@ -69,27 +69,50 @@ class PolicyRecord(Base):
     policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+class MerchantUserRecord(Base):
+    __tablename__ = "merchant_users"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    auth_user_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="owner")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def make_engine(config: Settings = settings):
-    connect_args = {"check_same_thread": False} if config.database_url.startswith("sqlite") else {}
+    if config.database_url.startswith("sqlite"):
+        connect_args: dict[str, object] = {"check_same_thread": False}
+    elif "pooler.supabase.com" in config.database_url or "pgbouncer=true" in config.database_url:
+        # Supabase pooler (PgBouncer transaction mode) does not support prepared statements
+        connect_args = {"prepare_threshold": None}
+    else:
+        connect_args = {}
     return create_engine(config.database_url, connect_args=connect_args, pool_pre_ping=True)
 
 
 def _migrate(engine) -> None:
     """Add columns introduced after the initial schema without dropping data."""
-    from sqlalchemy import inspect, text
+    from sqlalchemy import text
 
-    inspector = inspect(engine)
-    if not inspector.has_table("orders"):
-        return
-    order_columns = {column["name"] for column in inspector.get_columns("orders")}
+    # Use a raw connection without prepared statements for PgBouncer compatibility
     with engine.begin() as connection:
-        if "requires_approval" not in order_columns:
+        # Check if orders table exists via information_schema (avoids inspector prepared statements)
+        exists = connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'orders')")
+        ).scalar()
+        if not exists:
+            return
+        cols = {
+            row[0]
+            for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'orders'"))
+        }
+        if "requires_approval" not in cols:
             connection.execute(
-                text("ALTER TABLE orders ADD COLUMN requires_approval BOOLEAN NOT NULL DEFAULT 0")
+                text("ALTER TABLE orders ADD COLUMN requires_approval BOOLEAN NOT NULL DEFAULT FALSE")
             )
-        if "approved_at" not in order_columns:
+        if "approved_at" not in cols:
             connection.execute(
-                text("ALTER TABLE orders ADD COLUMN approved_at TIMESTAMP NULL")
+                text("ALTER TABLE orders ADD COLUMN approved_at TIMESTAMPTZ NULL")
             )
 
 

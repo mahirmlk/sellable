@@ -44,37 +44,67 @@ def _b64decode(segment: str) -> bytes:
     return base64.urlsafe_b64decode(segment + padding)
 
 
-def verify_supabase_token(token: str) -> dict[str, object]:
-    """Verify a Supabase access token (HS256 with the JWT secret) and return its payload."""
-    if not settings.supabase_is_configured:
+def _verify_online(token: str) -> dict[str, object]:
+    """Verify token by asking Supabase Auth directly (no JWT secret needed)."""
+    if not settings.supabase_url or not settings.supabase_anon_key:
         raise HTTPException(status_code=401, detail="Supabase authentication is not configured")
+    url = f"{settings.supabase_url}/auth/v1/user"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "apikey": settings.supabase_anon_key,
+            "Authorization": f"Bearer {token}",
+        },
+    )
     try:
-        header_b64, payload_b64, signature_b64 = token.split(".")
-        header = json.loads(_b64decode(header_b64))
-    except (ValueError, Exception):
-        raise HTTPException(status_code=401, detail="Invalid token") from None
-    if header.get("alg") != "HS256":
-        raise HTTPException(status_code=401, detail="Unsupported token algorithm")
-    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
-    expected = hmac.new(
-        settings.supabase_jwt_secret.encode("utf-8"), signing_input, hashlib.sha256
-    ).digest()
-    try:
-        signature = _b64decode(signature_b64)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token") from None
-    if not hmac.compare_digest(signature, expected):
-        raise HTTPException(status_code=401, detail="Invalid token signature")
-    try:
-        payload = json.loads(_b64decode(payload_b64))
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token payload") from None
-    expires_at = payload.get("exp")
-    if not isinstance(expires_at, (int, float)) or expires_at <= time.time():
-        raise HTTPException(status_code=401, detail="Token missing or past its expiry")
-    if payload.get("role") != "authenticated":
+        with urllib.request.urlopen(request, timeout=10) as response:
+            user = json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        raise HTTPException(status_code=401, detail="Invalid or expired Supabase session") from error
+    if not user.get("id"):
+        raise HTTPException(status_code=401, detail="Invalid Supabase session")
+    role = user.get("role", "authenticated")
+    if role != "authenticated":
         raise HTTPException(status_code=401, detail="Token is not an authenticated user session")
-    return payload
+    # Map Auth user shape to JWT-like payload expected downstream
+    return {"sub": user["id"], "role": role, "exp": time.time() + 3600, "email": user.get("email")}
+
+
+def verify_supabase_token(token: str) -> dict[str, object]:
+    """Verify a Supabase access token and return its payload.
+
+    Uses offline HS256 verification when ``SUPABASE_JWT_SECRET`` is set,
+    otherwise falls back to online verification via the Auth API.
+    """
+    if settings.supabase_jwt_secret:
+        try:
+            header_b64, payload_b64, signature_b64 = token.split(".")
+            header = json.loads(_b64decode(header_b64))
+        except (ValueError, Exception):
+            raise HTTPException(status_code=401, detail="Invalid token") from None
+        if header.get("alg") != "HS256":
+            raise HTTPException(status_code=401, detail="Unsupported token algorithm")
+        signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+        expected = hmac.new(
+            settings.supabase_jwt_secret.encode("utf-8"), signing_input, hashlib.sha256
+        ).digest()
+        try:
+            signature = _b64decode(signature_b64)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token") from None
+        if not hmac.compare_digest(signature, expected):
+            raise HTTPException(status_code=401, detail="Invalid token signature")
+        try:
+            payload = json.loads(_b64decode(payload_b64))
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token payload") from None
+        expires_at = payload.get("exp")
+        if not isinstance(expires_at, (int, float)) or expires_at <= time.time():
+            raise HTTPException(status_code=401, detail="Token missing or past its expiry")
+        if payload.get("role") != "authenticated":
+            raise HTTPException(status_code=401, detail="Token is not an authenticated user session")
+        return payload
+    return _verify_online(token)
 
 
 def _resolve_merchant(auth_user_id: str) -> tuple[str, str]:

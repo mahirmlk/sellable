@@ -1,0 +1,11 @@
+{
+  "merchant_id": "mrc_demo_store",
+  "currency": "INR",
+  "max_order_value_paise": 500000,
+  "max_single_item_value_paise": 300000,
+  "max_discount_percent": 10,
+  "allowed_categories": ["accessories", "gifting", "snacks"],
+  "max_negotiation_rounds": 5,
+  "max_upsells_per_session": 1,
+  "human_approval_threshold_paise": 200000
+}
