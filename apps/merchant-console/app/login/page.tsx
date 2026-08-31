@@ -26,10 +26,19 @@ export default function LoginPage() {
       </header>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="relative hidden lg:flex flex-col border-r border-[var(--bb-line)] overflow-hidden">
-          <div className="absolute inset-0 blueprint" />
-          <div className="absolute inset-0 bg-gradient-to-b from-[var(--bb-black)]/0 to-[var(--bb-black)]" />
-          <div className="absolute top-20 right-10 w-28 h-28 rounded-full bg-[var(--bb-orange)]/5 blur-2xl animate-[pulse_4s_ease-in-out_infinite]" />
+        {/* Left: marketing panel (desktop only) */}
+        <div className="relative hidden lg:flex flex-col border-r border-[var(--bb-line)]">
+          {/* Blueprint grid background — inline styles avoid .blueprint class position conflict */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background: "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.045) 1px, transparent 1px)",
+              backgroundSize: "28px 28px",
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[var(--bb-black)] pointer-events-none" />
+          <div className="absolute top-20 right-10 w-28 h-28 rounded-full bg-[var(--bb-orange)]/5 blur-2xl animate-[pulse_4s_ease-in-out_infinite] pointer-events-none" />
+
           <div className="relative p-8 xl:p-10 flex-1 flex flex-col justify-center">
             <div className="inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5 w-fit mb-5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-[pulse_1.5s_ease-in-out_infinite]" />
@@ -57,8 +66,9 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <div className="flex items-start lg:items-center justify-center p-4 sm:p-6 lg:p-8 bg-[var(--bb-black)] overflow-y-auto">
-          <div className="relative w-full flex justify-center">
+        {/* Right: form */}
+        <div className="flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-[var(--bb-black)]">
+          <div className="w-full max-w-[440px]">
             <AuthForm initialMode="login" />
           </div>
         </div>

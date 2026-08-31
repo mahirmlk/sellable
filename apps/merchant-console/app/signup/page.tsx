@@ -67,13 +67,20 @@ export default function SignupPage() {
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
         {/* Left: marketing + live demo */}
-        <div className="relative flex flex-col border-r border-[var(--bb-line)] overflow-hidden">
-          <div className="absolute inset-0 blueprint" />
-          <div className="absolute inset-0 bg-gradient-to-b from-[var(--bb-black)]/0 via-transparent to-[var(--bb-black)]" />
-          <div className="absolute top-16 right-12 w-32 h-32 rounded-full bg-[var(--bb-orange)]/5 blur-2xl animate-[pulse_4s_ease-in-out_infinite]" />
-          <div className="absolute bottom-24 left-10 w-24 h-24 rounded-full bg-white/[0.03] blur-xl animate-[pulse_5s_ease-in-out_infinite_1s]" />
+        <div className="relative flex flex-col border-r border-[var(--bb-line)]">
+          {/* Blueprint grid background — inline styles avoid .blueprint class position conflict */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              background: "radial-gradient(circle at 1px 1px, rgba(255,255,255,0.045) 1px, transparent 1px)",
+              backgroundSize: "28px 28px",
+            }}
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[var(--bb-black)] pointer-events-none" />
+          <div className="absolute top-16 right-12 w-32 h-32 rounded-full bg-[var(--bb-orange)]/5 blur-2xl animate-[pulse_4s_ease-in-out_infinite] pointer-events-none" />
+          <div className="absolute bottom-24 left-10 w-24 h-24 rounded-full bg-white/[0.03] blur-xl animate-[pulse_5s_ease-in-out_infinite_1s] pointer-events-none" />
 
-          <div className="relative p-6 sm:p-8 flex-1 flex flex-col">
+          <div className="relative p-6 sm:p-8 flex-1 flex flex-col justify-center">
             <div className="inline-flex items-center gap-2 border border-[var(--bb-orange)]/20 bg-[var(--bb-orange-wash)] px-3 py-1.5 w-fit">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] animate-[pulse_1.4s_ease-in-out_infinite]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-orange)]">
@@ -81,7 +88,7 @@ export default function SignupPage() {
               </span>
             </div>
 
-            <h1 className="mt-5 font-[var(--font-sans)] text-[clamp(1.8rem,3vw,2.7rem)] leading-[0.95] tracking-[-0.06em] text-[var(--bb-white)] animate-slide-up">
+            <h1 className="mt-5 font-[var(--font-sans)] text-[clamp(1.8rem,3vw,2.7rem)] leading-[0.95] tracking-[-0.06em] text-[var(--bb-white)]">
               Make your store
               <br />
               <span className="text-[var(--bb-orange)]">agent-ready</span>
@@ -89,15 +96,15 @@ export default function SignupPage() {
               in 3 minutes.
             </h1>
 
-            <p className="mt-3 font-[var(--font-sans)] text-[0.95rem] leading-relaxed text-[var(--bb-grey-1)] max-w-[34rem] animate-slide-up animate-delay-1">
+            <p className="mt-3 font-[var(--font-sans)] text-[0.95rem] leading-relaxed text-[var(--bb-grey-1)] max-w-[34rem]">
               Let AI buyers discover, negotiate, and purchase — with deterministic guardrails and a full XAI audit trail.
             </p>
 
-            <div className="mt-6 w-full max-w-[420px] animate-slide-up animate-delay-2">
+            <div className="mt-6 w-full max-w-[420px]">
               <LiveDemo />
             </div>
 
-            <div className="mt-auto pt-6 hidden lg:block">
+            <div className="mt-8 hidden lg:block">
               <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)]/70 backdrop-blur p-4">
                 <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)]">
                   What happens after you sign up
@@ -119,11 +126,8 @@ export default function SignupPage() {
         </div>
 
         {/* Right: form */}
-        <div className="flex items-start lg:items-center justify-center p-4 sm:p-6 lg:p-8 bg-[var(--bb-black)] overflow-y-auto">
-          <div className="absolute inset-0 pointer-events-none lg:hidden">
-            <div className="absolute inset-0 blueprint opacity-30" />
-          </div>
-          <div className="relative w-full flex justify-center">
+        <div className="flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-[var(--bb-black)]">
+          <div className="w-full max-w-[440px]">
             <AuthForm initialMode="signup" />
           </div>
         </div>
