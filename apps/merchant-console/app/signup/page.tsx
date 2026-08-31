@@ -80,7 +80,7 @@ export default function SignupPage() {
           <div className="absolute top-16 right-12 w-32 h-32 rounded-full bg-[var(--bb-orange)]/5 blur-2xl animate-[pulse_4s_ease-in-out_infinite] pointer-events-none" />
           <div className="absolute bottom-24 left-10 w-24 h-24 rounded-full bg-white/[0.03] blur-xl animate-[pulse_5s_ease-in-out_infinite_1s] pointer-events-none" />
 
-          <div className="relative p-6 sm:p-8 flex-1 flex flex-col justify-center">
+          <div className="relative p-6 sm:p-8 flex-1 flex flex-col justify-start pt-8 pb-20">
             <div className="inline-flex items-center gap-2 border border-[var(--bb-orange)]/20 bg-[var(--bb-orange-wash)] px-3 py-1.5 w-fit">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] animate-[pulse_1.4s_ease-in-out_infinite]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-orange)]">

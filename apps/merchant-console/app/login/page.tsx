@@ -39,7 +39,7 @@ export default function LoginPage() {
           <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[var(--bb-black)] pointer-events-none" />
           <div className="absolute top-20 right-10 w-28 h-28 rounded-full bg-[var(--bb-orange)]/5 blur-2xl animate-[pulse_4s_ease-in-out_infinite] pointer-events-none" />
 
-          <div className="relative p-8 xl:p-10 flex-1 flex flex-col justify-center">
+          <div className="relative p-8 xl:p-10 flex-1 flex flex-col justify-start pt-8 pb-20">
             <div className="inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5 w-fit mb-5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-[pulse_1.5s_ease-in-out_infinite]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">Welcome back</span>
