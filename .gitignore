@@ -71,3 +71,6 @@ pnpm-debug.log*
 # Supabase temp
 supabase/.temp/
 
+# Vercel
+.vercel
+.vercelignore

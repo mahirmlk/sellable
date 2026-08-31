@@ -180,7 +180,13 @@ def test_agent_order_and_consent_flow(
 
 def test_dashboard_aliases_match_workflow_spec(
     commerce_core: CommerceCore,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Hermetic demo-mode merchant session: the console endpoints must accept the
+    # demo X-Agent-Key fallback even when Supabase is configured in .env.
+    import sellable.merchant_auth as merchant_auth
+
+    monkeypatch.setattr(merchant_auth, "settings", Settings(environment="development"))
     with TestClient(app) as client:
         assert client.get("/agents/status", headers=H).status_code == 200
         assert client.get("/activity", headers=H).status_code == 200
@@ -192,7 +198,11 @@ def test_dashboard_aliases_match_workflow_spec(
         assert client.post("/approvals/does-not-exist/approve", headers=H).status_code == 400
 
 
-def test_refund_requires_paid_order(commerce_core: CommerceCore) -> None:
+def test_refund_requires_paid_order(commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Demo-mode merchant session so the X-Agent-Key grants a dev session.
+    import sellable.merchant_auth as merchant_auth
+
+    monkeypatch.setattr(merchant_auth, "settings", Settings(environment="development"))
     order = commerce_core.create_order(
         cart=CartMandate(
             intent_ref="im_refund",
