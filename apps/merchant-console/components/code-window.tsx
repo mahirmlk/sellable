@@ -51,8 +51,12 @@ export function CodeSection() {
   };
 
   return (
-    <section className="technical-section py-[clamp(80px,10vw,160px)]">
-      <div className="page-frame">
+    <section className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
+      {/* video-type ambient */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 opacity-[0.45]" style={{ background: "radial-gradient(520px 360px at 18% 18%, rgba(255,105,0,0.055), transparent 66%)" }} />
+      </div>
+      <div className="page-frame relative">
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-[clamp(48px,6vw,96px)] items-center">
           {/* Left: Content */}
           <div>
@@ -78,20 +82,25 @@ export function CodeSection() {
             </div>
           </div>
 
-          {/* Right: Code window */}
-          <div className="code-window group">
+          {/* Right: Code window — video-type live terminal */}
+          <div className="code-window group relative overflow-hidden">
+            <div aria-hidden="true" className="code-shimmer" />
             {/* Header */}
-            <div className="h-[58px] border-b border-[#1f1f1e] flex items-center justify-between px-5">
+            <div className="h-[58px] border-b border-[#1f1f1e] flex items-center justify-between px-5 relative">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <span className="w-3 h-3 rounded-full bg-[#ff5f57] transition-colors group-hover:bg-[#ff4040]" />
-                  <span className="w-3 h-3 rounded-full bg-[#febc2e] transition-colors group-hover:bg-[#ffb800]" />
-                  <span className="w-3 h-3 rounded-full bg-[#28c840] transition-colors group-hover:bg-[#22b838]" />
+                  <span className="w-3 h-3 rounded-full bg-[#ff5f57] transition-colors group-hover:bg-[#ff4040] shadow-[0_0_0_1px_rgba(255,255,255,0.06)]" />
+                  <span className="w-3 h-3 rounded-full bg-[#febc2e] transition-colors group-hover:bg-[#ffb800] shadow-[0_0_0_1px_rgba(255,255,255,0.06)]" />
+                  <span className="w-3 h-3 rounded-full bg-[#28c840] transition-colors group-hover:bg-[#22b838] shadow-[0_0_0_1px_rgba(255,255,255,0.06)]" />
                 </div>
                 <div className="flex items-center gap-1.5 text-[var(--bb-grey-3)]">
                   <Terminal size={12} />
                   <span className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase">
                     curl
+                  </span>
+                  <span className="ml-2 hidden sm:inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-[pulse_1.4s_ease-in-out_infinite]" />
+                    <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] text-[var(--bb-grey-1)]">LIVE</span>
                   </span>
                 </div>
               </div>
@@ -111,8 +120,8 @@ export function CodeSection() {
               </button>
             </div>
 
-            {/* Code with syntax highlighting */}
-            <div className="code-content">
+            {/* Code with syntax highlighting + live cursor */}
+            <div className="code-content relative">
               {codeLines.map((line, i) => (
                 <span
                   key={i}
@@ -125,7 +134,9 @@ export function CodeSection() {
                   <span className={line.color}>{line.text}</span>
                 </span>
               ))}
+              <span className="inline-block w-[7px] h-[14px] bg-[var(--bb-orange)] ml-0.5 translate-y-[2px] animate-[blink_1s_steps(1)_infinite]" aria-hidden="true" />
             </div>
+
           </div>
         </div>
       </div>

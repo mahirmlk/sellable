@@ -4,15 +4,36 @@ import { NextResponse, type NextRequest } from "next/server";
 /**
  * Refreshes the Supabase session and protects the merchant dashboard routes.
  *
- * When Supabase is not configured the middleware runs in "demo mode": every
- * route is allowed so the buildathon flow works without a cloud account.
+ * When Supabase is not configured the middleware still protects /dashboard:
+ * it requires a demo session cookie (`sellable_demo_auth=1`) that is set
+ * only after the user goes through /login or /signup. Direct navigation to
+ * /dashboard without that cookie (or without a real Supabase session) now
+ * redirects to /login instead of rendering the dashboard openly.
  */
+const DEMO_COOKIE = "sellable_demo_auth";
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) {
+    const { pathname } = request.nextUrl;
+    const hasDemoSession = request.cookies.get(DEMO_COOKIE)?.value === "1";
+
+    if (pathname.startsWith("/dashboard") && !hasDemoSession) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/login";
+      redirectUrl.searchParams.set("next", pathname);
+      return NextResponse.redirect(redirectUrl);
+    }
+
+    if (hasDemoSession && (pathname === "/login" || pathname === "/signup")) {
+      const redirectUrl = request.nextUrl.clone();
+      redirectUrl.pathname = "/dashboard";
+      return NextResponse.redirect(redirectUrl);
+    }
+
     return supabaseResponse;
   }
 
@@ -44,7 +65,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && pathname === "/login") {
+  if (user && (pathname === "/login" || pathname === "/signup")) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     return NextResponse.redirect(redirectUrl);

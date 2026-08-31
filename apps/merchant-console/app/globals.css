@@ -126,6 +126,21 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Lenis smooth scroll */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   background: var(--bb-black);
@@ -604,6 +619,117 @@ svg {
 }
 
 /* --------------------------------------------------
+   VIDEO-LIKE AMBIENT BACKGROUND
+   -------------------------------------------------- */
+.ambient-aurora {
+  background:
+    radial-gradient(680px 420px at 18% 18%, rgba(255, 105, 0, 0.14) 0%, transparent 62%),
+    radial-gradient(720px 520px at 82% 72%, rgba(255, 115, 0, 0.07) 0%, transparent 65%),
+    radial-gradient(900px 600px at 50% -10%, rgba(255, 105, 0, 0.045) 0%, transparent 70%);
+  filter: blur(0.2px);
+  animation: aurora-drift 18s ease-in-out infinite alternate;
+}
+.ambient-aurora-2 {
+  background:
+    radial-gradient(560px 360px at 75% 22%, rgba(255, 105, 0, 0.08) 0%, transparent 62%),
+    radial-gradient(500px 400px at 12% 82%, rgba(255, 255, 255, 0.025) 0%, transparent 60%);
+  animation: aurora-drift-2 22s ease-in-out infinite alternate;
+}
+.ambient-orb {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(34px);
+  opacity: 0.55;
+  mix-blend-mode: screen;
+}
+.ambient-orb--a {
+  width: 640px; height: 640px;
+  left: -160px; top: 8%;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 105, 0, 0.18), rgba(255, 105, 0, 0.02) 68%, transparent 72%);
+  animation: orb-drift-a 16s ease-in-out infinite alternate;
+}
+.ambient-orb--b {
+  width: 560px; height: 560px;
+  right: -180px; top: 36%;
+  background: radial-gradient(circle at 70% 30%, rgba(255, 115, 0, 0.11), rgba(255, 255, 255, 0.015) 60%, transparent 72%);
+  animation: orb-drift-b 20s ease-in-out infinite alternate;
+}
+.ambient-orb--c {
+  width: 820px; height: 520px;
+  left: 18%; bottom: 6%;
+  background: radial-gradient(ellipse at 50% 50%, rgba(255, 105, 0, 0.065), transparent 72%);
+  animation: orb-drift-c 24s ease-in-out infinite alternate;
+}
+.ambient-grid {
+  background-image:
+    linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.028) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: radial-gradient(90% 85% at 50% 30%, black 45%, transparent 92%);
+  opacity: 0.45;
+  animation: grid-pan 28s linear infinite;
+}
+.ambient-scan-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,105,0,0.9) 18%, rgba(255,105,0,0.35) 52%, transparent 90%);
+  opacity: 0.18;
+  animation: scan-sweep 4.2s linear infinite;
+}
+.ambient-grain {
+  opacity: 0.055;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.92' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
+  animation: grain-jitter 0.9s steps(4) infinite;
+}
+
+/* Hero live video texture */
+.hero-video-shell {
+  position: absolute;
+  inset: -22% -8% -8% -8%;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: 28px;
+  opacity: 0.95;
+}
+.hero-video-grad {
+  position: absolute;
+  inset: -30% -20%;
+  background:
+    radial-gradient(520px 380px at 22% 18%, rgba(255,105,0,0.22), transparent 62%),
+    radial-gradient(560px 420px at 78% 68%, rgba(255,105,0,0.10), transparent 66%),
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 42%);
+  animation: hero-grad-drift 14s ease-in-out infinite alternate;
+}
+.hero-video-grid {
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(85% 70% at 50% 50%, black 55%, transparent 100%);
+  opacity: 0.22;
+  animation: grid-pan 18s linear infinite;
+}
+.hero-video-noise {
+  position: absolute; inset: 0;
+  opacity: 0.045;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: soft-light;
+}
+
+/* Code window live shimmer */
+.code-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 28%, rgba(255,105,0,0.08) 38%, rgba(255,255,255,0.04) 42%, transparent 56%);
+  transform: translateX(-42%);
+  animation: shimmer-sweep 3.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* --------------------------------------------------
    ANIMATIONS
    -------------------------------------------------- */
 @keyframes fade-in {
@@ -634,6 +760,72 @@ svg {
 @keyframes scan-line {
   0% { transform: translateY(-100%); }
   100% { transform: translateY(100vh); }
+}
+@keyframes aurora-drift {
+  0% { transform: translate3d(-1.5%, -0.8%, 0) scale(1); }
+  100% { transform: translate3d(1.5%, 1.2%, 0) scale(1.03); }
+}
+@keyframes aurora-drift-2 {
+  0% { transform: translate3d(1.2%, 0.6%, 0) scale(1.01); }
+  100% { transform: translate3d(-1.8%, -1%, 0) scale(1.04); }
+}
+@keyframes orb-drift-a {
+  0% { transform: translate3d(0,0,0) scale(1); }
+  100% { transform: translate3d(18px, 14px,0) scale(1.04); }
+}
+@keyframes orb-drift-b {
+  0% { transform: translate3d(0,0,0) scale(1); }
+  100% { transform: translate3d(-16px, 10px,0) scale(1.05); }
+}
+@keyframes orb-drift-c {
+  0% { transform: translate3d(0,0,0) scale(1); }
+  100% { transform: translate3d(10px, -12px,0) scale(1.03); }
+}
+@keyframes grid-pan {
+  0% { background-position: 0 0; }
+  100% { background-position: 72px 72px; }
+}
+@keyframes scan-sweep {
+  0% { transform: translateY(-16vh); opacity: 0; }
+  12% { opacity: 0.22; }
+  88% { opacity: 0.22; }
+  100% { transform: translateY(112vh); opacity: 0; }
+}
+@keyframes grain-jitter {
+  0% { transform: translate(0,0); }
+  25% { transform: translate(-0.4%, 0.3%); }
+  50% { transform: translate(0.3%, -0.4%); }
+  75% { transform: translate(-0.2%, -0.2%); }
+  100% { transform: translate(0,0); }
+}
+@keyframes hero-grad-drift {
+  0% { transform: translate3d(-0.8%, -0.6%, 0) scale(1); }
+  100% { transform: translate3d(0.9%, 0.7%, 0) scale(1.02); }
+}
+@keyframes rail-flow {
+  0% { transform: translateY(-140%); opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { transform: translateY(420%); opacity: 0; }
+}
+@keyframes divider-sweep {
+  0% { transform: translateX(-42%); opacity: 0.15; }
+  50% { opacity: 0.9; }
+  100% { transform: translateX(210%); opacity: 0.15; }
+}
+@keyframes shimmer-sweep {
+  0% { transform: translateX(-58%); opacity: 0; }
+  28% { opacity: 1; }
+  55% { opacity: 0.9; }
+  100% { transform: translateX(88%); opacity: 0; }
+}
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+@keyframes live-tick {
+  0% { transform: scaleX(0); opacity: 0.8; }
+  100% { transform: scaleX(1); opacity: 1; }
 }
 
 .animate-fade-in {
@@ -729,6 +921,67 @@ svg {
     opacity: 1;
     max-height: 600px;
   }
+}
+
+/* --------------------------------------------------
+   FINISHING TOUCHES — small things that matter
+   -------------------------------------------------- */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bb-grey-4) var(--bb-black);
+  overflow-x: hidden;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bb-black);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bb-grey-4);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bb-grey-3);
+}
+
+.hero-title,
+.section-title,
+.orange-cta h2 {
+  text-wrap: balance;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--bb-orange);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+button:active:not(:disabled),
+a:active:not([aria-disabled="true"]) {
+  transform: scale(0.98);
+}
+
+.footer-link--soon {
+  opacity: 0.55;
+}
+
+.footer-link--soon:hover {
+  transform: none !important;
 }
 
 /* --------------------------------------------------

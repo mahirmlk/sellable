@@ -7,7 +7,7 @@ COPY agents/ agents/
 COPY infra/seed/ infra/seed/
 COPY pyproject.toml .
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[postgres]"
 
 RUN mkdir -p data && \
     useradd --create-home --shell /bin/bash appuser && \

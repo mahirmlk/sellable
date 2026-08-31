@@ -68,8 +68,13 @@ export function HowItWorks() {
   const { ref, isInView } = useInView();
 
   return (
-    <section id="how-it-works" className="technical-section py-[clamp(80px,10vw,160px)]">
-      <div className="page-frame" ref={ref}>
+    <section id="how-it-works" className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
+      {/* video-type gradient wash behind section */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 opacity-[0.45]" style={{ background: "radial-gradient(720px 420px at 50% 8%, rgba(255,105,0,0.055), transparent 68%)" }} />
+        <div className="absolute inset-0 hero-video-grid opacity-[0.06]" />
+      </div>
+      <div className="page-frame relative" ref={ref}>
         <div className="text-center mb-16">
           <Eyebrow label="TRANSACTION LIFECYCLE" />
           <h2
@@ -91,8 +96,11 @@ export function HowItWorks() {
 
         {/* Flow line */}
         <div className="relative">
-          {/* Vertical connector line (desktop) */}
-          <div className="hidden lg:block absolute left-[50%] top-0 bottom-0 w-px bg-[var(--bb-line)]" />
+          {/* Vertical connector line (desktop) with live flowing light */}
+          <div className="hidden lg:block absolute left-[50%] top-0 bottom-0 w-px bg-[var(--bb-line)] overflow-hidden">
+            <div className="absolute left-0 right-0 h-[140px] bg-gradient-to-b from-transparent via-[var(--bb-orange)]/80 to-transparent animate-[rail-flow_3s_linear_infinite]" />
+            <div className="absolute left-0 right-0 h-[140px] bg-gradient-to-b from-transparent via-[#ffb86a]/60 to-transparent animate-[rail-flow_3s_linear_infinite]" style={{ animationDelay: "1.4s" }} />
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-x-[clamp(48px,6vw,96px)] lg:gap-y-16">
             {steps.map((step, i) => (
@@ -111,14 +119,16 @@ export function HowItWorks() {
                       : "lg:col-start-2 lg:pl-16"
                   }`}
                 >
-                  {/* Node dot on the line (desktop) */}
+                  {/* Node dot on the line (desktop) with live pulse */}
                   <div
-                    className={`hidden lg:block absolute top-6 w-3 h-3 border border-[var(--bb-orange)] bg-[var(--bb-black)] ${
+                    className={`hidden lg:block absolute top-6 w-3 h-3 border border-[var(--bb-orange)] bg-[var(--bb-black)] shadow-[0_0_10px_rgba(255,105,0,0.35)] ${
                       i % 2 === 0
                         ? "right-[-7px] translate-x-[calc(50%+3.5px)]"
                         : "left-[-7px] -translate-x-[calc(50%+3.5px)]"
                     }`}
-                  />
+                  >
+                    <span className="absolute inset-0 bg-[var(--bb-orange)]/20 animate-[pulse_2s_ease-in-out_infinite]" />
+                  </div>
 
                   <div className="flex items-start gap-4 lg:justify-end">
                     {i % 2 !== 0 && (

@@ -7,9 +7,20 @@ export function Blueprint() {
     <div className="blueprint rounded-[var(--radius-md)] group" aria-hidden="true">
       <CornerBrackets />
 
-      {/* Scan line effect */}
+      {/* Video-type drifting gradient behind blueprint */}
+      <div className="absolute inset-0 overflow-hidden rounded-[var(--radius-md)] pointer-events-none">
+        <div className="hero-video-grad opacity-60" />
+        <div className="hero-video-grid opacity-[0.12]" />
+      </div>
+      {/* Scan line effect — two staggered */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--bb-orange)] to-transparent opacity-20 animate-[scan-line_4s_linear_infinite]" />
+        <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--bb-orange)]/70 to-transparent opacity-10 animate-[scan-line_4s_linear_infinite]" style={{ animationDelay: "1.9s" }} />
+      </div>
+      {/* Corner live dot pulse */}
+      <div className="absolute top-4 right-4 flex items-center gap-1.5 pointer-events-none">
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] shadow-[0_0_8px_rgba(255,105,0,0.8)] animate-[pulse_1.6s_ease-in-out_infinite]" />
+        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] text-[var(--bb-orange)]">LIVE</span>
       </div>
 
       {/* Isolation boundary */}
@@ -132,12 +143,25 @@ export function Blueprint() {
               strokeDasharray="3 3"
             />
 
-            {/* Animated data flow dots */}
-            <circle r="2" fill="var(--bb-orange)" opacity="0.8">
-              <animateMotion dur="3s" repeatCount="indefinite" path="M88,100 L188,180" />
+            {/* Animated data flow dots — 4 staggered video-like trails */}
+            <circle r="2.2" fill="var(--bb-orange)" opacity="0.9">
+              <animateMotion dur="2.4s" repeatCount="indefinite" path="M88,100 L188,180" />
             </circle>
-            <circle r="2" fill="var(--bb-orange)" opacity="0.8">
-              <animateMotion dur="3s" repeatCount="indefinite" path="M296,100 L196,172" begin="1s" />
+            <circle r="1.6" fill="#ffb86a" opacity="0.7">
+              <animateMotion dur="2.4s" repeatCount="indefinite" path="M88,100 L188,180" begin="0.45s" />
+            </circle>
+            <circle r="2.2" fill="var(--bb-orange)" opacity="0.9">
+              <animateMotion dur="2.8s" repeatCount="indefinite" path="M296,100 L196,172" begin="0.7s" />
+            </circle>
+            <circle r="1.6" fill="#ffb86a" opacity="0.7">
+              <animateMotion dur="2.8s" repeatCount="indefinite" path="M296,100 L196,172" begin="1.35s" />
+            </circle>
+            {/* vertical consent pulse */}
+            <circle r="1.8" fill="var(--bb-orange)" opacity="0.8">
+              <animateMotion dur="3.2s" repeatCount="indefinite" path="M200,65 L200,172" begin="0.2s" />
+            </circle>
+            <circle r="1.4" fill="var(--bb-orange)" opacity="0.45">
+              <animateMotion dur="3.2s" repeatCount="indefinite" path="M200,172 L200,258" begin="1.1s" />
             </circle>
           </svg>
 

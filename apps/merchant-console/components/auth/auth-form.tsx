@@ -42,7 +42,17 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
   const strength = passwordStrength(password);
   const isSignup = mode === "signup";
 
-  const enterDemo = () => router.push("/dashboard");
+  const setDemoCookie = () => {
+    if (typeof document !== "undefined") {
+      document.cookie = "sellable_demo_auth=1; path=/; max-age=86400; SameSite=Lax";
+    }
+  };
+
+  const enterDemo = () => {
+    setDemoCookie();
+    router.push("/dashboard");
+    router.refresh();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

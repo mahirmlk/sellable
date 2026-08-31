@@ -65,17 +65,19 @@ export function SiteHeader() {
             DASHBOARD
           </Link>
           <Link
-            href="/dashboard"
+            href="/signup"
             className="inline-flex items-center justify-center h-[44px] px-[18px] rounded-[var(--radius-pill)] bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.72rem] tracking-[0.11em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors duration-[var(--duration-fast)]"
           >
             GET STARTED
           </Link>
-          <button
-            aria-label="Search"
-            className="inline-flex items-center justify-center w-[44px] h-[44px] border border-[#292928] rounded-full bg-transparent text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[#444] transition-all duration-[var(--duration-fast)]"
+          <Link
+            href="/dashboard/catalog"
+            aria-label="Search catalog"
+            title="Search catalog"
+            className="inline-flex items-center justify-center w-[44px] h-[44px] border border-[#292928] rounded-full bg-transparent text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[#444] hover:bg-[var(--bb-panel)] active:scale-95 transition-all duration-[var(--duration-fast)]"
           >
             <Search size={16} strokeWidth={1.5} />
-          </button>
+          </Link>
         </div>
 
         {/* Mobile: Hamburger */}
@@ -117,7 +119,7 @@ export function SiteHeader() {
                 DASHBOARD
               </Link>
               <Link
-                href="/dashboard"
+                href="/signup"
                 onClick={() => setMobileOpen(false)}
                 className="inline-flex items-center justify-center h-[44px] px-[18px] rounded-[var(--radius-pill)] bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.72rem] tracking-[0.11em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors"
               >

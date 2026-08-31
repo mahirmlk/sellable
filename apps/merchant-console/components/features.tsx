@@ -35,8 +35,12 @@ export function Features() {
   const [activeCap, setActiveCap] = useState<number | null>(null);
 
   return (
-    <section id="platform" className="technical-section py-[clamp(80px,10vw,160px)]">
-      <div className="page-frame">
+    <section id="platform" className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
+      {/* video wash */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 opacity-[0.5]" style={{ background: "radial-gradient(640px 420px at 78% 32%, rgba(255,105,0,0.07), transparent 66%)" }} />
+      </div>
+      <div className="page-frame relative">
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.82fr)] gap-[clamp(48px,8vw,128px)]">
           {/* Left: Content */}
           <div>
@@ -91,34 +95,36 @@ export function Features() {
                       SINGLE-TENANT DEPLOYMENT
                     </div>
 
-                    {/* Active status */}
-                    <div className="status-highlight">
-                      <div className="flex items-center justify-between">
+                    {/* Active status — with live video sheen */}
+                    <div className="status-highlight relative overflow-hidden">
+                      <div className="code-shimmer opacity-40" />
+                      <div className="flex items-center justify-between relative">
                         <div>
-                          <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] mb-1">
-                            DEPLOYMENT STATUS
+                          <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] mb-1 flex items-center gap-1.5">
+                            ARCHITECTURE STATUS
+                            <span className="w-1 h-1 rounded-full bg-emerald-400 animate-[pulse_1.6s_ease-in-out_infinite]" />
                           </div>
                           <div className="font-[var(--font-sans)] text-[1.1rem] font-medium text-[var(--bb-orange)]">
-                            PRODUCTION READY
+                            AUDIT-READY
                           </div>
                         </div>
-                        <span className="w-2.5 h-2.5 bg-[var(--bb-orange)] rounded-full animate-[pulse_2s_ease-in-out_infinite]" />
+                        <span className="w-2.5 h-2.5 bg-[var(--bb-orange)] rounded-full animate-[pulse_2s_ease-in-out_infinite] shadow-[0_0_10px_rgba(255,105,0,0.6)]" aria-hidden="true" />
                       </div>
                       <div className="mt-4 grid grid-cols-2 gap-4">
-                        <div>
+                        <div title="Design target — measured p95 in local verification">
                           <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                            LATENCY
+                            LATENCY <span className="text-[0.5rem] normal-case tracking-normal text-[var(--bb-grey-4)]">target p95</span>
                           </div>
                           <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
                             &lt; 200ms
                           </div>
                         </div>
-                        <div>
+                        <div title="Every money action creates a ledger event">
                           <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                            UPTIME
+                            AUDIT
                           </div>
                           <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
-                            99.9%
+                            100%
                           </div>
                         </div>
                       </div>

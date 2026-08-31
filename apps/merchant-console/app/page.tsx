@@ -9,12 +9,14 @@ import { Features } from "@/components/features";
 import { CodeSection } from "@/components/code-window";
 import { OrangeCTA } from "@/components/orange-cta";
 import { ScrollReveal } from "@/components/ui/scroll-reveal";
+import { AmbientVideoBg } from "@/components/ui/ambient-video-bg";
 
 export default function HomePage() {
   return (
     <>
+      <AmbientVideoBg />
       <SiteHeader />
-      <main className="flex-1">
+      <main className="flex-1 relative">
         <Hero />
         <StatStrip />
         <HowItWorks />

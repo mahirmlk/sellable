@@ -67,3 +67,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.log
+
+# Supabase temp
+supabase/.temp/
+
