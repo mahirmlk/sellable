@@ -1,0 +1,122 @@
+[
+  {
+    "id": "prd_headphones_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "AUDIO-HEADPHONES-01",
+    "title": "Wave Pro Wireless Headphones",
+    "description": "Over-ear wireless headphones for focused work and travel.",
+    "price_paise": 499900,
+    "floor_paise": 449900,
+    "stock": 18,
+    "category": "accessories",
+    "attributes": {"color": "midnight", "wireless": true, "upsell_sku": "AUDIO-CASE-01"}
+  },
+  {
+    "id": "prd_headphone_case_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "AUDIO-CASE-01",
+    "title": "Headphone Travel Case",
+    "description": "Protective hard-shell travel case compatible with Wave Pro headphones.",
+    "price_paise": 69900,
+    "floor_paise": 59900,
+    "stock": 45,
+    "category": "accessories",
+    "attributes": {"compatible_with": "AUDIO-HEADPHONES-01"}
+  },
+  {
+    "id": "prd_keyboard_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "WORK-KEYBOARD-01",
+    "title": "Compact Mechanical Keyboard",
+    "description": "Hot-swappable mechanical keyboard for compact desk setups.",
+    "price_paise": 359900,
+    "floor_paise": 319900,
+    "stock": 22,
+    "category": "accessories",
+    "attributes": {"layout": "75-percent", "upsell_sku": "WORK-WRISTREST-01"}
+  },
+  {
+    "id": "prd_wristrest_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "WORK-WRISTREST-01",
+    "title": "Memory Foam Wrist Rest",
+    "description": "Ergonomic wrist rest sized for the Compact Mechanical Keyboard.",
+    "price_paise": 49900,
+    "floor_paise": 39900,
+    "stock": 60,
+    "category": "accessories",
+    "attributes": {"compatible_with": "WORK-KEYBOARD-01"}
+  },
+  {
+    "id": "prd_coffee_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "SNACK-COFFEE-01",
+    "title": "Single-Origin Coffee Beans",
+    "description": "Medium roast whole beans, 500 g.",
+    "price_paise": 84900,
+    "floor_paise": 74900,
+    "stock": 80,
+    "category": "snacks",
+    "attributes": {"weight_g": 500, "upsell_sku": "SNACK-MUG-01"}
+  },
+  {
+    "id": "prd_mug_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "SNACK-MUG-01",
+    "title": "Insulated Coffee Mug",
+    "description": "Double-wall insulated mug for hot drinks.",
+    "price_paise": 109900,
+    "floor_paise": 94900,
+    "stock": 35,
+    "category": "accessories",
+    "attributes": {"capacity_ml": 350}
+  },
+  {
+    "id": "prd_gift_box_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "GIFT-BOX-01",
+    "title": "Workday Gift Box",
+    "description": "Curated coffee, mug, and notebook gift box.",
+    "price_paise": 249900,
+    "floor_paise": 219900,
+    "stock": 16,
+    "category": "gifting",
+    "attributes": {"occasion": "corporate"}
+  },
+  {
+    "id": "prd_notebook_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "WORK-NOTEBOOK-01",
+    "title": "Dot Grid Notebook",
+    "description": "Hardcover dot-grid notebook for plans and meeting notes.",
+    "price_paise": 39900,
+    "floor_paise": 34900,
+    "stock": 100,
+    "category": "accessories",
+    "attributes": {"pages": 192}
+  },
+  {
+    "id": "prd_candle_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "GIFT-CANDLE-01",
+    "title": "Cedar Desk Candle",
+    "description": "Small-batch soy candle for workspaces and gift boxes.",
+    "price_paise": 64900,
+    "floor_paise": 54900,
+    "stock": 40,
+    "category": "gifting",
+    "attributes": {"scent": "cedar"}
+  },
+  {
+    "id": "prd_tea_01",
+    "merchant_id": "mrc_demo_store",
+    "sku": "SNACK-TEA-01",
+    "title": "Masala Chai Blend",
+    "description": "Spiced black tea blend, 250 g.",
+    "price_paise": 54900,
+    "floor_paise": 44900,
+    "stock": 70,
+    "category": "snacks",
+    "attributes": {"weight_g": 250}
+  }
+]
