@@ -358,6 +358,8 @@ def agent_order_create(
         SellerRequest(
             message=body.message,
             intent=body.intent,
+            requested_sku=body.requested_sku,
+            buyer_offer_paise=body.buyer_offer_paise,
             request_upsell=body.request_upsell,
         ),
         trace_id=trace_id,
@@ -515,8 +517,184 @@ def refund_order(
 
 
 # ---------------------------------------------------------------------------
+# Development-only webhook simulation (never enabled in production)
+#
+# These helpers drive the *same* verified `handle_webhook` boundary used by
+# real Razorpay events so local demos can complete the captured/failed flow
+# without an external tunnel. They are inert in production.
+# ---------------------------------------------------------------------------
+
+
+def _signed_webhook(payload: dict[str, object]) -> tuple[bytes, str]:
+    import hashlib
+    import hmac
+    import json as _json
+
+    if not settings.razorpay_webhook_secret:
+        raise RazorpayConfigurationError("Razorpay webhook secret is not configured")
+    body = _json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    signature = hmac.new(
+        settings.razorpay_webhook_secret.encode("utf-8"), body, hashlib.sha256
+    ).hexdigest()
+    return body, signature
+
+
+def _simulate_provider_event(payments: PaymentService, order_id: str, event: str) -> PaymentAttempt:
+    from uuid import uuid4
+
+    if settings.environment == "production":
+        raise HTTPException(status_code=403, detail="Webhook simulation is disabled in production")
+    attempt = payments._attempt_by_order_id.get(order_id)
+    if attempt is None:
+        raise HTTPException(status_code=409, detail="No payment attempt exists for this order")
+    order = commerce_core.get_order(order_id)
+    payment_entity = {
+        "id": f"pay_sim_{uuid4().hex[:12]}",
+        "order_id": attempt.provider_order_id,
+        "status": "captured" if event == "payment.captured" else "failed",
+        "amount": order.amount_paise,
+    }
+    if event == "payment.failed":
+        payment_entity["error_description"] = "Payment declined in Razorpay Test Mode (simulated)."
+    payload = {"event": event, "payload": {"payment": {"entity": payment_entity}}}
+    body, signature = _signed_webhook(payload)
+    try:
+        return payments.handle_webhook(body, signature)
+    except (UnknownProviderOrderError, UnsupportedWebhookEventError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post(
+    "/console/orders/{order_id}/simulate-capture",
+    response_model=PaymentAttempt,
+    tags=["console"],
+    summary="(Dev only) Settle an order via the verified webhook boundary.",
+)
+@limiter.limit("20/minute")
+def console_simulate_capture(
+    request: Request,
+    order_id: str,
+    payments: PaymentService = Depends(get_payment_service),
+    _merchant: MerchantSession = Depends(get_merchant_session),
+) -> PaymentAttempt:
+    return _simulate_provider_event(payments, order_id, "payment.captured")
+
+
+@app.post(
+    "/console/orders/{order_id}/simulate-failure",
+    response_model=PaymentAttempt,
+    tags=["console"],
+    summary="(Dev only) Fail an order via the verified webhook boundary.",
+)
+@limiter.limit("20/minute")
+def console_simulate_failure(
+    request: Request,
+    order_id: str,
+    payments: PaymentService = Depends(get_payment_service),
+    _merchant: MerchantSession = Depends(get_merchant_session),
+) -> PaymentAttempt:
+    return _simulate_provider_event(payments, order_id, "payment.failed")
+
+
+# ---------------------------------------------------------------------------
 # Console API endpoints (merchant dashboard)
 # ---------------------------------------------------------------------------
+
+
+def _summarize_order(
+    order: "ConsoleTransactionItem | object",
+    events: list,
+) -> dict[str, object]:
+    """Derive merchant-facing policy/consent/payment/item facts from the ledger.
+
+    The frontend never computes these states; it renders the backend's
+    authoritative summary, which is reconstructed from the XAI Ledger (§9).
+    """
+    order_id = getattr(order, "order_id")
+    status = getattr(order, "status")
+
+    items: list[dict[str, object]] = []
+    buyer_budget_paise: int | None = None
+    policy_verdict: str | None = None
+    policy_reason: str | None = None
+    policy_refs: list[str] = []
+    policy_explanation: str | None = None
+    consent_id: str | None = None
+    consent_expires_at: str | None = None
+    consent_issued = False
+    consent_used = False
+    payment_order_id: str | None = None
+    payment_status: str | None = None
+    payment_id: str | None = None
+
+    for e in events:
+        output = e.output_json or {}
+        if e.action == "order.created":
+            items = output.get("items") or items
+            buyer_budget_paise = output.get("buyer_budget_paise") or buyer_budget_paise
+        elif e.action == "policy.checked":
+            policy_verdict = output.get("verdict") or policy_verdict
+            policy_reason = output.get("reason_code") or policy_reason
+            policy_refs = e.policy_refs_json or policy_refs
+            policy_explanation = e.reasoning_summary or policy_explanation
+            buyer_budget_paise = (e.inputs_json or {}).get("buyer_budget_paise") or buyer_budget_paise
+        elif e.action == "consent.issued":
+            consent_issued = True
+            consent_id = output.get("consent_id") or consent_id
+            consent_expires_at = output.get("expires_at") or consent_expires_at
+        elif e.action == "consent.used":
+            consent_used = True
+        elif e.action == "payment.attempted":
+            payment_order_id = output.get("provider_order_id") or payment_order_id
+        elif e.action in ("webhook.reconciled", "payment.captured", "payment.failed"):
+            payment_status = output.get("status") or payment_status
+            payment_id = e.provider_ref or payment_id
+        elif e.action == "order.paid":
+            payment_status = payment_status or "CAPTURED"
+            payment_id = e.provider_ref or payment_id
+
+    if payment_status is None and status in ("PAYMENT_PENDING",):
+        payment_status = "PAYMENT_PENDING"
+    if payment_status is None and status in ("PAID", "FULFILLED"):
+        payment_status = "CAPTURED"
+    if payment_status is None and status in ("PAYMENT_FAILED", "ABORTED", "REFUNDED"):
+        payment_status = "FAILED"
+
+    if consent_used:
+        consent_status = "CONSUMED"
+    elif consent_issued:
+        consent_status = "ISSUED"
+    elif status in ("AWAITING_CONSENT", "QUOTED"):
+        consent_status = "NOT_ISSUED"
+    else:
+        consent_status = "ISSUED" if consent_issued else None
+
+    buyer_agent_id = getattr(order, "buyer_agent_id") or ""
+    channel = "agent_to_agent" if buyer_agent_id.startswith("buyer_") else "human_chat"
+
+    return {
+        "channel": channel,
+        "items": items,
+        "policy_verdict": policy_verdict,
+        "policy_reason": policy_reason,
+        "policy_refs": policy_refs,
+        "policy_explanation": policy_explanation,
+        "buyer_budget_paise": buyer_budget_paise,
+        "consent_id": consent_id,
+        "consent_status": consent_status,
+        "consent_expires_at": consent_expires_at,
+        "payment_status": payment_status,
+        "payment_order_id": payment_order_id,
+        "payment_id": payment_id,
+    }
+
+
+def _enrich_transaction(
+    order: "ConsoleTransactionItem | object",
+    ledger: LedgerRepository,
+) -> dict[str, object]:
+    events = ledger.for_trace(getattr(order, "trace_id"))
+    return _summarize_order(order, list(events))
 
 
 @app.get("/console/transactions", response_model=list[ConsoleTransactionItem], tags=["console"])
@@ -525,11 +703,13 @@ def refund_order(
 def console_transactions(
     request: Request,
     commerce: CommerceCore = Depends(get_commerce),
+    ledger: LedgerRepository = Depends(get_ledger),
     _merchant: MerchantSession = Depends(get_merchant_session),
 ) -> list[ConsoleTransactionItem]:
     orders = commerce.all_orders()
-    return [
-        ConsoleTransactionItem(
+    enriched: list[ConsoleTransactionItem] = []
+    for o in sorted(orders, key=lambda x: x.created_at, reverse=True):
+        base = ConsoleTransactionItem(
             order_id=o.order_id,
             trace_id=o.trace_id,
             status=o.status,
@@ -540,8 +720,8 @@ def console_transactions(
             idempotency_key=o.idempotency_key,
             created_at=o.created_at,
         )
-        for o in sorted(orders, key=lambda x: x.created_at, reverse=True)
-    ]
+        enriched.append(ConsoleTransactionItem.model_validate({**base.model_dump(), **_enrich_transaction(o, ledger)}))
+    return enriched
 
 
 @app.get("/console/transactions/{order_id}", response_model=ConsoleTransactionDetail, tags=["console"])
@@ -559,7 +739,7 @@ def console_transaction_detail(
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     events = ledger.for_trace(order.trace_id)
-    return ConsoleTransactionDetail(
+    base = ConsoleTransactionDetail(
         order_id=order.order_id,
         trace_id=order.trace_id,
         status=order.status,
@@ -569,23 +749,30 @@ def console_transaction_detail(
         quote_id=order.quote_id,
         idempotency_key=order.idempotency_key,
         created_at=order.created_at,
-        events=[
-            {
-                "event_id": e.event_id,
-                "trace_id": e.trace_id,
-                "timestamp": e.timestamp.isoformat(),
-                "actor": e.actor,
-                "action": e.action,
-                "inputs": e.inputs_json,
-                "output": e.output_json,
-                "reasoning_summary": e.reasoning_summary,
-                "policy_refs": e.policy_refs_json,
-                "outcome_effect": e.outcome_effect_json,
-                "provider_ref": e.provider_ref,
-                "flags": e.flags_json,
-            }
-            for e in events
-        ],
+    )
+    enriched = _enrich_transaction(order, ledger)
+    return ConsoleTransactionDetail.model_validate(
+        {
+            **base.model_dump(),
+            **enriched,
+            "events": [
+                {
+                    "event_id": e.event_id,
+                    "trace_id": e.trace_id,
+                    "timestamp": e.timestamp.isoformat(),
+                    "actor": e.actor,
+                    "action": e.action,
+                    "inputs": e.inputs_json,
+                    "output": e.output_json,
+                    "reasoning_summary": e.reasoning_summary,
+                    "policy_refs": e.policy_refs_json,
+                    "outcome_effect": e.outcome_effect_json,
+                    "provider_ref": e.provider_ref,
+                    "flags": e.flags_json,
+                }
+                for e in events
+            ],
+        }
     )
 
 

@@ -1,24 +1,86 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, TrendingDown } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { formatPaise } from "@/lib/formatters";
-import { getConsoleInsights, type ConsoleGrowthMetrics } from "@/lib/api";
+import { getConsoleInsights, getConsoleTransactions, getConsoleTransactionDetail, getCatalogItem, type ConsoleGrowthMetrics, type ConsoleTransaction, type Product } from "@/lib/api";
+
+interface SavedDealRow {
+  sku: string;
+  requests: number;
+  converted: number;
+  walkedAway: number;
+  floorPaise: number | null;
+  pricePaise: number | null;
+}
+
+async function computeSavedDeals(txs: ConsoleTransaction[]): Promise<SavedDealRow[]> {
+  const details = await Promise.all(txs.slice(0, 20).map((tx) => getConsoleTransactionDetail(tx.order_id).catch(() => null)));
+  const bySku = new Map<string, SavedDealRow>();
+  for (const d of details) {
+    if (!d) continue;
+    const converted = d.status === "PAID" || d.status === "FULFILLED" || d.status === "QUOTED" || d.status === "AWAITING_CONSENT" || d.status === "CONSENTED";
+    for (const e of d.events || []) {
+      if (e.action === "negotiation.countered") {
+        const sku = (e.inputs as Record<string, unknown>)?.sku as string | undefined;
+        if (!sku) continue;
+        const row = bySku.get(sku) || { sku, requests: 0, converted: 0, walkedAway: 0, floorPaise: null, pricePaise: null };
+        row.requests += 1;
+        bySku.set(sku, row);
+      }
+    }
+    for (const item of d.items || []) {
+      const row = bySku.get(item.sku) || { sku: item.sku, requests: 0, converted: 0, walkedAway: 0, floorPaise: null, pricePaise: null };
+      if (converted) row.converted += 1;
+      else row.walkedAway += 1;
+      bySku.set(item.sku, row);
+    }
+  }
+  const rows = [...bySku.values()].filter((r) => r.requests > 0 || r.converted > 0);
+  rows.sort((a, b) => b.requests + b.walkedAway - (a.requests + a.walkedAway));
+  const top = rows.slice(0, 3);
+  await Promise.all(
+    top.map(async (row) => {
+      try {
+        const product: Product = await getCatalogItem(row.sku);
+        row.floorPaise = product.floor_paise;
+        row.pricePaise = product.price_paise;
+      } catch {
+        // leave floor/price null
+      }
+    })
+  );
+  return top;
+}
 
 export default function GrowthPage() {
   const [growth, setGrowth] = useState<ConsoleGrowthMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savedDeals, setSavedDeals] = useState<SavedDealRow[]>([]);
+  const [insightsLoading, setInsightsLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setInsightsLoading(true);
     try {
-      const data = await getConsoleInsights();
-      setGrowth(data);
+      const [growthData, txData] = await Promise.allSettled([getConsoleInsights(), getConsoleTransactions()]);
+      if (growthData.status === "fulfilled") setGrowth(growthData.value);
+      if (txData.status === "fulfilled") {
+        computeSavedDeals(txData.value)
+          .then(setSavedDeals)
+          .catch(() => setSavedDeals([]))
+          .finally(() => setInsightsLoading(false));
+      } else {
+        setInsightsLoading(false);
+      }
     } catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(t);
+  }, [fetchData]);
 
   const attachRate = growth && growth.upsell_offers > 0
     ? ((growth.upsell_accepted / growth.upsell_offers) * 100).toFixed(1)
@@ -87,6 +149,64 @@ export default function GrowthPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="border border-[var(--bb-line)] overflow-hidden">
+        <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between">
+          <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">SAVED DEAL & PRICING INSIGHT</div>
+          <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">
+            {insightsLoading ? "DERIVING FROM LEDGER…" : "TRACEABLE TO TRANSACTIONS"}
+          </div>
+        </div>
+        {savedDeals.length === 0 ? (
+          <div className="px-5 py-12 text-center">
+            <TrendingDown size={24} className="text-[var(--bb-grey-4)] mx-auto mb-3" />
+            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] mb-2">
+              {insightsLoading ? "Analyzing transactions…" : "Not enough negotiation data yet."}
+            </div>
+            <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-4)]">
+              Pricing insights appear as buyers negotiate at or below merchant floors.
+            </div>
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--bb-line-soft)]">
+            {savedDeals.map((row) => (
+              <div key={row.sku} className="px-5 py-4">
+                <div className="flex items-center gap-3 mb-3">
+                  <TrendingDown size={14} className="text-[var(--bb-orange)]" />
+                  <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{row.sku}</span>
+                  <span className="ml-auto font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">SAVED DEAL</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  <div>
+                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">Below-floor offers</div>
+                    <div className="font-[var(--font-mono)] text-[1rem] text-[var(--bb-white)]">{row.requests}</div>
+                  </div>
+                  <div>
+                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">Converted orders</div>
+                    <div className="font-[var(--font-mono)] text-[1rem] text-green-400">{row.converted}</div>
+                  </div>
+                  <div>
+                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">Walked away</div>
+                    <div className="font-[var(--font-mono)] text-[1rem] text-red-400">{row.walkedAway}</div>
+                  </div>
+                  <div>
+                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">Merchant floor</div>
+                    <div className="font-[var(--font-mono)] text-[1rem] text-[var(--bb-white)]">{row.floorPaise != null ? formatPaise(row.floorPaise) : "—"}</div>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] flex items-start gap-2">
+                  <TrendingDown size={13} className="text-[var(--bb-orange)] mt-0.5 flex-shrink-0" />
+                  <p className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-3)] leading-relaxed">
+                    {row.requests > 0
+                      ? `${row.requests} buyer offer${row.requests === 1 ? "" : "s"} fell at or below the merchant floor${row.floorPaise != null ? ` (${formatPaise(row.floorPaise)})` : ""}. ${row.walkedAway > 0 ? `${row.walkedAway} walked away without converting. ` : ""}Potential price sensitivity detected — offered as analytics only; merchant policy is not changed automatically.`
+                      : "Negotiation activity detected on this SKU."}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  MessageSquare,
   Activity,
   ShoppingCart,
   ShieldCheck,
@@ -16,9 +17,11 @@ import {
   Menu,
   X,
 } from "lucide-react";
+import { getAgentsStatus, type AgentsStatusResponse } from "@/lib/api";
 
 const sidebarLinks = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Chat", href: "/dashboard/chat", icon: MessageSquare },
   { label: "Activity", href: "/dashboard/activity", icon: Activity },
   { label: "Transactions", href: "/dashboard/transactions", icon: ShoppingCart },
   { label: "Approvals", href: "/dashboard/approvals", icon: ShieldCheck },
@@ -31,6 +34,23 @@ const sidebarLinks = [
 export function DashboardSidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [status, setStatus] = useState<AgentsStatusResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAgentsStatus()
+      .then((s) => {
+        if (!cancelled) setStatus(s);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const gatewayOk = status?.agent_gateway.status === "online";
+  const policyOk = status?.policy_engine.status === "healthy";
+  const ledgerOk = status?.ledger.status === "recording";
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
@@ -119,21 +139,21 @@ export function DashboardSidebar() {
         <div className="px-5 py-4 border-t border-[var(--bb-line)]">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              <span className={`w-1.5 h-1.5 rounded-full ${gatewayOk ? "bg-green-500" : "bg-yellow-400"}`} />
               <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                Gateway Healthy
+                Gateway {gatewayOk ? "Healthy" : "Offline"}
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              <span className={`w-1.5 h-1.5 rounded-full ${policyOk ? "bg-green-500" : "bg-yellow-400"}`} />
               <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                Policy Active
+                Policy {policyOk ? "Active" : "Offline"}
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              <span className={`w-1.5 h-1.5 rounded-full ${ledgerOk ? "bg-green-500" : "bg-yellow-400"}`} />
               <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                Ledger Recording
+                Ledger {ledgerOk ? "Recording" : "Offline"}
               </span>
             </div>
           </div>

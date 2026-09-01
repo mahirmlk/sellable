@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { ShieldCheck, CheckCircle, XCircle, RefreshCw } from "lucide-react";
+import Link from "next/link";
+import { ShieldCheck, CheckCircle, XCircle, RefreshCw, ArrowRight } from "lucide-react";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatTimestamp } from "@/lib/formatters";
 import { getConsoleApprovals, approveConsoleOrder, rejectConsoleOrder, type ConsoleApproval } from "@/lib/api";
@@ -29,7 +30,10 @@ export default function ApprovalsPage() {
     } catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(t);
+  }, [fetchData]);
 
   const handleApprove = async (orderId: string) => {
     try {
@@ -100,6 +104,9 @@ export default function ApprovalsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  <Link href={`/dashboard/transactions/${approval.orderId}`} className="inline-flex items-center gap-1.5 h-[36px] px-4 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all">
+                    VIEW CART <ArrowRight size={11} />
+                  </Link>
                   <button onClick={() => handleReject(approval.orderId)} className="inline-flex items-center gap-1.5 h-[36px] px-4 border border-red-400/30 bg-red-400/5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-red-400 hover:bg-red-400/10 transition-all cursor-pointer">
                     <XCircle size={12} /> REJECT
                   </button>

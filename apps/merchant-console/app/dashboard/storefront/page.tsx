@@ -45,7 +45,10 @@ export default function StorefrontPage() {
     } catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(t);
+  }, [fetchData]);
 
   const handleCopy = (path: string) => {
     navigator.clipboard.writeText(`https://sellable.dev${path}`);

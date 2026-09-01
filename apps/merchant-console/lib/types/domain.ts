@@ -39,6 +39,7 @@ interface Transaction {
     expiresAt: string;
     singleUse: boolean;
   };
+  buyerBudgetPaise?: number;
   payment?: {
     provider: string;
     orderId?: string;

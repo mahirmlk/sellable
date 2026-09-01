@@ -21,14 +21,49 @@ function mapTx(tx: ConsoleTransaction): Transaction {
     QUOTED: "QUOTED",
     FULFILLED: "PAID",
   };
+  const channel = tx.channel === "human_chat" ? "human_chat" : "agent_to_agent";
+  const consentStatus =
+    tx.consent_status === "CONSUMED"
+      ? "CONSENTED"
+      : tx.consent_status === "ISSUED"
+        ? "ISSUED"
+        : "NONE";
   return {
     id: tx.order_id,
     traceId: tx.trace_id,
     status: statusMap[tx.status] || tx.status as TransactionStatus,
     amountPaise: tx.amount_paise,
-    buyer: { id: tx.buyer_agent_id, type: "agent" },
-    channel: "agent_to_agent",
-    policy: { verdict: "ALLOW", policyRefs: [] },
+    buyer: { id: tx.buyer_agent_id, type: channel === "human_chat" ? "human" : "agent" },
+    channel,
+    policy: {
+      verdict: (tx.policy_verdict as Transaction["policy"]["verdict"]) || "ALLOW",
+      reasonCode: tx.policy_reason ?? undefined,
+      policyRefs: tx.policy_refs || [],
+      explanation: tx.policy_explanation ?? undefined,
+    },
+    consent: tx.consent_status
+      ? {
+          status: consentStatus,
+          amountPaise: tx.amount_paise,
+          expiresAt: tx.consent_expires_at || "",
+          singleUse: true,
+        }
+      : undefined,
+    payment: tx.payment_status
+      ? {
+          provider: "razorpay",
+          orderId: tx.payment_order_id || undefined,
+          paymentId: tx.payment_id || undefined,
+          status: tx.payment_status,
+          verifiedByWebhook: tx.payment_status === "CAPTURED",
+        }
+      : undefined,
+    items: tx.items?.map((item) => ({
+      sku: item.sku,
+      title: item.sku,
+      pricePaise: item.line_total_paise,
+      qty: item.quantity,
+    })),
     updatedAt: tx.created_at,
   };
 }
@@ -46,7 +81,10 @@ export default function TransactionsPage() {
     } catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(t);
+  }, [fetchData]);
 
   const filtered = statusFilter === "all" ? transactions : transactions.filter((tx) => tx.status === statusFilter);
   const statuses = ["all", "PAID", "AWAITING_CONSENT", "NEEDS_HUMAN_APPROVAL", "PAYMENT_PENDING", "PAYMENT_FAILED", "DENIED", "REFUNDED"];

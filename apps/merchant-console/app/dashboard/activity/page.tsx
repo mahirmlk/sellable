@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { RefreshCw } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { RefreshCw, Radio, Play } from "lucide-react";
 import { ActorBadge, ActorIcon } from "@/components/dashboard/actor-badge";
 import { formatTimestamp } from "@/lib/formatters";
 import { type ActorType, type LedgerEvent } from "@/lib/types/domain";
-import { getConsoleEvents } from "@/lib/api";
+import { getConsoleEvents, streamConsoleEvents, runBuyerMission } from "@/lib/api";
 
 const actorFilters: { label: string; value: ActorType | "all" }[] = [
   { label: "All Actors", value: "all" },
@@ -50,16 +50,83 @@ export default function ActivityPage() {
   const [typeFilter, setTypeFilter] = useState("All Events");
   const [events, setEvents] = useState<LedgerEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [streamMode, setStreamMode] = useState<"live" | "polling" | "offline">("polling");
+  const [runningMission, setRunningMission] = useState(false);
+  const seenIds = useRef<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const data = await getConsoleEvents(200);
-      if (data.events) setEvents(data.events.map(mapEvent));
+      if (data.events) {
+        const mapped = data.events.map(mapEvent);
+        for (const e of mapped) seenIds.current.add(e.eventId);
+        setEvents(mapped);
+      }
     } catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Live SSE with graceful fallback to polling.
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => {
+      void fetchData();
+    }, 0);
+    let pollTimer: number | null = null;
+    let stopStream: (() => void) | null = null;
+
+    const startStream = () => {
+      stopStream = streamConsoleEvents({
+        onEvent: (event) => {
+          setStreamMode("live");
+          if (seenIds.current.has(event.event_id)) return;
+          seenIds.current.add(event.event_id);
+          setEvents((prev) => [mapEvent(event), ...prev].slice(0, 500));
+        },
+        onError: () => {
+          setStreamMode("polling");
+          if (pollTimer) window.clearInterval(pollTimer);
+          pollTimer = window.setInterval(async () => {
+            try {
+              const data = await getConsoleEvents(20);
+              if (data.events) {
+                const fresh = data.events.map(mapEvent).filter((e) => !seenIds.current.has(e.eventId));
+                for (const e of fresh) seenIds.current.add(e.eventId);
+                if (fresh.length > 0) setEvents((prev) => [...fresh.reverse(), ...prev].slice(0, 500));
+              }
+            } catch {}
+          }, 5000);
+        },
+      });
+    };
+
+    startStream();
+    return () => {
+      window.clearTimeout(initialLoad);
+      if (stopStream) stopStream();
+      if (pollTimer) window.clearInterval(pollTimer);
+    };
+  }, [fetchData]);
+
+  const handleRunMission = useCallback(async () => {
+    if (runningMission) return;
+    setRunningMission(true);
+    try {
+      await runBuyerMission({
+        buyer_agent_id: "buyer_demo_01",
+        message: "I need coffee for my desk",
+        budget_ceiling_paise: 200_000,
+        allowed_categories: ["accessories", "gifting", "snacks"],
+        purpose: "Buy coffee",
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        request_upsell: true,
+      });
+      fetchData();
+    } catch {
+      // Backend is unreachable or rate-limited; the feed will show nothing new.
+    } finally {
+      setRunningMission(false);
+    }
+  }, [fetchData, runningMission]);
 
   const filtered = events.filter((e) => {
     if (actorFilter !== "all" && e.actor !== actorFilter) return false;
@@ -74,9 +141,20 @@ export default function ActivityPage() {
           <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">Activity</h1>
           <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">REAL-TIME OPERATIONAL FEED</p>
         </div>
-        <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)]">
+            <Radio size={12} className={streamMode === "live" ? "text-green-400 animate-[blink_2s_ease-in-out_infinite]" : streamMode === "polling" ? "text-yellow-400" : "text-red-400"} />
+            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+              {streamMode === "live" ? "LIVE" : streamMode === "polling" ? "POLLING" : "OFFLINE"}
+            </span>
+          </div>
+          <button onClick={handleRunMission} disabled={runningMission} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-orange)]/40 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-all cursor-pointer disabled:opacity-50">
+            {runningMission ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} RUN AI BUYER MISSION
+          </button>
+          <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-3 stagger-child">

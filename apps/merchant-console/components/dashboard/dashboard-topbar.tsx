@@ -1,11 +1,30 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Activity, Wifi, CreditCard, LogOut } from "lucide-react";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getAgentsStatus, type AgentsStatusResponse } from "@/lib/api";
 
 export function DashboardTopBar() {
   const router = useRouter();
+  const [status, setStatus] = useState<AgentsStatusResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAgentsStatus()
+      .then((s) => {
+        if (!cancelled) setStatus(s);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const agentOnline = status?.seller_agent.status === "online";
+  const gatewayOnline = status?.agent_gateway.status === "online";
+  const razorpayConfigured = status?.payment_rail.configured === true;
 
   const handleSignOut = async () => {
     try {
@@ -39,27 +58,27 @@ export function DashboardTopBar() {
       <div className="flex items-center gap-4">
         <div className="hidden sm:flex items-center gap-5">
           <div className="flex items-center gap-1.5">
-            <Activity size={12} className="text-green-400" />
+            <Activity size={12} className={agentOnline ? "text-green-400" : "text-yellow-400"} />
             <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
               Agent
             </span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] text-green-400">Online</span>
+            <span className={`font-[var(--font-mono)] text-[0.55rem] ${agentOnline ? "text-green-400" : "text-yellow-400"}`}>{agentOnline ? "Online" : "Offline"}</span>
           </div>
           <div className="w-px h-3 bg-[var(--bb-line)]" />
           <div className="flex items-center gap-1.5">
-            <Wifi size={12} className="text-green-400" />
+            <Wifi size={12} className={gatewayOnline ? "text-green-400" : "text-yellow-400"} />
             <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
               Gateway
             </span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] text-green-400">Healthy</span>
+            <span className={`font-[var(--font-mono)] text-[0.55rem] ${gatewayOnline ? "text-green-400" : "text-yellow-400"}`}>{gatewayOnline ? "Healthy" : "Offline"}</span>
           </div>
           <div className="w-px h-3 bg-[var(--bb-line)]" />
           <div className="flex items-center gap-1.5">
-            <CreditCard size={12} className="text-green-400" />
+            <CreditCard size={12} className={razorpayConfigured ? "text-green-400" : "text-yellow-400"} />
             <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
               Razorpay
             </span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] text-green-400">Connected</span>
+            <span className={`font-[var(--font-mono)] text-[0.55rem] ${razorpayConfigured ? "text-green-400" : "text-yellow-400"}`}>{razorpayConfigured ? "Connected" : "Unconfigured"}</span>
           </div>
         </div>
         <div className="w-px h-6 bg-[var(--bb-line)] hidden sm:block" />

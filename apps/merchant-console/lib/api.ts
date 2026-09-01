@@ -50,6 +50,26 @@ export interface ConsoleTransaction {
   quote_id: string;
   idempotency_key: string;
   created_at: string;
+  // Enrichment derived from the authoritative ledger (backend)
+  channel?: "agent_to_agent" | "human_chat";
+  items?: Array<{
+    sku: string;
+    quantity: number;
+    unit_price_paise: number;
+    offered_price_paise: number;
+    line_total_paise: number;
+  }>;
+  policy_verdict?: string | null;
+  policy_reason?: string | null;
+  policy_refs?: string[];
+  policy_explanation?: string | null;
+  buyer_budget_paise?: number | null;
+  consent_id?: string | null;
+  consent_status?: string | null;
+  consent_expires_at?: string | null;
+  payment_status?: string | null;
+  payment_order_id?: string | null;
+  payment_id?: string | null;
 }
 
 export interface ConsoleTransactionDetail extends ConsoleTransaction {
@@ -89,6 +109,132 @@ export interface ConsolePolicySettings {
   max_negotiation_rounds: number;
   max_upsells_per_session: number;
   human_approval_threshold_paise: number;
+}
+
+// --- Agents / system status ---
+
+export interface AgentStatus {
+  status: string;
+  mode?: string;
+}
+
+export interface AgentsStatusResponse {
+  buyer_agent: AgentStatus;
+  seller_agent: AgentStatus;
+  llm: { provider: string; model: string | null; enabled: boolean };
+  policy_engine: AgentStatus;
+  agent_gateway: AgentStatus;
+  payment_rail: {
+    provider: string;
+    mode: string;
+    configured: boolean;
+  };
+  ledger: AgentStatus;
+  summary: { total_orders: number; paid_orders: number };
+}
+
+// --- Seller agent / chat contracts (mirror backend) ---
+
+export interface IntentMandate {
+  mandate_id: string;
+  buyer_agent_id: string;
+  budget_ceiling_paise: number;
+  allowed_categories: string[];
+  purpose: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export interface SellerRequestPayload {
+  message: string;
+  intent: IntentMandate;
+  requested_sku?: string | null;
+  quantity?: number;
+  buyer_offer_paise?: number | null;
+  request_upsell?: boolean;
+}
+
+export interface CartItemPayload {
+  sku: string;
+  quantity: number;
+  unit_price_paise: number;
+  offered_price_paise: number;
+  line_total_paise?: number;
+}
+
+export interface CartPayload {
+  mandate_id: string;
+  intent_ref: string;
+  items: CartItemPayload[];
+  subtotal_paise: number;
+  discount_paise: number;
+  total_paise: number;
+  upsell_offered: boolean;
+  upsell_rationale: string | null;
+  negotiation_round: number;
+}
+
+export interface PolicyDecisionPayload {
+  verdict: "ALLOW" | "DENY" | "NEEDS_HUMAN_APPROVAL";
+  reason_code: string | null;
+  reasoning_summary: string;
+  policy_refs: string[];
+}
+
+export interface SellerDecisionPayload {
+  trace_id: string;
+  action: "QUOTE_READY" | "COUNTERED" | "NEEDS_HUMAN_APPROVAL" | "DENIED" | "NO_MATCH";
+  response_message: string;
+  cart: CartPayload | null;
+  policy_decision: PolicyDecisionPayload | null;
+  selected_product: Product | null;
+  upsell_product: Product | null;
+  tool_calls: string[];
+}
+
+export interface OrderCreateResult {
+  order_id: string;
+  trace_id: string;
+  status: string;
+  amount_paise: number;
+  quote_id: string;
+  idempotency_key: string;
+  requires_approval?: boolean;
+  replayed?: boolean;
+}
+
+export interface ConsentInfo {
+  consent_id: string;
+  order_id: string;
+  amount_paise: number;
+  payee_id: string;
+  purpose: string;
+  expires_at: string;
+  single_use: boolean;
+  status: string;
+}
+
+export interface PaymentAttemptPayload {
+  attempt_id: string;
+  order_id: string;
+  provider: string;
+  provider_order_id: string;
+  provider_payment_id: string | null;
+  status: "PAYMENT_PENDING" | "CAPTURED" | "FAILED";
+  idempotency_key: string;
+  failure_reason: string | null;
+  created_at: string;
+}
+
+export interface BuyerResultPayload {
+  trace_id: string;
+  action: "READY_FOR_CONSENT" | "NEEDS_HUMAN_APPROVAL" | "DENIED" | "NO_MATCH";
+  buyer_summary: string;
+  merchant_manifest: Record<string, unknown>;
+  seller_decision: SellerDecisionPayload | null;
+  order_id: string | null;
+  consent_id: string | null;
+  steps: string[];
 }
 
 async function getMerchantToken(): Promise<string | null> {
@@ -214,4 +360,155 @@ export async function updateConsolePolicy(
 export async function getHealthPublic(): Promise<HealthResponse> {
   const res = await fetch(`${API_BASE}/health`);
   return res.json();
+}
+
+// --- Agents / system status ---
+
+export async function getAgentsStatus(): Promise<AgentsStatusResponse> {
+  return apiFetch<AgentsStatusResponse>("/agents/status");
+}
+
+// --- Seller agent / chat ---
+
+export async function sellerRespond(body: SellerRequestPayload): Promise<SellerDecisionPayload> {
+  return apiFetch<SellerDecisionPayload>("/agent/seller/respond", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function createOrder(body: {
+  intent: IntentMandate;
+  message: string;
+  idempotency_key: string;
+  request_upsell: boolean;
+  trace_id?: string;
+}): Promise<OrderCreateResult> {
+  return apiFetch<OrderCreateResult>("/agent/orders.create", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function requestConsent(orderId: string): Promise<ConsentInfo> {
+  return apiFetch<ConsentInfo>("/agent/consents.request", {
+    method: "POST",
+    body: JSON.stringify({ order_id: orderId }),
+  });
+}
+
+export async function startPayment(orderId: string, consentId: string): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/orders/${orderId}/payment`, {
+    method: "POST",
+    body: JSON.stringify({ consent_id: consentId }),
+  });
+}
+
+export async function retryPayment(orderId: string): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/orders/${orderId}/payment/retry`, {
+    method: "POST",
+  });
+}
+
+export async function refundOrder(orderId: string, reason = "merchant_initiated"): Promise<{ status: string; order_id: string }> {
+  return apiFetch<{ status: string; order_id: string }>(`/orders/${orderId}/refund?reason=${encodeURIComponent(reason)}`, {
+    method: "POST",
+  });
+}
+
+// --- Development-only webhook simulation (goes through the verified boundary) ---
+
+export async function simulatePaymentCapture(orderId: string): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-capture`, {
+    method: "POST",
+  });
+}
+
+export async function simulatePaymentFailure(orderId: string): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-failure`, {
+    method: "POST",
+  });
+}
+
+export async function getCatalogItem(sku: string): Promise<Product> {
+  return apiFetch<Product>("/agent/catalog.get", {
+    method: "POST",
+    body: JSON.stringify({ sku }),
+  });
+}
+
+export async function runBuyerMission(body: {
+  buyer_agent_id: string;
+  message: string;
+  budget_ceiling_paise: number;
+  allowed_categories: string[];
+  purpose: string;
+  expires_at: string;
+  request_upsell: boolean;
+}): Promise<BuyerResultPayload> {
+  return apiFetch<BuyerResultPayload>("/agent/buyer/run", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// --- Realtime (SSE with fetch so the merchant auth headers are attached) ---
+
+export interface StreamHandlers {
+  onEvent: (event: LedgerEvent) => void;
+  onError: (error: unknown) => void;
+}
+
+export function streamConsoleEvents(handlers: StreamHandlers): () => void {
+  const controller = new AbortController();
+  let stopped = false;
+
+  async function read() {
+    let buffer = "";
+    try {
+      const res = await fetch(`${API_BASE}/activity/stream`, {
+        signal: controller.signal,
+        headers: await buildHeaders(),
+      });
+      if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload) continue;
+          try {
+            handlers.onEvent(JSON.parse(payload));
+          } catch {
+            // Ignore malformed frames
+          }
+        }
+      }
+    } catch (error) {
+      if (!stopped) handlers.onError(error);
+    }
+  }
+
+  read();
+  return () => {
+    stopped = true;
+    controller.abort();
+  };
+}
+
+async function buildHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (AGENT_KEY) headers["X-Agent-Key"] = AGENT_KEY;
+  const token = await getMerchantToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
 }

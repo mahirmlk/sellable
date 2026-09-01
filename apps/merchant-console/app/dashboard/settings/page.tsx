@@ -2,8 +2,19 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Save, RefreshCw, Check, AlertCircle } from "lucide-react";
-import { formatPaise } from "@/lib/formatters";
-import { getConsolePolicy, updateConsolePolicy, type ConsolePolicySettings } from "@/lib/api";
+import { getConsolePolicy, updateConsolePolicy, getAgentsStatus, type ConsolePolicySettings, type AgentsStatusResponse } from "@/lib/api";
+
+function StatusLine({ label, ok, text }: { label: string; ok: boolean | undefined; text: string }) {
+  return (
+    <div className="flex items-center justify-between py-2 border-b border-[var(--bb-line-soft)] last:border-b-0">
+      <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-4)]">{label}</span>
+      <span className="flex items-center gap-2">
+        <span className={`w-1.5 h-1.5 rounded-full ${ok ? "bg-green-500" : "bg-yellow-400"}`} />
+        <span className={`font-[var(--font-mono)] text-[0.65rem] ${ok ? "text-green-400" : "text-yellow-400"}`}>{text}</span>
+      </span>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
@@ -11,17 +22,24 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<"success" | "error" | null>(null);
+  const [agentsStatus, setAgentsStatus] = useState<AgentsStatusResponse | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getConsolePolicy();
-      setPolicy(data);
-      setEditing({});
+      const [p, s] = await Promise.allSettled([getConsolePolicy(), getAgentsStatus()]);
+      if (p.status === "fulfilled") {
+        setPolicy(p.value);
+        setEditing({});
+      }
+      if (s.status === "fulfilled") setAgentsStatus(s.value);
     } catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(t);
+  }, [fetchData]);
 
   const handleChange = (key: keyof ConsolePolicySettings, value: string) => {
     if (!policy) return;
@@ -169,6 +187,46 @@ export default function SettingsPage() {
           </div>
         </>
       )}
+
+      <div className="border border-[var(--bb-line)] overflow-hidden">
+        <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between">
+          <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">AGENT & SYSTEM STATUS</div>
+          <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">READ FROM BACKEND /agents/status</div>
+        </div>
+        <div className="px-5 py-2">
+          <StatusLine label="Seller Agent" ok={agentsStatus?.seller_agent.status === "online"} text={agentsStatus?.seller_agent.status ?? "…"} />
+          <StatusLine label="Buyer Agent" ok={agentsStatus?.buyer_agent.status === "online"} text={agentsStatus?.buyer_agent.status ?? "…"} />
+          <StatusLine label="Agent Gateway" ok={agentsStatus?.agent_gateway.status === "online"} text={agentsStatus?.agent_gateway.status ?? "…"} />
+          <StatusLine label="Policy Engine" ok={agentsStatus?.policy_engine.status === "healthy"} text={agentsStatus?.policy_engine.status ?? "…"} />
+          <StatusLine label="Payment Rail" ok={agentsStatus?.payment_rail.configured === true} text={agentsStatus?.payment_rail.configured ? `${agentsStatus.payment_rail.provider} · ${agentsStatus.payment_rail.mode}` : "Unconfigured"} />
+          <StatusLine label="Ledger" ok={agentsStatus?.ledger.status === "recording"} text={agentsStatus?.ledger.status ?? "…"} />
+        </div>
+        <div className="px-5 py-4 border-t border-[var(--bb-line-soft)]">
+          <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-2">AI / MODEL CONFIGURATION</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Provider</div>
+              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{agentsStatus?.llm.provider || "mock"}</div>
+            </div>
+            <div>
+              <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Model</div>
+              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{agentsStatus?.llm.model || "deterministic"}</div>
+            </div>
+            <div>
+              <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Status</div>
+              <div className="flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full ${agentsStatus?.llm.enabled ? "bg-green-500" : "bg-yellow-400"}`} />
+                <span className={`font-[var(--font-mono)] text-[0.7rem] ${agentsStatus?.llm.enabled ? "text-green-400" : "text-yellow-400"}`}>
+                  {agentsStatus?.llm.enabled ? "Connected" : "Scripted"}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] font-[var(--font-sans)] text-[0.7rem] text-[var(--bb-grey-3)] leading-relaxed">
+            Provider and model can be substituted without changing Commerce Core, Policy, Payments, Ledger, or the console. Credentials never leave the backend.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

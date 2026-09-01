@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
 import { searchCatalog, type Product } from "@/lib/api";
@@ -18,7 +19,10 @@ export default function CatalogPage() {
     } catch {} finally { setLoading(false); }
   }, [searchQuery]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(t);
+  }, [fetchData]);
 
   return (
     <div className="p-6 space-y-6">
@@ -55,14 +59,14 @@ export default function CatalogPage() {
               {loading ? "Loading catalog..." : "No products found."}
             </div>
           ) : catalog.map((p, i) => (
-            <div key={p.id} className={`hidden lg:grid grid-cols-[80px_1fr_140px_100px_80px_80px] gap-3 px-5 py-3 items-center hover:bg-[var(--bb-panel)] transition-colors ${i < catalog.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
+            <Link key={p.id} href={`/dashboard/catalog/${p.sku}`} className={`hidden lg:grid grid-cols-[80px_1fr_140px_100px_80px_80px] gap-3 px-5 py-3 items-center hover:bg-[var(--bb-panel)] transition-colors ${i < catalog.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
               <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{p.sku}</div>
               <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)]">{p.title}</div>
               <div className="font-[var(--font-mono)] text-[0.75rem] text-[var(--bb-white)]">{formatPaise(p.price_paise)}</div>
               <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-3)]">{formatPaise(p.floor_paise)}</div>
               <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-2)]">{p.stock}</div>
               <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">{p.category}</div>
-            </div>
+            </Link>
           ))}
         </div>
       </div>

@@ -176,6 +176,17 @@ class CommerceCore:
                     "order_id": order.order_id,
                     "status": order.status,
                     "requires_approval": requires_approval,
+                    "items": [
+                        {
+                            "sku": item.sku,
+                            "quantity": item.quantity,
+                            "unit_price_paise": item.unit_price_paise,
+                            "offered_price_paise": item.offered_price_paise,
+                            "line_total_paise": item.line_total_paise,
+                        }
+                        for item in cart.items
+                    ],
+                    "buyer_budget_paise": intent.budget_ceiling_paise,
                 },
                 reasoning_summary=(
                     "Created an order only after the deterministic policy engine allowed it. "

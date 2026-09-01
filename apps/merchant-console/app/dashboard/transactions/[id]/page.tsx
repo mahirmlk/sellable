@@ -7,7 +7,7 @@ import { ArrowLeft, RotateCcw, RefreshCw } from "lucide-react";
 import { StatusBadge, PolicyBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatPaise, formatTimestamp } from "@/lib/formatters";
-import { getConsoleTransactionDetail, type ConsoleTransactionDetail, type LedgerEvent as ApiLedgerEvent } from "@/lib/api";
+import { getConsoleTransactionDetail, refundOrder, type ConsoleTransactionDetail, type LedgerEvent as ApiLedgerEvent } from "@/lib/api";
 import { type LedgerEvent, type Transaction, type TransactionStatus } from "@/lib/types/domain";
 
 function mapTxDetail(tx: ConsoleTransactionDetail): Transaction {
@@ -22,14 +22,50 @@ function mapTxDetail(tx: ConsoleTransactionDetail): Transaction {
     QUOTED: "QUOTED",
     FULFILLED: "PAID",
   };
+  const channel = tx.channel === "human_chat" ? "human_chat" : "agent_to_agent";
+  const consentStatus =
+    tx.consent_status === "CONSUMED"
+      ? "CONSENTED"
+      : tx.consent_status === "ISSUED"
+        ? "ISSUED"
+        : "NONE";
   return {
     id: tx.order_id,
     traceId: tx.trace_id,
     status: statusMap[tx.status] || tx.status as TransactionStatus,
     amountPaise: tx.amount_paise,
-    buyer: { id: tx.buyer_agent_id, type: "agent" },
-    channel: "agent_to_agent",
-    policy: { verdict: "ALLOW", policyRefs: [] },
+    buyer: { id: tx.buyer_agent_id, type: channel === "human_chat" ? "human" : "agent" },
+    channel,
+    policy: {
+      verdict: (tx.policy_verdict as Transaction["policy"]["verdict"]) || "ALLOW",
+      reasonCode: tx.policy_reason ?? undefined,
+      policyRefs: tx.policy_refs || [],
+      explanation: tx.policy_explanation ?? undefined,
+    },
+    consent: tx.consent_status
+      ? {
+          status: consentStatus,
+          amountPaise: tx.amount_paise,
+          expiresAt: tx.consent_expires_at || "",
+          singleUse: true,
+        }
+      : undefined,
+    buyerBudgetPaise: tx.buyer_budget_paise ?? undefined,
+    payment: tx.payment_status
+      ? {
+          provider: "razorpay",
+          orderId: tx.payment_order_id || undefined,
+          paymentId: tx.payment_id || undefined,
+          status: tx.payment_status,
+          verifiedByWebhook: tx.payment_status === "CAPTURED",
+        }
+      : undefined,
+    items: tx.items?.map((item) => ({
+      sku: item.sku,
+      title: item.sku,
+      pricePaise: item.line_total_paise,
+      qty: item.quantity,
+    })),
     updatedAt: tx.created_at,
   };
 }
@@ -56,6 +92,8 @@ export default function TransactionDetailPage() {
   const [tx, setTx] = useState<Transaction | null>(null);
   const [txEvents, setTxEvents] = useState<LedgerEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refunding, setRefunding] = useState(false);
+  const [refundMsg, setRefundMsg] = useState<"success" | "error" | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -66,7 +104,25 @@ export default function TransactionDetailPage() {
     } catch {} finally { setLoading(false); }
   }, [id]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    const t = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(t);
+  }, [fetchData]);
+
+  const handleRefund = useCallback(async () => {
+    if (!tx || refunding) return;
+    setRefunding(true);
+    setRefundMsg(null);
+    try {
+      await refundOrder(tx.id, "Merchant-initiated refund from transaction detail");
+      setRefundMsg("success");
+      fetchData();
+    } catch {
+      setRefundMsg("error");
+    } finally {
+      setRefunding(false);
+    }
+  }, [tx, refunding, fetchData]);
 
   if (loading) {
     return (
@@ -117,9 +173,29 @@ export default function TransactionDetailPage() {
             <Link href={`/dashboard/transactions/${tx.id}/replay`} className="inline-flex items-center gap-2 h-[36px] px-4 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all">
               <RotateCcw size={12} /> VIEW REPLAY
             </Link>
+            {tx.status === "PAID" && (
+              <button
+                onClick={handleRefund}
+                disabled={refunding}
+                className="inline-flex items-center gap-2 h-[36px] px-4 border border-red-400/30 bg-red-400/5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-red-400 hover:bg-red-400/10 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RotateCcw size={12} /> {refunding ? "REFUNDING…" : "REFUND"}
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {refundMsg === "success" && (
+        <div className="border border-green-400/30 bg-green-400/5 px-5 py-3">
+          <span className="font-[var(--font-mono)] text-[0.65rem] text-green-400">Refund initiated. The ledger records the refund as an auditable event.</span>
+        </div>
+      )}
+      {refundMsg === "error" && (
+        <div className="border border-red-400/30 bg-red-400/5 px-5 py-3">
+          <span className="font-[var(--font-mono)] text-[0.65rem] text-red-400">Refund failed. The backend rejected the request.</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
         <div className="space-y-6">
@@ -180,10 +256,29 @@ export default function TransactionDetailPage() {
           <div className="border border-[var(--bb-line)] p-5 stagger-child">
             <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-4)] mb-4">POLICY DECISION</div>
             <div className="mb-4"><PolicyBadge verdict={tx.policy.verdict} /></div>
+            {tx.policy.reasonCode && (
+              <div className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-white)] mb-2">Reason: {tx.policy.reasonCode}</div>
+            )}
             {tx.policy.explanation && (
               <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)] leading-relaxed mb-4">{tx.policy.explanation}</div>
             )}
-            <div className="border-t border-[var(--bb-line)] pt-3 mt-3">
+            {tx.policy.verdict === "DENY" && (
+              <div className="border border-red-400/30 bg-red-400/5 p-3 mb-4">
+                <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-2">Razorpay</div>
+                <div className="font-[var(--font-mono)] text-[0.7rem] text-red-400">NOT ATTEMPTED</div>
+              </div>
+            )}
+            {tx.buyerBudgetPaise != null && (
+              <div className="flex items-center justify-between py-1 border-t border-[var(--bb-line-soft)]">
+                <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Buyer budget</span>
+                <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{formatPaise(tx.buyerBudgetPaise)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between py-1">
+              <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Final amount</span>
+              <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{formatPaise(tx.amountPaise)}</span>
+            </div>
+            <div className="border-t border-[var(--bb-line)] pt-3 mt-2">
               <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-2">Policies evaluated</div>
               <div className="flex flex-wrap gap-1.5">
                 {tx.policy.policyRefs.map((ref) => (
@@ -231,10 +326,27 @@ export default function TransactionDetailPage() {
                     <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{tx.payment.orderId}</span>
                   </div>
                 )}
+                {tx.payment.paymentId && (
+                  <div className="flex items-center justify-between">
+                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Payment ID</span>
+                    <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{tx.payment.paymentId}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Status</span>
                   <span className={`font-[var(--font-mono)] text-[0.65rem] ${tx.payment.status === "CAPTURED" ? "text-green-400" : tx.payment.status === "FAILED" ? "text-red-400" : "text-yellow-400"}`}>{tx.payment.status}</span>
                 </div>
+                {tx.payment.verifiedByWebhook && (
+                  <div className="flex items-center justify-between">
+                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Confirmed by</span>
+                    <span className="font-[var(--font-mono)] text-[0.65rem] text-green-400">Verified webhook</span>
+                  </div>
+                )}
+                {tx.payment.status === "PAYMENT_PENDING" && (
+                  <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-3)] leading-relaxed">
+                    Awaiting verified provider confirmation. Do not manually mark this order as paid.
+                  </div>
+                )}
               </div>
             </div>
           )}

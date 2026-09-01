@@ -213,6 +213,8 @@ class OrderCreateRequest(StrictModel):
     idempotency_key: str = Field(min_length=16, max_length=256)
     request_upsell: bool = True
     trace_id: str | None = Field(default=None, max_length=128)
+    requested_sku: str | None = Field(default=None, max_length=64)
+    buyer_offer_paise: int | None = Field(default=None, gt=0)
 
 
 class OrderStatusRequest(StrictModel):
@@ -289,6 +291,20 @@ class ConsoleTransactionItem(StrictModel):
     quote_id: str
     idempotency_key: str
     created_at: datetime
+    # Enrichment derived from the authoritative ledger (§9/§40)
+    channel: str = "agent_to_agent"
+    items: list[dict[str, object]] = Field(default_factory=list)
+    policy_verdict: str | None = None
+    policy_reason: str | None = None
+    policy_refs: list[str] = Field(default_factory=list)
+    policy_explanation: str | None = None
+    buyer_budget_paise: int | None = None
+    consent_id: str | None = None
+    consent_status: str | None = None
+    consent_expires_at: str | None = None
+    payment_status: str | None = None
+    payment_order_id: str | None = None
+    payment_id: str | None = None
 
 
 class ConsoleTransactionDetail(ConsoleTransactionItem):
