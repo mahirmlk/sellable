@@ -7,10 +7,10 @@ import { Eyebrow } from "./ui/eyebrow";
 const codeLines = [
   { text: "curl", color: "text-[var(--bb-orange)]" },
   { text: " -X POST ", color: "text-[var(--bb-grey-1)]" },
-  { text: "https://api.sellable.dev/agent/catalog.search", color: "text-[var(--bb-white)]" },
+  { text: "https://api.sellable.shop/agent/catalog.search", color: "text-[var(--bb-white)]" },
   { text: " \\", color: "text-[var(--bb-grey-3)]" },
   { text: "  -H ", color: "text-[var(--bb-grey-1)]" },
-  { text: '"Authorization: Bearer sk_live_..."', color: "text-green-400" },
+  { text: '"X-Agent-Key: <your agent key>"', color: "text-green-400" },
   { text: " \\", color: "text-[var(--bb-grey-3)]" },
   { text: "  -H ", color: "text-[var(--bb-grey-1)]" },
   { text: '"Content-Type: application/json"', color: "text-green-400" },
@@ -36,8 +36,8 @@ export function CodeSection() {
   const [copied, setCopied] = useState(false);
   const [hoveredLine, setHoveredLine] = useState<number | null>(null);
 
-  const codeText = `curl -X POST https://api.sellable.dev/agent/catalog.search \\
-  -H "Authorization: Bearer sk_live_..." \\
+  const codeText = `curl -X POST https://api.sellable.shop/agent/catalog.search \\
+  -H "X-Agent-Key: <your agent key>" \\
   -H "Content-Type: application/json" \\
   -d '{
     "query": "wireless headphones",

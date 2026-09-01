@@ -125,11 +125,6 @@ export function DashboardSidebar() {
               >
                 <Icon size={16} strokeWidth={1.5} className={`transition-colors ${active ? "text-[var(--bb-orange)]" : "group-hover:text-[var(--bb-grey-1)]"}`} />
                 <span className="font-[var(--font-sans)]">{link.label}</span>
-                {link.label === "Approvals" && (
-                  <span className="ml-auto font-[var(--font-mono)] text-[0.55rem] bg-[var(--bb-orange)] text-[var(--bb-black)] px-1.5 py-0.5 rounded-sm">
-                    3
-                  </span>
-                )}
               </Link>
             );
           })}

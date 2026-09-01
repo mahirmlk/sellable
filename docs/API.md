@@ -1,6 +1,9 @@
 # API Reference
 
-Base URL: `http://localhost:8000`
+Base URLs:
+
+- Production: `https://api.sellable.shop`
+- Local development: `http://localhost:8000`
 
 ## Authentication
 

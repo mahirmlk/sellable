@@ -3,46 +3,50 @@
 import { useEffect, useState } from "react";
 import { ScrollReveal } from "./ui/scroll-reveal";
 import { AnimatedCounter } from "./ui/animated-counter";
-import { searchCatalog } from "@/lib/api";
+import { searchCatalog, getAgentManifest, getHealthPublic } from "@/lib/api";
 
 interface Stat {
-  value: number;
   label: string;
   hint: string;
   highlight: boolean;
   prefix: string;
   suffix: string;
+  numeric: number | null;
+  text: string | null;
 }
 
+// Every value here is derived from live backend data (catalog count, agent
+// manifest capabilities, health). No fabricated metrics.
 export function StatStrip() {
   const [stats, setStats] = useState<Stat[]>([
-    { value: 0, label: "CATALOG PRODUCTS", hint: "Live catalog count", highlight: false, prefix: "", suffix: "" },
-    { value: 0, label: "POLICY RULES", hint: "Deterministic checks", highlight: false, prefix: "", suffix: "" },
-    { value: 0, label: "AGENT RESPONSE", hint: "Typical p95", highlight: true, prefix: "<", suffix: "s" },
-    { value: 0, label: "AUDIT COVERAGE", hint: "Money actions logged", highlight: false, prefix: "", suffix: "%" },
+    { label: "CATALOG PRODUCTS", hint: "Live catalog count", highlight: false, prefix: "", suffix: "", numeric: null, text: "—" },
+    { label: "AGENT CAPABILITIES", hint: "Manifest capabilities", highlight: false, prefix: "", suffix: "", numeric: null, text: "—" },
+    { label: "POLICY ENGINE", hint: "Deterministic money boundary", highlight: true, prefix: "", suffix: "", numeric: null, text: "DETERMINISTIC" },
+    { label: "PAYMENT RAIL", hint: "Razorpay test mode", highlight: false, prefix: "", suffix: "", numeric: null, text: "—" },
   ]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    searchCatalog("")
-      .then((catalog) => {
-        setStats([
-          { value: catalog.length || 10, label: "CATALOG PRODUCTS", hint: "Live catalog count", highlight: false, prefix: "", suffix: "" },
-          { value: 7, label: "POLICY RULES", hint: "SKU → HITL checks", highlight: false, prefix: "", suffix: "" },
-          { value: 2, label: "AGENT RESPONSE", hint: "Typical p95", highlight: true, prefix: "<", suffix: "s" },
-          { value: 100, label: "AUDIT COVERAGE", hint: "Money actions logged", highlight: false, prefix: "", suffix: "%" },
-        ]);
-        setLoaded(true);
-      })
-      .catch(() => {
-        setStats([
-          { value: 10, label: "CATALOG PRODUCTS", hint: "Seed catalog", highlight: false, prefix: "", suffix: "" },
-          { value: 7, label: "POLICY RULES", hint: "SKU → HITL checks", highlight: false, prefix: "", suffix: "" },
-          { value: 2, label: "AGENT RESPONSE", hint: "Typical p95", highlight: true, prefix: "<", suffix: "s" },
-          { value: 100, label: "AUDIT COVERAGE", hint: "Money actions logged", highlight: false, prefix: "", suffix: "%" },
-        ]);
-        setLoaded(true);
-      });
+    const t = window.setTimeout(() => {
+      Promise.allSettled([searchCatalog(""), getAgentManifest(), getHealthPublic()]).then(
+        ([catalog, manifest, health]) => {
+          const catalogCount = catalog.status === "fulfilled" ? catalog.value.length : null;
+          const capabilities =
+            manifest.status === "fulfilled" && Array.isArray(manifest.value.capabilities)
+              ? manifest.value.capabilities.length
+              : null;
+          const razorpayConfigured = health.status === "fulfilled" ? health.value.razorpay_configured : null;
+          setStats([
+            { label: "CATALOG PRODUCTS", hint: "Live catalog count", highlight: false, prefix: "", suffix: "", numeric: catalogCount, text: catalogCount != null ? null : "—" },
+            { label: "AGENT CAPABILITIES", hint: "Manifest capabilities", highlight: false, prefix: "", suffix: "", numeric: capabilities, text: capabilities != null ? null : "—" },
+            { label: "POLICY ENGINE", hint: "Deterministic money boundary", highlight: true, prefix: "", suffix: "", numeric: null, text: "DETERMINISTIC" },
+            { label: "PAYMENT RAIL", hint: "Razorpay test mode", highlight: false, prefix: "", suffix: "", numeric: null, text: razorpayConfigured == null ? "—" : razorpayConfigured ? "RAZORPAY TEST" : "UNCONFIGURED" },
+          ]);
+          setLoaded(true);
+        }
+      );
+    }, 0);
+    return () => window.clearTimeout(t);
   }, []);
 
   return (
@@ -58,14 +62,20 @@ export function StatStrip() {
               <div
                 className="stat group relative transition-all duration-300 hover:bg-[var(--bb-panel)]/50 overflow-hidden"
                 title={stat.hint}
-                aria-label={`${stat.label}: ${stat.prefix}${stat.value}${stat.suffix} — ${stat.hint}`}
+                aria-label={`${stat.label}: ${stat.numeric != null ? stat.numeric : stat.text} — ${stat.hint}`}
               >
                 <div
                   className={`stat-value transition-colors duration-200 ${stat.highlight ? "text-[var(--bb-orange)]" : "text-[var(--bb-white)]"} ${!loaded ? "opacity-0" : "opacity-100"}`}
                 >
-                  {stat.prefix}
-                  <AnimatedCounter target={stat.value} duration={1000} />
-                  {stat.suffix}
+                  {stat.numeric != null ? (
+                    <>
+                      {stat.prefix}
+                      <AnimatedCounter target={stat.numeric} duration={1000} />
+                      {stat.suffix}
+                    </>
+                  ) : (
+                    <span className="text-[clamp(1.3rem,2vw,1.9rem)]">{stat.text}</span>
+                  )}
                   {stat.highlight && (
                     <span className="ml-2 inline-block w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] align-middle animate-[pulse_1.5s_ease-in-out_infinite]" aria-hidden="true" />
                   )}

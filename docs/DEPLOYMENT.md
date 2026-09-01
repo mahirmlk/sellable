@@ -7,13 +7,13 @@ Railway backend (no localhost dependency in production).
 
 | Service | Provider | Purpose | URL |
 |---------|----------|---------|-----|
-| Merchant Console | Vercel | Next.js frontend | `https://merchant-console-gamma.vercel.app` |
-| Commerce Core | Railway | FastAPI backend | `https://backend-production-5368.up.railway.app` |
+| Merchant Console | Vercel | Next.js frontend | `https://sellable.shop` |
+| Commerce Core | Railway | FastAPI backend | `https://api.sellable.shop` |
 | Postgres + Auth | Supabase | Database + merchant login | project `cptkhacsfmycjxxbufkx` |
 | Payments | Razorpay | Test-mode payment rail | — |
 
 Razorpay webhooks point at the Railway backend:
-`https://backend-production-5368.up.railway.app/webhooks/razorpay`
+`https://api.sellable.shop/webhooks/razorpay`
 (subscribed to `payment.captured` and `payment.failed`).
 
 ---
@@ -123,7 +123,7 @@ demo merchant (`mrc_demo_store`).
 
 In Razorpay **Test Mode**:
 
-1. Webhook URL: `https://backend-production-5368.up.railway.app/webhooks/razorpay`
+1. Webhook URL: `https://api.sellable.shop/webhooks/razorpay`
 2. Secret: same value as `RAZORPAY_WEBHOOK_SECRET`
 3. Events: `payment.captured`, `payment.failed`
 

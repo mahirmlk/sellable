@@ -51,7 +51,7 @@ export default function StorefrontPage() {
   }, [fetchData]);
 
   const handleCopy = (path: string) => {
-    navigator.clipboard.writeText(`https://sellable.dev${path}`);
+    navigator.clipboard.writeText(`https://api.sellable.shop${path}`);
     setCopiedPath(path);
     setTimeout(() => setCopiedPath(null), 2000);
   };

@@ -43,7 +43,7 @@ class OpenRouterAdapter(_OpenAICompatibleAdapter):
     default_model = "openrouter/auto"
     base_url = "https://openrouter.ai/api/v1"
     default_headers = {
-        "HTTP-Referer": "https://sellable.dev",
+        "HTTP-Referer": "https://sellable.shop",
         "X-Title": "SELLABLE",
     }
 
@@ -69,6 +69,6 @@ class OpenCodeZenAdapter(_OpenAICompatibleAdapter):
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
         ),
-        "HTTP-Referer": "https://sellable.dev",
+        "HTTP-Referer": "https://sellable.shop",
         "X-Title": "SELLABLE",
     }

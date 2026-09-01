@@ -1,4 +1,8 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Production backend is https://api.sellable.shop; localhost is only the
+// development fallback. NEXT_PUBLIC_API_URL overrides both when set.
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "production" ? "https://api.sellable.shop" : "http://localhost:8000");
 // In demo mode (no Supabase configured) the console authenticates with the
 // public demo key. With Supabase configured, merchant auth uses the JWT.
 const isDemoMode = () => !process.env.NEXT_PUBLIC_SUPABASE_URL;
