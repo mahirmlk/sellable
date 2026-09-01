@@ -58,7 +58,7 @@ export const metadata: Metadata = {
       "Agent proposes, policy disposes. AI buyers discover, negotiate, and pay — every money action is explainable, bounded, gated, and auditable.",
     images: [
       {
-        url: "/opengraph-image",
+        url: "/og-image.png",
         width: 1200,
         height: 630,
         alt: "SELLABLE — Agentic Commerce Infrastructure",
@@ -70,7 +70,7 @@ export const metadata: Metadata = {
     title: "SELLABLE — Agentic Commerce Infrastructure",
     description:
       "Agent proposes, policy disposes. Every money action is explainable, bounded, gated, and auditable — on real Razorpay Test Mode.",
-    images: ["/twitter-image"],
+    images: ["/og-image.png"],
     creator: "@sellable_dev",
   },
   robots: {
