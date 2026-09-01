@@ -6,7 +6,7 @@
 
 ### Agentic Commerce Infrastructure
 
-**Infrastructure that lets AI buyers discover, negotiate with, and safely purchase from merchants — with deterministic policy enforcement and full audit trails.**
+**Infrastructure that lets AI buyers discover, negotiate with, and safely purchase from merchants -- with deterministic policy enforcement and full audit trails.**
 
 <br/>
 
@@ -25,7 +25,7 @@
 
 <br/>
 
-[Features](#features) · [Architecture](#architecture) · [Quick Start](#quick-start) · [API](#api-reference) · [Docs](#documentation)
+[Features](#features) | [Architecture](#architecture) | [Quick Start](#quick-start) | [API](#api-reference) | [Docs](#documentation)
 
 </div>
 
@@ -33,14 +33,14 @@
 
 ## What Is SELLABLE?
 
-The commerce landscape is shifting. AI buyers — Perplexity, OpenAI shopping agents, Google Procurement — are beginning to **discover, negotiate, and purchase** products autonomously. Merchants today are built for human eyeballs: HTML storefronts, coupon codes, manual carts. They are **invisible and unusable to AI buyers**.
+The commerce landscape is shifting. AI buyers -- Perplexity, OpenAI shopping agents, Google Procurement -- are beginning to **discover, negotiate, and purchase** products autonomously. Merchants today are built for human eyeballs: HTML storefronts, coupon codes, manual carts. They are **invisible and unusable to AI buyers**.
 
 **SELLABLE** solves this. It makes any merchant:
-- **Discoverable** — via machine-readable `agents.json`, `llms.txt`, and a product catalog API
-- **Negotiable** — bounded, policy-governed agent-to-agent price negotiation
-- **Safely transactable** — deterministic policy engine, single-use consent, real Razorpay payments, full audit trail
+- **Discoverable** -- via machine-readable `agents.json`, `llms.txt`, and a product catalog API
+- **Negotiable** -- bounded, policy-governed agent-to-agent price negotiation
+- **Safely transactable** -- deterministic policy engine, single-use consent, real Razorpay payments, full audit trail
 
-> **The LLM proposes, the policy engine disposes — and every action leaves an explanation.**
+> **The LLM proposes, the policy engine disposes -- and every action leaves an explanation.**
 
 ---
 
@@ -51,21 +51,21 @@ The commerce landscape is shifting. AI buyers — Perplexity, OpenAI shopping ag
 | **Explainable transactions** | XAI Ledger records every agent action with trace_id, policy refs, and reasoning summaries |
 | **Real rails, not mocks** | Razorpay test-mode payments, HMAC webhook verification, real refund flow |
 | **Consent & guardrails** | Per-transaction single-use consent, spend caps, floor prices, human-in-the-loop thresholds |
-| **End-to-end demo** | Discovery → negotiation → consent → payment → receipt → refund, all live |
+| **End-to-end demo** | Discovery -> negotiation -> consent -> payment -> receipt -> refund, all live |
 
 ---
 
 ## Features
 
-- **Commerce Core** — Catalog, pricing, quotes, orders, consent, refunds — all deterministic
-- **Agent Gateway** — Machine-facing discovery (`/.well-known/agents.json`) and transactional API with HMAC signed-key auth
-- **Seller Agent** — LangGraph state machine: search → quote → upsell → respond, bounded by policy
-- **Buyer Agent** — Reference implementation: discover → research → request_quote → evaluate
-- **Policy Engine** — Pure, LLM-independent evaluator: budget, floor price, categories, stock, negotiation rounds, HITL threshold
-- **XAI Ledger** — Append-only audit trail with reasoning summaries for every material action
-- **Merchant Console** — Next.js dashboard: activity feed, approval queue, catalog management, growth insights
-- **Payment Integration** — Razorpay test-mode with webhook reconciliation and refund support
-- **Evaluation Framework** — 7 deterministic scenarios covering valid purchase, denial, HITL, payment failure, idempotency
+- **Commerce Core** -- Catalog, pricing, quotes, orders, consent, refunds -- all deterministic
+- **Agent Gateway** -- Machine-facing discovery (`/.well-known/agents.json`) and transactional API with HMAC signed-key auth
+- **Seller Agent** -- LangGraph state machine: search -> quote -> upsell -> respond, bounded by policy
+- **Buyer Agent** -- Reference implementation: discover -> research -> request_quote -> evaluate
+- **Policy Engine** -- Pure, LLM-independent evaluator: budget, floor price, categories, stock, negotiation rounds, HITL threshold
+- **XAI Ledger** -- Append-only audit trail with reasoning summaries for every material action
+- **Merchant Console** -- Next.js dashboard: activity feed, approval queue, catalog management, growth insights
+- **Payment Integration** -- Razorpay test-mode with webhook reconciliation and refund support
+- **Evaluation Framework** -- 7 deterministic scenarios covering valid purchase, denial, HITL, payment failure, idempotency
 
 ---
 
@@ -75,46 +75,46 @@ The commerce landscape is shifting. AI buyers — Perplexity, OpenAI shopping ag
 
 ```mermaid
 graph TB
-    subgraph "Human Layer"
-        BUYER_HUMAN["👤 Buyer Human"]
-        MERCHANT_HUMAN["👤 Merchant Operator"]
+    subgraph HumanLayer["Human Layer"]
+        BUYER_HUMAN["Buyer Human"]
+        MERCHANT_HUMAN["Merchant Operator"]
     end
 
-    subgraph "Frontend"
-        MERCHANT_CONSOLE["🖥️ Merchant Console<br/><i>Next.js 16 · React 19 · Tailwind 4</i>"]
+    subgraph Frontend["Frontend"]
+        MERCHANT_CONSOLE["Merchant Console\nNext.js 16 / React 19 / Tailwind 4"]
     end
 
-    subgraph "Agent Layer"
-        BUYER_AGENT["🤖 Buyer Agent<br/><i>LangGraph State Machine</i>"]
-        SELLER_AGENT["🤖 Seller Agent<br/><i>LangGraph State Machine</i>"]
+    subgraph AgentLayer["Agent Layer"]
+        BUYER_AGENT["Buyer Agent\nLangGraph State Machine"]
+        SELLER_AGENT["Seller Agent\nLangGraph State Machine"]
     end
 
-    subgraph "Gateway & Discovery"
-        AGENT_GATEWAY["🌐 Agent Gateway<br/><i>agents.json · llms.txt · catalog.ai.json</i>"]
-        AUTH["🔐 HMAC Signed-Key Auth"]
+    subgraph Gateway["Gateway & Discovery"]
+        AGENT_GATEWAY["Agent Gateway\nagents.json / llms.txt / catalog.ai.json"]
+        AUTH["HMAC Signed-Key Auth"]
     end
 
-    subgraph "Commerce Core"
-        CATALOG["📦 Catalog Service"]
-        QUOTE["💰 Quote Engine"]
-        ORDERS["📋 Order State Machine"]
-        CONSENT["✅ Consent Service"]
-        REFUNDS["↩️ Refund Service"]
+    subgraph CommerceCore["Commerce Core"]
+        CATALOG["Catalog Service"]
+        QUOTE["Quote Engine"]
+        ORDERS["Order State Machine"]
+        CONSENT["Consent Service"]
+        REFUNDS["Refund Service"]
     end
 
-    subgraph "Policy & Trust"
-        POLICY_ENGINE["⚖️ Policy Engine<br/><i>Deterministic · LLM-Independent</i>"]
-        XAI_LEDGER["📜 XAI Ledger<br/><i>Append-Only Audit Trail</i>"]
+    subgraph PolicyTrust["Policy & Trust"]
+        POLICY_ENGINE["Policy Engine\nDeterministic / LLM-Independent"]
+        XAI_LEDGER["XAI Ledger\nAppend-Only Audit Trail"]
     end
 
-    subgraph "Payment Rail"
-        RAZORPAY["💳 Razorpay Adapter<br/><i>Test Mode · Webhooks · HMAC Verification</i>"]
+    subgraph PaymentRail["Payment Rail"]
+        RAZORPAY["Razorpay Adapter\nTest Mode / Webhooks / HMAC Verification"]
     end
 
-    subgraph "Infrastructure"
-        DB[(("🗄️ PostgreSQL / SQLite"))]
-        DOCKER["🐳 Docker"]
-        CI["⚙️ GitHub Actions CI"]
+    subgraph Infrastructure["Infrastructure"]
+        DB[("PostgreSQL / SQLite")]
+        DOCKER["Docker"]
+        CI["GitHub Actions CI"]
     end
 
     BUYER_HUMAN -->|"talks to"| BUYER_AGENT
@@ -150,13 +150,13 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant Buyer as 🤖 Buyer Agent
-    participant Gateway as 🌐 Agent Gateway
-    participant Seller as 🤖 Seller Agent
-    participant Policy as ⚖️ Policy Engine
-    participant Consent as ✅ Consent Service
-    participant Razorpay as 💳 Razorpay
-    participant Ledger as 📜 XAI Ledger
+    participant Buyer as Buyer Agent
+    participant Gateway as Agent Gateway
+    participant Seller as Seller Agent
+    participant Policy as Policy Engine
+    participant Consent as Consent Service
+    participant Razorpay as Razorpay
+    participant Ledger as XAI Ledger
 
     Buyer->>Gateway: Discover merchant (agents.json)
     Gateway-->>Buyer: Merchant manifest + catalog
@@ -215,17 +215,13 @@ stateDiagram-v2
     CONSENTED --> ABORTED : buyer cancels
     PAID --> REFUNDED : refund processed
     AWAITING_CONSENT --> ABORTED : timeout/cancel
-
-    note right of CONSENTED : Single-use consent<br/>cannot be reused
-    note right of PAYMENT_PENDING : Razorpay test mode<br/>HMAC verification required
-    note right of PAID : Authoritative state<br/>only from webhook
 ```
 
 ### Agent Interaction Flow
 
 ```mermaid
 graph LR
-    subgraph "Buyer Agent"
+    subgraph BuyerAgent["Buyer Agent"]
         B1[Discover] --> B2[Research]
         B2 --> B3[Request Quote]
         B3 --> B4[Evaluate]
@@ -233,13 +229,13 @@ graph LR
         B4 -->|accept| B5[Pay]
     end
 
-    subgraph "Seller Agent"
+    subgraph SellerAgent["Seller Agent"]
         S1[Search Catalog] --> S2[Create Quote]
         S2 --> S3[Consider Upsell]
         S3 --> S4[Format Response]
     end
 
-    subgraph "Policy Engine"
+    subgraph PolicyEngine["Policy Engine"]
         P1[Budget Check] --> P2[Floor Price]
         P2 --> P3[Category Check]
         P3 --> P4[Stock Check]
@@ -255,18 +251,18 @@ graph LR
 
 ```mermaid
 graph TB
-    subgraph "Dashboard Pages"
-        HOME["🏠 Home"]
-        ACTIVITY["📡 Activity Feed"]
-        TRANSACTIONS["💳 Transactions"]
-        APPROVALS["✅ Approvals"]
-        CATALOG["📦 Catalog"]
-        GROWTH["📈 Growth"]
-        SETTINGS["⚙️ Settings"]
-        STOREFRONT["🏪 Storefront"]
+    subgraph DashboardPages["Dashboard Pages"]
+        HOME["Home"]
+        ACTIVITY["Activity Feed"]
+        TRANSACTIONS["Transactions"]
+        APPROVALS["Approvals"]
+        CATALOG["Catalog"]
+        GROWTH["Growth"]
+        SETTINGS["Settings"]
+        STOREFRONT["Storefront"]
     end
 
-    subgraph "Components"
+    subgraph Components["Components"]
         SIDEBAR["Sidebar Navigation"]
         TOPBAR["Top Bar"]
         ORDER_FEED["Order Feed"]
@@ -397,45 +393,37 @@ open http://localhost:3000
 | Endpoint | Method | Description |
 |---|---|---|
 | `/orders/{id}/payment` | POST | Initiate Razorpay payment |
+| `/orders/{id}/payment/retry` | POST | One bounded, idempotent retry after a verified failure |
 | `/webhooks/razorpay` | POST | Receive signed webhook |
-| `/orders/{id}/refund` | POST | Process refund |
+| `/orders/{id}/refund` | POST | Process refund (merchant auth) |
 
 ### Merchant Console
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/console/transactions` · `/transactions` | GET | Transaction list |
-| `/console/events` · `/activity` | GET | XAI Ledger events |
+| `/console/transactions` | GET | Transaction list |
+| `/console/events` | GET | XAI Ledger events |
 | `/activity/stream` | GET | SSE live ledger stream |
 | `/agents/status` | GET | Agent + payment-rail health |
-| `/console/approvals` · `/approvals` | GET | Pending approval queue |
-| `/console/approvals/{id}/approve` · `/approvals/{id}/approve` | POST | Approve pending action (merchant auth) |
-| `/console/approvals/{id}/reject` · `/approvals/{id}/reject` | POST | Reject pending action (merchant auth) |
-| `/console/insights` · `/growth` | GET | Growth metrics |
+| `/console/approvals` | GET | Pending approval queue |
+| `/console/approvals/{id}/approve` | POST | Approve pending action (merchant auth) |
+| `/console/approvals/{id}/reject` | POST | Reject pending action (merchant auth) |
+| `/console/insights` | GET | Growth metrics |
 | `/console/policy` | GET/PUT | Read/update merchant policy (PUT requires merchant auth) |
 | `/catalog/products` | POST | Add a catalog product (merchant auth) |
-
-### Payments
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/orders/{id}/payment` | POST | Initiate Razorpay payment |
-| `/orders/{id}/payment/retry` | POST | One bounded, idempotent retry after a verified failure |
-| `/webhooks/razorpay` | POST | Receive signed webhook |
-| `/orders/{id}/refund` | POST | Process refund (merchant auth) |
 
 ---
 
 ## Authentication
 
-SELLABLE keeps the two auth surfaces from `WORKFLOW.md` §55 separate:
+SELLABLE keeps two auth surfaces separate:
 
-- **Human merchants** — Supabase Auth. The Next.js console has a `/login` page
+- **Human merchants** -- Supabase Auth. The Next.js console has a `/login` page
   and a middleware that protects every `/dashboard/*` route. When Supabase is
   not configured the console runs in demo mode. Backend privileged actions
   (`approve`, `reject`, `refund`, policy updates, catalog writes) resolve the
   authenticated merchant from the Supabase access token and verify ownership.
-- **Buyer agents** — API key + HMAC request signing. Agent calls authenticate
+- **Buyer agents** -- API key + HMAC request signing. Agent calls authenticate
   with `X-Agent-Key` (demo) or an HMAC-SHA256 signature over
   `timestamp.nonce.agent_id.method.path` with `X-Timestamp`, `X-Nonce`, and
   `X-Signature` headers, including server-side replay protection. Only a
@@ -453,6 +441,7 @@ payments, the ledger, or the console.
 sellable/
 ├── agents/                     # LangGraph agent implementations
 │   ├── buyer/                  #   Buyer agent (reference implementation)
+│   ├── llm/                    #   LLM adapter layer (OpenAI, Anthropic, mock)
 │   └── seller/                 #   Seller agent (bounded by policy)
 ├── apps/
 │   └── merchant-console/       # Next.js 16 dashboard
@@ -499,7 +488,7 @@ These are **non-negotiable**. Every component enforces them:
 
 | Invariant | Enforcement |
 |---|---|
-| Integer paise only | `Pydantic` models validate `int` for all money fields |
+| Integer paise only | Pydantic models validate `int` for all money fields |
 | No float money | Static analysis + tests reject float amounts |
 | `trace_id` everywhere | Every API call and ledger event carries a trace ID |
 | Ledger audit trail | Every material action emits a `LedgerEvent` with reasoning |
@@ -517,7 +506,7 @@ The `evals/` directory contains 7 deterministic scenarios:
 
 | Scenario | What It Tests |
 |---|---|
-| `valid_purchase` | Happy path: search → quote → consent → payment → fulfilled |
+| `valid_purchase` | Happy path: search -> quote -> consent -> payment -> fulfilled |
 | `below_floor` | Denies quotes below merchant floor price |
 | `over_budget` | Denies orders exceeding buyer budget |
 | `hitl` | Routes high-value orders to human approval |
@@ -555,10 +544,6 @@ python -m evals.runner
 
 ## Tech Stack
 
-<table>
-<tr>
-<td>
-
 **Backend**
 - Python 3.11+
 - FastAPI
@@ -568,9 +553,6 @@ python -m evals.runner
 - SlowAPI (rate limiting)
 - Uvicorn
 
-</td>
-<td>
-
 **Frontend**
 - Next.js 16 (App Router)
 - React 19
@@ -579,40 +561,16 @@ python -m evals.runner
 - Lucide Icons
 - Geist Font
 
-</td>
-<td>
-
 **Data & Payments**
 - SQLite (dev) / PostgreSQL 16 (prod)
 - Razorpay SDK (test mode)
 - HMAC webhook verification
-
-</td>
-</tr>
-<tr>
-<td>
 
 **DevOps & Testing**
 - Docker + Docker Compose
 - GitHub Actions CI
 - pytest + httpx
 - zrok v2 (tunneling)
-
-</td>
-<td>
-
-**Standards**
-- Integer paise (no floats)
-- Append-only audit ledger
-- Deterministic policy engine
-- Single-use consent tokens
-
-</td>
-<td>
-
-</td>
-</tr>
-</table>
 
 ---
 
@@ -629,34 +587,12 @@ All PRs must pass CI (Python 3.11/3.12 matrix), maintain test coverage, and foll
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT License -- see [LICENSE](LICENSE) for details.
 
 ---
 
 <div align="center">
 
-### Product
-
-[Features](#features) · [Use Cases](#architecture) · [How It Works](#transaction-lifecycle) · [Pricing](#)
-
-### Developers
-
-[API Reference](#api-reference) · [Agent Protocol](#agent-interaction-flow) · [Machine Catalog](#discovery) · [Webhooks](#payments) · [SDK](#) · [CLI](#)
-
-### Company
-
-[About](#what-is-sellable) · [Contact](#) · [Support](#)
-
-### Legal
-
-[Terms](#) · [Privacy](#) · [Refunds](#)
-
-<br/>
-
-**© 2026 SELLABLE. Agentic Commerce Infrastructure.**
-
-[![X (Twitter)](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/sellable)
-[![Instagram](https://img.shields.io/badge/Instagram-E4405F?style=flat-square&logo=instagram&logoColor=white)](https://instagram.com/sellable)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](https://linkedin.com/company/sellable)
+**2026 SELLABLE. Agentic Commerce Infrastructure.**
 
 </div>
