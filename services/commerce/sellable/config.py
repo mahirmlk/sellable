@@ -73,6 +73,7 @@ class Settings:
 
     # CORS
     cors_origins: tuple[str, ...] = (
+        "https://sellable.shop",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     )
@@ -111,6 +112,7 @@ class Settings:
                 if origin.strip()
             )
             or (
+                "https://sellable.shop",
                 "http://localhost:3000",
                 "http://127.0.0.1:3000",
             ),
