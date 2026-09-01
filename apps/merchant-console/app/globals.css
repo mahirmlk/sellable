@@ -531,7 +531,7 @@ svg {
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--bb-grey-3);
+  color: var(--bb-grey-2);
 }
 
 .footer-bottom-links {
@@ -562,7 +562,7 @@ svg {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--bb-grey-3);
+  color: var(--bb-grey-2);
   transition: color 0.15s ease;
 }
 

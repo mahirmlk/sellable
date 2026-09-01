@@ -10,15 +10,11 @@ type FooterColumn = {
   links: FooterLink[];
 };
 
-// All links below map to routes/endpoints that actually exist in the repo.
-// Product anchors (#platform, #how-it-works) are on the landing page.
-// Console routes exist under app/dashboard/[activity|transactions|approvals|catalog|growth|settings|storefront].
-// Discovery endpoints (/.well-known/agents.json etc.) are served by the FastAPI backend (services/commerce/sellable/main.py).
-// GitHub / Razorpay docs are public external references.
 const footerColumns: FooterColumn[] = [
   {
     heading: "Product",
     links: [
+      { label: "Case Study", href: "/case-study", hint: "The held fact — full build story (white editorial)" },
       { label: "Features", href: "#platform", hint: "Trust & safety capabilities" },
       { label: "How it works", href: "#how-it-works", hint: "Discovery → Pay lifecycle" },
       { label: "Live Catalog", href: "/dashboard/catalog", hint: "Merchant catalog management" },
@@ -75,23 +71,22 @@ export function SiteFooter() {
   const year = new Date().getFullYear();
   return (
     <footer className="footer overflow-hidden">
-
       <div className="page-frame relative">
         {/* live system line */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-6 pb-2 border-b border-[var(--bb-line)]/60">
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-[pulse_1.4s_ease-in-out_infinite] shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Ledger</span>
               <span className="font-[var(--font-mono)] text-[0.6rem] text-emerald-400">recording</span>
             </span>
             <span className="inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] animate-[pulse_1.6s_ease-in-out_infinite] shadow-[0_0_8px_rgba(255,105,0,0.6)]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] animate-pulse shadow-[0_0_8px_rgba(255,105,0,0.6)]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Policy</span>
               <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-orange)]">deterministic</span>
             </span>
             <span className="hidden md:inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-[pulse_1.8s_ease-in-out_infinite]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Payments</span>
               <span className="font-[var(--font-mono)] text-[0.6rem] text-sky-400">Razorpay test</span>
             </span>
@@ -130,7 +125,7 @@ export function SiteFooter() {
           ))}
         </div>
 
-        {/* Bottom bar — real values only, no fake "Soon" */}
+        {/* Bottom bar */}
         <div className="footer-bottom">
           <p className="footer-bottom-text">
             &copy; {year} SELLABLE. Agentic commerce infrastructure. Every money action is audit-logged.
