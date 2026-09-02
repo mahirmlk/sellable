@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { isSupabaseConfigured, createClient } from "@/lib/supabase/client";
+import { ApiError, getStore } from "@/lib/api";
 
 const DEMO_COOKIE = "sellable_demo_auth";
 
@@ -18,6 +19,10 @@ export function DashboardGuard() {
     let cancelled = false;
 
     async function check() {
+      // Never guard the onboarding route itself (it runs inside this layout).
+      if (typeof window !== "undefined" && window.location.pathname.startsWith("/dashboard/onboarding")) {
+        return;
+      }
       if (!isSupabaseConfigured()) {
         // Demo mode only: when Supabase is not configured the demo cookie
         // (set after /login) grants dashboard access.
@@ -33,6 +38,17 @@ export function DashboardGuard() {
         } = await supabase.auth.getUser();
         if (!cancelled && !user) {
           router.replace("/login?next=/dashboard");
+          return;
+        }
+        // Verified user: check real merchant authorization. A user without a
+        // store goes to onboarding instead of seeing any demo data.
+        try {
+          await getStore();
+        } catch (err) {
+          if (!cancelled && err instanceof ApiError && err.isOnboardingRequired) {
+            router.replace("/dashboard/onboarding");
+          }
+          // Other errors (network/5xx) are surfaced by the pages themselves.
         }
       } catch {
         // With Supabase configured there is no demo fallback in production.

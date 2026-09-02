@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
-import { searchCatalog, type Product } from "@/lib/api";
+import { getConsoleCatalog, type Product } from "@/lib/api";
 
 export default function CatalogPage() {
   const [catalog, setCatalog] = useState<Product[]>([]);
@@ -14,7 +14,7 @@ export default function CatalogPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await searchCatalog(searchQuery);
+      const data = await getConsoleCatalog(searchQuery);
       setCatalog(data);
     } catch {} finally { setLoading(false); }
   }, [searchQuery]);

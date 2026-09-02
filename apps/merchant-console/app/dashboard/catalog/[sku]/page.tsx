@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, RefreshCw, Package, ShieldAlert, ArrowRight, CheckCircle2 } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
-import { getCatalogItem, getConsolePolicy, type Product, type ConsolePolicySettings } from "@/lib/api";
+import { getConsoleCatalogItem, getConsolePolicy, type Product, type ConsolePolicySettings } from "@/lib/api";
 
 function DetailRow({ label, value, accent }: { label: string; value: React.ReactNode; accent?: boolean }) {
   return (
@@ -28,7 +28,7 @@ export default function ProductDetailPage() {
     setLoading(true);
     setNotFound(false);
     try {
-      const [p, pl] = await Promise.allSettled([getCatalogItem(sku), getConsolePolicy()]);
+      const [p, pl] = await Promise.allSettled([getConsoleCatalogItem(sku), getConsolePolicy()]);
       if (p.status === "fulfilled") {
         setProduct(p.value);
       } else {

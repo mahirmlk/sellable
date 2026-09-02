@@ -22,7 +22,7 @@ const defaultEndpoints = [
 export default function StorefrontPage() {
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const [manifest, setManifest] = useState<ManifestData>({
-    merchantName: "SELLABLE Demo Store",
+    merchantName: "…",
     status: "discoverable",
     endpoints: defaultEndpoints,
     capabilities: [],
@@ -36,7 +36,7 @@ export default function StorefrontPage() {
       const data = await getAgentManifest();
       const m = data as Record<string, unknown>;
       setManifest({
-        merchantName: (m.name as string) || "SELLABLE Demo Store",
+        merchantName: (m.name as string) || "—",
         status: "discoverable",
         endpoints: defaultEndpoints,
         capabilities: Array.isArray(m.capabilities) ? m.capabilities as string[] : [],

@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-from sqlalchemy import select
 from starlette.responses import JSONResponse, StreamingResponse
 
 from sellable.agents.buyer import BuyerAgent, BuyerResult
@@ -44,7 +45,12 @@ from sellable.core import CommerceCore
 from sellable.gateway import AgentGateway
 from sellable.ledger.database import initialise_database
 from sellable.ledger.service import LedgerRepository
-from sellable.merchant_auth import MerchantSession, get_merchant_session
+from sellable.merchant_auth import (
+    AuthenticatedUser,
+    MerchantSession,
+    get_authenticated_user,
+    get_merchant_session,
+)
 from sellable.middleware import RequestBodyCaptureMiddleware
 from sellable.payments.razorpay import (
     InvalidWebhookSignatureError,
@@ -58,6 +64,12 @@ from sellable.payments.service import (
     UnsupportedWebhookEventError,
 )
 from sellable.refunds import RefundService
+from sellable.registry import (
+    DEMO_MERCHANT_ID,
+    MerchantRegistry,
+    save_policy_for,
+)
+from sellable.repositories import CatalogRepository, MerchantRepository
 from sellable.status import build_status
 
 logging.basicConfig(
@@ -107,71 +119,58 @@ app.add_exception_handler(
 )
 
 
-def _save_policy_to_db(policy: MerchantPolicy) -> None:
-    """Persist merchant policy to database."""
-    from sqlalchemy.orm import Session
-    from sellable.ledger.database import PolicyRecord, make_engine
-
-    engine = make_engine()
-    with Session(engine) as session:
-        existing = session.get(PolicyRecord, policy.merchant_id)
-        if existing:
-            existing.policy_json = policy.model_dump()
-        else:
-            record = PolicyRecord(
-                merchant_id=policy.merchant_id,
-                policy_json=policy.model_dump(),
-            )
-            session.add(record)
-        session.commit()
+# ---------------------------------------------------------------------------
+# Per-merchant helpers
+# ---------------------------------------------------------------------------
 
 
-def _load_policy_from_db() -> MerchantPolicy | None:
-    """Load merchant policy from database if it exists."""
-    from sqlalchemy.orm import Session
-    from sellable.ledger.database import PolicyRecord, make_engine
-
-    try:
-        engine = make_engine()
-        with Session(engine) as session:
-            record = session.scalars(select(PolicyRecord)).first()
-            if record:
-                policy = MerchantPolicy.model_validate(record.policy_json)
-                logger.info("Loaded policy from database: threshold=%d", policy.human_approval_threshold_paise)
-                return policy
-    except Exception as exc:
-        logger.warning("Could not load policy from database: %s", exc)
-    return None
+def _merchant_trace_ids(core: CommerceCore) -> set[str]:
+    """Trace ids that belong to this merchant (orders + per-merchant system traces)."""
+    traces = {o.trace_id for o in core.all_orders()}
+    traces.add(f"policy_update:{core.policy.merchant_id}")
+    traces.add(f"catalog_update:{core.policy.merchant_id}")
+    if core.policy.merchant_id == DEMO_MERCHANT_ID:
+        # Legacy system traces recorded before per-merchant scoping.
+        traces.update({"policy_update", "catalog_update"})
+    return traces
 
 
-# Initialize database before creating commerce core
-initialise_database()
+def _make_llm() -> tuple[object | None, str | None]:
+    """Return a real LLM adapter when a non-mock provider is configured.
 
-# Load policy from DB if saved, otherwise use seed
-_db_policy = _load_policy_from_db()
-commerce_core = CommerceCore.from_seed(LedgerRepository(), policy_override=_db_policy)
-
-
-def _make_llm():
-    """Return a real LLM adapter when a non-mock provider is configured."""
+    Never silently substitutes a deterministic adapter: initialization
+    failures are surfaced to /agents/status as a real ERROR with the reason.
+    """
     from agents.llm import get_llm
 
     if settings.llm_provider in ("mock", "deterministic", ""):
-        return None
+        return None, None
     if not settings.llm_is_configured:
-        return None
+        return None, None
     try:
-        return get_llm()
-    except Exception:
-        return None
+        return get_llm(), None
+    except Exception as exc:
+        logger.error("LLM adapter initialization failed: %s", exc)
+        return None, str(exc)
 
 
-_seller_llm = _make_llm()
+_seller_llm, _llm_init_error = _make_llm()
+
+# Create tables and the real demo-merchant records before wiring components.
+initialise_database()
+registry = MerchantRegistry()
+registry.ensure_demo_merchant()
+commerce_core = registry.get(DEMO_MERCHANT_ID)
 seller_agent = SellerAgent(commerce_core, llm=_seller_llm)
 agent_gateway = AgentGateway(commerce_core, seller_agent)
-buyer_agent = BuyerAgent(agent_gateway, llm=_make_llm())
+buyer_agent = BuyerAgent(agent_gateway, llm=_make_llm()[0])
 payment_service = PaymentService(commerce_core, RazorpayAdapter(settings))
 refund_service = RefundService(commerce_core)
+
+
+def merchant_core(session: MerchantSession) -> CommerceCore:
+    """Return the caller's own merchant core (scoped catalog, policy, orders)."""
+    return registry.get(session.merchant_id)
 
 
 def get_seller_agent() -> SellerAgent:
@@ -420,10 +419,13 @@ def agent_refunds_create(
     request: Request,
     body: RefundCreateRequest,
     refunds: RefundService = Depends(get_refund_service),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    core = merchant_core(session)
     try:
-        return refunds.initiate_refund(order_id=body.order_id, reason=body.reason)
+        return refunds.initiate_refund(
+            order_id=body.order_id, reason=body.reason, commerce=core
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -509,14 +511,17 @@ def refund_order(
     order_id: str,
     reason: str = "merchant_initiated",
     refunds: RefundService = Depends(get_refund_service),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
     if len(reason) > 500:
         raise HTTPException(status_code=400, detail="Reason must be 500 characters or fewer")
+    core = merchant_core(session)
     try:
-        return refunds.initiate_refund(order_id=order_id, reason=reason)
+        # A merchant-scoped core only knows its own orders, so foreign
+        # order ids fail with a 404-equivalent ownership error.
+        return refunds.initiate_refund(order_id=order_id, reason=reason, commerce=core)
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+          raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 # ---------------------------------------------------------------------------
@@ -707,9 +712,10 @@ def console_transactions(
     request: Request,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> list[ConsoleTransactionItem]:
-    orders = commerce.all_orders()
+    core = merchant_core(session)
+    orders = core.all_orders()
     enriched: list[ConsoleTransactionItem] = []
     for o in sorted(orders, key=lambda x: x.created_at, reverse=True):
         base = ConsoleTransactionItem(
@@ -735,10 +741,11 @@ def console_transaction_detail(
     order_id: str,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> ConsoleTransactionDetail:
+    core = merchant_core(session)
     try:
-        order = commerce.get_order(order_id)
+        order = core.get_order(order_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     events = ledger.for_trace(order.trace_id)
@@ -784,11 +791,14 @@ def console_transaction_detail(
 async def activity_stream(
     request: Request,
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ):
-    """Server-Sent Events stream of new ledger activity (§46)."""
+    """Server-Sent Events stream of new ledger activity (§46), scoped to the merchant."""
     import asyncio
     import json
+
+    core = merchant_core(session)
+    merchant_traces = _merchant_trace_ids(core)
 
     async def event_generator():
         last_sequence = ledger.max_sequence()
@@ -796,7 +806,7 @@ async def activity_stream(
             if await request.is_disconnected():
                 break
             try:
-                events = ledger.events_after(last_sequence, limit=100)
+                events = ledger.events_after(last_sequence, limit=100, trace_ids=merchant_traces)
                 for record in events:
                     yield "data: " + json.dumps(
                         {
@@ -833,12 +843,14 @@ def console_events(
     limit: int = 200,
     offset: int = 0,
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
-    events = ledger.all_events(limit=limit, offset=offset)
-    total = ledger.count_events()
+    core = merchant_core(session)
+    merchant_traces = _merchant_trace_ids(core)
+    events = ledger.all_events(limit=limit, offset=offset, trace_ids=merchant_traces)
+    total = ledger.count_events(trace_ids=merchant_traces)
     return {
         "events": [
             {
@@ -870,11 +882,12 @@ def console_approvals(
     request: Request,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> list[ConsoleApprovalRequest]:
     from sellable.contracts import OrderStatus
 
-    orders = commerce.all_orders()
+    core = merchant_core(session)
+    orders = core.all_orders()
     approvals: list[ConsoleApprovalRequest] = []
     for order in orders:
         if order.requires_approval and order.status in (
@@ -910,11 +923,12 @@ def console_approve_order(
     request: Request,
     order_id: str,
     commerce: CommerceCore = Depends(get_commerce),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    core = merchant_core(session)
     try:
-        commerce.approve_order(order_id)
-        consent = commerce.issue_consent(order_id)
+        core.approve_order(order_id)
+        consent = core.issue_consent(order_id)
         return {"status": "approved", "order_id": order_id, "consent_id": consent.consent_id}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -927,10 +941,11 @@ def console_reject_order(
     request: Request,
     order_id: str,
     commerce: CommerceCore = Depends(get_commerce),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    core = merchant_core(session)
     try:
-        commerce.mark_aborted(order_id, reason="Order rejected by merchant via console.")
+        core.mark_aborted(order_id, reason="Order rejected by merchant via console.")
         return {"status": "rejected", "order_id": order_id}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -943,15 +958,16 @@ def console_insights(
     request: Request,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> ConsoleGrowthMetrics:
     from sellable.contracts import OrderStatus
 
-    orders = commerce.all_orders()
+    core = merchant_core(session)
+    orders = core.all_orders()
     paid = [o for o in orders if o.status == OrderStatus.PAID]
     revenue = sum(o.amount_paise for o in paid)
 
-    events = ledger.all_events(limit=1000)
+    events = ledger.all_events(limit=1000, trace_ids=_merchant_trace_ids(core))
     upsell_offers = sum(1 for e in events if e.action == "upsell.suggest")
     upsell_accepted = sum(
         1 for e in events if e.action == "upsell.suggest" and e.output_json.get("accepted")
@@ -988,9 +1004,9 @@ def console_insights(
 def console_policy(
     request: Request,
     commerce: CommerceCore = Depends(get_commerce),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> ConsolePolicySettings:
-    p = commerce.get_policy()
+    p = merchant_core(session).get_policy()
     return ConsolePolicySettings(
         merchant_id=p.merchant_id,
         currency=p.currency,
@@ -1011,20 +1027,21 @@ def console_update_policy(
     body: ConsolePolicyUpdate,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> ConsolePolicySettings:
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    old_policy = commerce.policy
+    core = merchant_core(session)
+    old_policy = core.policy
     new_policy = MerchantPolicy.model_validate({**old_policy.model_dump(), **updates})
-    commerce.policy = new_policy
-    # Persist policy to database
-    _save_policy_to_db(new_policy)
+    # Persist to the merchant's real policy row and reload their cached core.
+    save_policy_for(new_policy)
+    registry.invalidate(session.merchant_id)
     from sellable.contracts import LedgerActor
 
-    commerce._record(
-        trace_id="policy_update",
+    core._record(
+        trace_id=f"policy_update:{session.merchant_id}",
         actor=LedgerActor.HUMAN,
         action="policy.updated",
         inputs={"old_policy": old_policy.model_dump()},
@@ -1052,10 +1069,11 @@ def transaction_events(
     order_id: str,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    core = merchant_core(session)
     try:
-        order = commerce.get_order(order_id)
+        order = core.get_order(order_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     events = ledger.for_trace(order.trace_id)
@@ -1091,16 +1109,18 @@ def agents_status(
     seller_agent: SellerAgent = Depends(get_seller_agent),
     buyer_agent: BuyerAgent = Depends(get_buyer_agent),
     gateway: AgentGateway = Depends(get_agent_gateway),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
     """Report real, backend-driven component state (never hardcoded green)."""
+    core = merchant_core(session)
     return build_status(
-        commerce=commerce,
+        commerce=core,
         ledger=ledger,
         seller_agent=seller_agent,
         buyer_agent=buyer_agent,
         gateway=gateway,
         llm_adapter=_seller_llm,
+        llm_init_error=_llm_init_error,
     )
 
 
@@ -1111,20 +1131,299 @@ def console_create_product(
     body: Product,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> Product:
-    if body.merchant_id != commerce.policy.merchant_id:
-        raise HTTPException(status_code=403, detail="Product merchant does not match the store")
+    core = merchant_core(session)
+    # The product belongs to the authenticated merchant's own store — the
+    # merchant_id in the body is never trusted.
+    product = body.model_copy(update={"merchant_id": session.merchant_id})
     try:
-        product = commerce.catalog.add_product(body)
+        CatalogRepository().add(product)
+        core.catalog.add_product(product)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    commerce._record(
-        trace_id="catalog_update",
+    core._record(
+        trace_id=f"catalog_update:{session.merchant_id}",
         actor=LedgerActor.HUMAN,
         action="catalog.product_created",
-        inputs={"sku": product.sku, "price_paise": product.price_paise},
+        inputs={
+            "sku": product.sku,
+            "price_paise": product.price_paise,
+            "merchant_id": session.merchant_id,
+        },
         output={"category": product.category, "stock": product.stock},
         reasoning_summary=f"Merchant added product {product.sku} to the catalog.",
     )
     return product
+
+# ---------------------------------------------------------------------------
+# Merchant identity, onboarding, and per-merchant store API
+# ---------------------------------------------------------------------------
+
+
+class OnboardingRequest(BaseModel):
+    store_name: str = Field(min_length=2, max_length=80)
+
+
+@app.get("/console/store", tags=["console"])
+@limiter.limit("60/minute")
+def console_store(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """The authenticated merchant's own store record (real DB row)."""
+    record = MerchantRepository().get(session.merchant_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Merchant record not found")
+    return {
+        "merchant_id": record.merchant_id,
+        "name": record.name,
+        "role": session.role,
+        "created_at": record.created_at.isoformat(),
+    }
+
+
+@app.post("/console/onboarding", tags=["console"])
+@limiter.limit("5/minute")
+def console_onboarding(
+    request: Request,
+    body: OnboardingRequest,
+    user: AuthenticatedUser = Depends(get_authenticated_user),
+) -> dict:
+    """Create the authenticated user's own real merchant account.
+
+    Requires a verified Supabase identity; creates exactly one merchant +
+    membership + default policy. Never called automatically and never links
+    the user to the demo store.
+    """
+    from sqlalchemy.orm import Session as _Session
+
+    from sellable.ledger.database import MerchantUserRecord, make_engine
+
+    # Already mapped? Onboarding is a one-time action.
+    try:
+        engine = make_engine()
+        with _Session(engine) as db:
+            existing = (
+                db.query(MerchantUserRecord).filter_by(auth_user_id=user.auth_user_id).first()
+            )
+    except Exception as exc:
+        logger.error("Onboarding membership check failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Database error during onboarding") from exc
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This user already has a merchant account. Sign in again to refresh access.",
+        )
+
+    merchant_id, _policy = registry.create_merchant(name=body.store_name.strip())
+    try:
+        with _Session(engine) as db:
+            db.add(
+                MerchantUserRecord(
+                    id=f"mu_{user.auth_user_id[:8]}",
+                    merchant_id=merchant_id,
+                    auth_user_id=user.auth_user_id,
+                    role="owner",
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            db.commit()
+    except Exception as exc:
+        logger.error("Onboarding membership write failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not link merchant membership") from exc
+    record = MerchantRepository().get(merchant_id)
+    return {
+        "merchant_id": merchant_id,
+        "name": record.name if record else body.store_name.strip(),
+        "role": "owner",
+        "created_at": record.created_at.isoformat() if record else None,
+    }
+
+
+@app.get("/console/catalog", response_model=list[Product], tags=["console"])
+@limiter.limit("60/minute")
+def console_catalog(
+    request: Request,
+    query: str = "",
+    session: MerchantSession = Depends(get_merchant_session),
+) -> list[Product]:
+    """The authenticated merchant's real, DB-persisted catalog."""
+    products = CatalogRepository().list(session.merchant_id)
+    if query:
+        needle = query.strip().lower()
+        products = [
+            p
+            for p in products
+            if needle in p.sku.lower() or needle in p.title.lower() or needle in p.description.lower()
+        ]
+    return products
+
+
+@app.get("/console/catalog/{sku}", response_model=Product, tags=["console"])
+@limiter.limit("60/minute")
+def console_catalog_item(
+    request: Request,
+    sku: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> Product:
+    for product in CatalogRepository().list(session.merchant_id):
+        if product.sku == sku:
+            return product
+    raise HTTPException(status_code=404, detail=f"Unknown SKU: {sku}")
+
+
+# ---------------------------------------------------------------------------
+# Console commerce flow (merchant-authenticated chat checkout)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/console/agent/seller/respond", response_model=SellerDecision, tags=["console"])
+@limiter.limit("30/minute")
+def console_seller_respond(
+    request: Request,
+    body: SellerRequest,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> SellerDecision:
+    """Conversational checkout against the merchant's own catalog and policy."""
+    core = merchant_core(session)
+    agent = SellerAgent(core, llm=_seller_llm)
+    return agent.respond(body)
+
+
+@app.post("/console/orders", tags=["console"])
+@limiter.limit("30/minute")
+def console_order_create(
+    request: Request,
+    body: OrderCreateRequest,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from uuid import uuid4
+
+    core = merchant_core(session)
+    existing_order = core.get_order_by_idempotency_key(body.idempotency_key)
+    if existing_order is not None:
+        return {
+            "order_id": existing_order.order_id,
+            "trace_id": existing_order.trace_id,
+            "status": existing_order.status,
+            "amount_paise": existing_order.amount_paise,
+            "quote_id": existing_order.quote_id,
+            "idempotency_key": existing_order.idempotency_key,
+            "replayed": True,
+        }
+
+    trace_id = body.trace_id or f"trc_{uuid4().hex}"
+    decision = SellerAgent(core, llm=_seller_llm).respond(
+        SellerRequest(
+            message=body.message,
+            intent=body.intent,
+            requested_sku=body.requested_sku,
+            quantity=body.quantity,
+            buyer_offer_paise=body.buyer_offer_paise,
+            request_upsell=body.request_upsell,
+        ),
+        trace_id=trace_id,
+    )
+    if (
+        decision.cart is None
+        or decision.policy_decision is None
+        or decision.policy_decision.verdict is PolicyVerdict.DENY
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Order creation blocked by policy: "
+                f"{decision.policy_decision.reason_code if decision.policy_decision else 'NO_MATCH'}"
+            ),
+        )
+    order = core.create_order(
+        cart=decision.cart,
+        intent=body.intent,
+        trace_id=trace_id,
+        idempotency_key=body.idempotency_key,
+    )
+    return {
+        "order_id": order.order_id,
+        "trace_id": order.trace_id,
+        "status": order.status,
+        "amount_paise": order.amount_paise,
+        "quote_id": order.quote_id,
+        "idempotency_key": order.idempotency_key,
+        "requires_approval": order.requires_approval,
+    }
+
+
+@app.post("/console/orders/{order_id}/consent", tags=["console"])
+@limiter.limit("30/minute")
+def console_consent_request(
+    request: Request,
+    order_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    core = merchant_core(session)
+    try:
+        consent = core.issue_consent(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {
+        "consent_id": consent.consent_id,
+        "order_id": consent.order_id,
+        "amount_paise": consent.amount_paise,
+        "payee_id": consent.payee_id,
+        "purpose": consent.purpose,
+        "expires_at": consent.expires_at.isoformat(),
+        "single_use": consent.single_use,
+        "status": consent.status,
+    }
+
+
+@app.post(
+    "/console/orders/{order_id}/payment",
+    response_model=PaymentAttempt,
+    tags=["console"],
+    summary="Start a Razorpay test-mode payment for the merchant's own order.",
+)
+@limiter.limit("10/minute")
+def console_start_payment(
+    request: Request,
+    order_id: str,
+    body: PaymentStartRequest,
+    payments: PaymentService = Depends(get_payment_service),
+    session: MerchantSession = Depends(get_merchant_session),
+) -> PaymentAttempt:
+    core = merchant_core(session)
+    try:
+        return payments.start_payment(
+            order_id=order_id, consent_id=body.consent_id, commerce=core
+        )
+    except RazorpayConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RazorpayRequestError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post(
+    "/console/orders/{order_id}/payment/retry",
+    response_model=PaymentAttempt,
+    tags=["console"],
+    summary="Bounded, idempotent retry for the merchant's own failed payment.",
+)
+@limiter.limit("10/minute")
+def console_retry_payment(
+    request: Request,
+    order_id: str,
+    payments: PaymentService = Depends(get_payment_service),
+    session: MerchantSession = Depends(get_merchant_session),
+) -> PaymentAttempt:
+    core = merchant_core(session)
+    try:
+        return payments.retry_payment(order_id=order_id, commerce=core)
+    except RazorpayConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RazorpayRequestError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error

@@ -23,27 +23,38 @@ class PaymentService:
     MAX_RETRIES = 1
 
     def __init__(self, commerce: CommerceCore, rail: RazorpayAdapter) -> None:
+        # ``commerce`` is the default core (the agent-gateway/demo merchant).
+        # Callers may pass a different merchant's core per request; the core
+        # used for each order is remembered so webhooks settle against the
+        # correct merchant's state.
         self.commerce = commerce
         self.rail = rail
         self._attempt_by_order_id: dict[str, PaymentAttempt] = {}
         self._local_order_by_provider_order_id: dict[str, str] = {}
         self._processed_delivery_keys: set[str] = set()
         self._retry_count_by_order_id: dict[str, int] = {}
+        self._core_by_order_id: dict[str, CommerceCore] = {}
 
-    def start_payment(self, *, order_id: str, consent_id: str) -> PaymentAttempt:
+    def _core_for(self, order_id: str) -> CommerceCore:
+        return self._core_by_order_id.get(order_id, self.commerce)
+
+    def start_payment(self, *, order_id: str, consent_id: str, commerce: CommerceCore | None = None) -> PaymentAttempt:
+        core = commerce or self.commerce
         existing = self._attempt_by_order_id.get(order_id)
         if existing is not None:
             return existing
 
         # Do not consume single-use consent merely to discover missing credentials.
         self.rail.validate_configuration()
-        consented_order = self.commerce.consume_consent(consent_id, order_id=order_id)
-        pending_order = self.commerce.mark_payment_pending(order_id)
-        return self._create_provider_attempt(order_id, pending_order.trace_id)
+        consented_order = core.consume_consent(consent_id, order_id=order_id)
+        pending_order = core.mark_payment_pending(order_id)
+        self._core_by_order_id[order_id] = core
+        return self._create_provider_attempt(order_id, pending_order.trace_id, core)
 
-    def retry_payment(self, *, order_id: str) -> PaymentAttempt:
+    def retry_payment(self, *, order_id: str, commerce: CommerceCore | None = None) -> PaymentAttempt:
         """Perform at most one bounded, idempotent retry after a verified failure."""
-        order = self.commerce.get_order(order_id)
+        core = commerce or self._core_for(order_id)
+        order = core.get_order(order_id)
         from sellable.contracts import OrderStatus
 
         if order.status is not OrderStatus.PAYMENT_FAILED:
@@ -52,8 +63,9 @@ class PaymentService:
             )
         retries = self._retry_count_by_order_id.get(order_id, 0)
         if retries >= self.MAX_RETRIES:
-            self.commerce.mark_aborted(order_id, reason="Retry limit reached")
+            core.mark_aborted(order_id, reason="Retry limit reached")
             self._record(
+                core=core,
                 trace_id=order.trace_id,
                 action="retry.aborted",
                 inputs={"order_id": order_id, "attempts": retries},
@@ -66,7 +78,9 @@ class PaymentService:
             raise ValueError("Retry limit reached; the order has been aborted")
 
         self._retry_count_by_order_id[order_id] = retries + 1
+        self._core_by_order_id[order_id] = core
         self._record(
+            core=core,
             trace_id=order.trace_id,
             action="retry.started",
             inputs={"order_id": order_id, "attempt": retries + 1, "max_attempts": self.MAX_RETRIES},
@@ -77,12 +91,13 @@ class PaymentService:
             ),
             provider_ref=order.idempotency_key,
         )
-        pending_order = self.commerce.mark_payment_pending(order_id)
+        pending_order = core.mark_payment_pending(order_id)
         try:
-            return self._create_provider_attempt(order_id, pending_order.trace_id)
+            return self._create_provider_attempt(order_id, pending_order.trace_id, core)
         except RazorpayRequestError as error:
-            self.commerce.mark_payment_failed(order_id, reason=str(error))
+            core.mark_payment_failed(order_id, reason=str(error))
             self._record(
+                core=core,
                 trace_id=order.trace_id,
                 action="retry.failed",
                 inputs={"order_id": order_id, "attempt": retries + 1},
@@ -91,8 +106,8 @@ class PaymentService:
             )
             raise
 
-    def _create_provider_attempt(self, order_id: str, trace_id: str) -> PaymentAttempt:
-        pending_order = self.commerce.get_order(order_id)
+    def _create_provider_attempt(self, order_id: str, trace_id: str, core: CommerceCore) -> PaymentAttempt:
+        pending_order = core.get_order(order_id)
         try:
             provider_order = self.rail.create_order(pending_order)
             if (
@@ -103,8 +118,9 @@ class PaymentService:
                     "Razorpay response does not match the local order amount or currency"
                 )
         except RazorpayRequestError as error:
-            self.commerce.mark_payment_failed(order_id, reason=str(error))
+            core.mark_payment_failed(order_id, reason=str(error))
             self._record(
+                core=core,
                 trace_id=trace_id,
                 action="payment.failure_classified",
                 inputs={"order_id": order_id},
@@ -153,10 +169,12 @@ class PaymentService:
             return attempt
 
         if event_name == "payment.captured":
-            local_order = self.commerce.get_order(local_order_id)
+            core = self._core_for(local_order_id)
+            local_order = core.get_order(local_order_id)
             captured_amount = payment.get("amount")
             if captured_amount is not None and int(captured_amount) != local_order.amount_paise:
                 self._record(
+                    core=core,
                     trace_id=local_order.trace_id,
                     action="webhook.amount_mismatch",
                     inputs={"event": event_name, "provider_payment_id": provider_payment_id},
@@ -171,7 +189,7 @@ class PaymentService:
                     ),
                 )
                 return attempt
-            self.commerce.mark_paid(local_order_id, provider_ref=provider_payment_id)
+            core.mark_paid(local_order_id, provider_ref=provider_payment_id)
             updated_attempt = attempt.model_copy(
                 update={
                     "provider_payment_id": provider_payment_id,
@@ -180,8 +198,9 @@ class PaymentService:
             )
             explanation = "Verified Razorpay payment.captured webhook and settled the local order."
         elif event_name == "payment.failed":
+            core = self._core_for(local_order_id)
             reason = str(payment.get("error_description") or "Razorpay reported a failed payment")
-            self.commerce.mark_payment_failed(
+            core.mark_payment_failed(
                 local_order_id, reason=reason, provider_ref=provider_payment_id
             )
             updated_attempt = attempt.model_copy(
@@ -198,7 +217,8 @@ class PaymentService:
         self._attempt_by_order_id[local_order_id] = updated_attempt
         self._processed_delivery_keys.add(delivery_key)
         self._record(
-            trace_id=self.commerce.get_order(local_order_id).trace_id,
+            core=self._core_for(local_order_id),
+            trace_id=self._core_for(local_order_id).get_order(local_order_id).trace_id,
             action="webhook.reconciled",
             inputs={"event": event_name, "provider_order_id": provider_order_id},
             output={"order_id": local_order_id, "status": updated_attempt.status},
@@ -216,8 +236,9 @@ class PaymentService:
         output: dict[str, object],
         explanation: str,
         provider_ref: str | None = None,
+        core: CommerceCore | None = None,
     ) -> None:
-        self.commerce.ledger.append(
+        (core or self.commerce).ledger.append(
             LedgerEvent(
                 trace_id=trace_id,
                 actor=LedgerActor.RAZORPAY,

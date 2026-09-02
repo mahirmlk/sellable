@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { RefreshCw, TrendingDown } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { formatPaise } from "@/lib/formatters";
-import { getConsoleInsights, getConsoleTransactions, getConsoleTransactionDetail, getCatalogItem, type ConsoleGrowthMetrics, type ConsoleTransaction, type Product } from "@/lib/api";
+import { getConsoleInsights, getConsoleTransactions, getConsoleTransactionDetail, getConsoleCatalogItem, type ConsoleGrowthMetrics, type ConsoleTransaction, type Product } from "@/lib/api";
 
 interface SavedDealRow {
   sku: string;
@@ -43,7 +43,7 @@ async function computeSavedDeals(txs: ConsoleTransaction[]): Promise<SavedDealRo
   await Promise.all(
     top.map(async (row) => {
       try {
-        const product: Product = await getCatalogItem(row.sku);
+        const product: Product = await getConsoleCatalogItem(row.sku);
         row.floorPaise = product.floor_paise;
         row.pricePaise = product.price_paise;
       } catch {

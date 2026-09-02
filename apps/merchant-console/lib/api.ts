@@ -165,13 +165,21 @@ export interface AgentsStatusResponse {
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: string;
+  readonly errorCode: string | null;
   readonly body: unknown;
 
-  constructor(status: number, statusText: string, detail: string, body?: unknown) {
+  constructor(
+    status: number,
+    statusText: string,
+    detail: string,
+    body?: unknown,
+    errorCode?: string | null
+  ) {
     super(`API error: ${status} ${statusText}${detail ? ` — ${detail}` : ""}`);
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
+    this.errorCode = errorCode ?? null;
     this.body = body;
   }
 
@@ -183,6 +191,10 @@ export class ApiError extends Error {
   }
   get isServerError(): boolean {
     return this.status >= 500;
+  }
+  /** Backend-reported onboarding-required state (403 + machine-readable code). */
+  get isOnboardingRequired(): boolean {
+    return this.status === 403 && this.errorCode === "onboarding_required";
   }
 }
 
@@ -333,8 +345,8 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     headers,
   });
   if (!res.ok) {
-    const detail = await extractErrorDetail(res);
-    throw new ApiError(res.status, res.statusText, detail, null);
+    const { detail, code } = await extractErrorDetail(res);
+    throw new ApiError(res.status, res.statusText, detail, null, code);
   }
   try {
     return (await res.json()) as T;
@@ -343,15 +355,26 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   }
 }
 
-async function extractErrorDetail(res: Response): Promise<string> {
+async function extractErrorDetail(
+  res: Response
+): Promise<{ detail: string; code: string | null }> {
   try {
     const body = (await res.json()) as { detail?: unknown };
-    if (typeof body?.detail === "string") return body.detail;
-    if (body?.detail !== undefined) return JSON.stringify(body.detail);
+    if (typeof body?.detail === "string") return { detail: body.detail, code: null };
+    if (body?.detail !== undefined && body.detail !== null) {
+      const obj = body.detail as { code?: unknown; message?: unknown };
+      if (typeof obj === "object" && typeof obj.message === "string") {
+        return {
+          detail: obj.message,
+          code: typeof obj.code === "string" ? obj.code : null,
+        };
+      }
+      return { detail: JSON.stringify(body.detail), code: null };
+    }
   } catch {
     // Non-JSON error body; fall back to the status text.
   }
-  return res.statusText;
+  return { detail: res.statusText, code: null };
 }
 
 // --- Health ---
@@ -360,7 +383,7 @@ export async function getHealth(): Promise<HealthResponse> {
   return apiFetch<HealthResponse>("/health");
 }
 
-// --- Agent gateway ---
+// --- Agent gateway (agent-key surface; not used by merchant console flows) ---
 
 export async function searchCatalog(
   query = "",
@@ -449,91 +472,7 @@ export async function getAgentsStatus(): Promise<AgentsStatusResponse> {
   return apiFetch<AgentsStatusResponse>("/agents/status");
 }
 
-// --- Seller agent / chat ---
-
-export async function sellerRespond(body: SellerRequestPayload): Promise<SellerDecisionPayload> {
-  return apiFetch<SellerDecisionPayload>("/agent/seller/respond", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function createOrder(body: {
-  intent: IntentMandate;
-  message: string;
-  idempotency_key: string;
-  request_upsell: boolean;
-  trace_id?: string;
-}): Promise<OrderCreateResult> {
-  return apiFetch<OrderCreateResult>("/agent/orders.create", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-export async function requestConsent(orderId: string): Promise<ConsentInfo> {
-  return apiFetch<ConsentInfo>("/agent/consents.request", {
-    method: "POST",
-    body: JSON.stringify({ order_id: orderId }),
-  });
-}
-
-export async function startPayment(orderId: string, consentId: string): Promise<PaymentAttemptPayload> {
-  return apiFetch<PaymentAttemptPayload>(`/orders/${orderId}/payment`, {
-    method: "POST",
-    body: JSON.stringify({ consent_id: consentId }),
-  });
-}
-
-export async function retryPayment(orderId: string): Promise<PaymentAttemptPayload> {
-  return apiFetch<PaymentAttemptPayload>(`/orders/${orderId}/payment/retry`, {
-    method: "POST",
-  });
-}
-
-export async function refundOrder(orderId: string, reason = "merchant_initiated"): Promise<{ status: string; order_id: string }> {
-  return apiFetch<{ status: string; order_id: string }>(`/orders/${orderId}/refund?reason=${encodeURIComponent(reason)}`, {
-    method: "POST",
-  });
-}
-
-// --- Development-only webhook simulation (goes through the verified boundary) ---
-
-export async function simulatePaymentCapture(orderId: string): Promise<PaymentAttemptPayload> {
-  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-capture`, {
-    method: "POST",
-  });
-}
-
-export async function simulatePaymentFailure(orderId: string): Promise<PaymentAttemptPayload> {
-  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-failure`, {
-    method: "POST",
-  });
-}
-
-export async function getCatalogItem(sku: string): Promise<Product> {
-  return apiFetch<Product>("/agent/catalog.get", {
-    method: "POST",
-    body: JSON.stringify({ sku }),
-  });
-}
-
-export async function runBuyerMission(body: {
-  buyer_agent_id: string;
-  message: string;
-  budget_ceiling_paise: number;
-  allowed_categories: string[];
-  purpose: string;
-  expires_at: string;
-  request_upsell: boolean;
-}): Promise<BuyerResultPayload> {
-  return apiFetch<BuyerResultPayload>("/agent/buyer/run", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-// --- Realtime (SSE with fetch so the merchant auth headers are attached) ---
+// --- Console commerce flow (merchant JWT, never agent keys) ---
 
 export interface StreamHandlers {
   onEvent: (event: LedgerEvent) => void;
@@ -592,4 +531,117 @@ async function buildHeaders(): Promise<Record<string, string>> {
   const token = await getMerchantToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
+}
+
+// --- Merchant store / onboarding (real per-user merchants) ---
+
+export interface StoreInfo {
+  merchant_id: string;
+  name: string;
+  role: string;
+  created_at: string;
+}
+
+export async function getStore(): Promise<StoreInfo> {
+  return apiFetch<StoreInfo>("/console/store");
+}
+
+export async function onboardMerchant(storeName: string): Promise<StoreInfo> {
+  return apiFetch<StoreInfo>("/console/onboarding", {
+    method: "POST",
+    body: JSON.stringify({ store_name: storeName }),
+  });
+}
+
+// --- Console catalog (the merchant's own DB-persisted products) ---
+
+export async function getConsoleCatalog(query = ""): Promise<Product[]> {
+  return apiFetch<Product[]>(
+    `/console/catalog${query ? `?query=${encodeURIComponent(query)}` : ""}`
+  );
+}
+
+export async function getConsoleCatalogItem(sku: string): Promise<Product> {
+  return apiFetch<Product>(`/console/catalog/${encodeURIComponent(sku)}`);
+}
+
+// --- Console commerce flow (merchant JWT, never agent keys) ---
+
+export async function refundOrder(orderId: string, reason = "merchant_initiated"): Promise<{ status: string; order_id: string }> {
+  return apiFetch<{ status: string; order_id: string }>(`/orders/${orderId}/refund?reason=${encodeURIComponent(reason)}`, {
+    method: "POST",
+  });
+}
+
+// --- Development-only webhook simulation (goes through the verified boundary) ---
+
+export async function simulatePaymentCapture(orderId: string): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-capture`, {
+    method: "POST",
+  });
+}
+
+export async function simulatePaymentFailure(orderId: string): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-failure`, {
+    method: "POST",
+  });
+}
+
+export async function runBuyerMission(body: {
+  buyer_agent_id: string;
+  message: string;
+  budget_ceiling_paise: number;
+  allowed_categories: string[];
+  purpose: string;
+  expires_at: string;
+  request_upsell: boolean;
+}): Promise<BuyerResultPayload> {
+  return apiFetch<BuyerResultPayload>("/agent/buyer/run", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function consoleSellerRespond(
+  body: SellerRequestPayload
+): Promise<SellerDecisionPayload> {
+  return apiFetch<SellerDecisionPayload>("/console/agent/seller/respond", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function consoleCreateOrder(body: {
+  intent: IntentMandate;
+  message: string;
+  idempotency_key: string;
+  request_upsell: boolean;
+  trace_id?: string;
+}): Promise<OrderCreateResult> {
+  return apiFetch<OrderCreateResult>("/console/orders", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function consoleRequestConsent(orderId: string): Promise<ConsentInfo> {
+  return apiFetch<ConsentInfo>(`/console/orders/${orderId}/consent`, {
+    method: "POST",
+  });
+}
+
+export async function consoleStartPayment(
+  orderId: string,
+  consentId: string
+): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/payment`, {
+    method: "POST",
+    body: JSON.stringify({ consent_id: consentId }),
+  });
+}
+
+export async function consoleRetryPayment(orderId: string): Promise<PaymentAttemptPayload> {
+  return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/payment/retry`, {
+    method: "POST",
+  });
 }

@@ -79,6 +79,29 @@ class MerchantUserRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class MerchantRecord(Base):
+    __tablename__ = "merchants"
+
+    merchant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CatalogProductRecord(Base):
+    __tablename__ = "catalog_products"
+
+    id: Mapped[str] = mapped_column(String(96), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    floor_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    attributes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
 def make_engine(config: Settings = settings):
     if config.database_url.startswith("sqlite"):
         connect_args: dict[str, object] = {"check_same_thread": False}

@@ -22,8 +22,16 @@ class RefundService:
         order_id: str,
         reason: str,
         trace_id: str | None = None,
+        commerce: CommerceCore | None = None,
     ) -> dict[str, object]:
-        order = self.commerce.get_order(order_id)
+        """Issue a refund against the owning merchant's core.
+
+        The caller (endpoint) passes the merchant-scoped core after verifying
+        the order belongs to that merchant; ``get_order`` on a scoped core
+        raises for orders the merchant does not own.
+        """
+        core = commerce or self.commerce
+        order = core.get_order(order_id)
         if order.status is not OrderStatus.PAID:
             raise ValueError(
                 f"Refund requires a PAID order; current status is {order.status}"
@@ -32,10 +40,10 @@ class RefundService:
         resolved_trace = trace_id or order.trace_id
 
         updated = order.model_copy(update={"status": OrderStatus.REFUNDED})
-        self.commerce._orders[order_id] = updated
-        self.commerce.order_repo.save(updated)
+        core._orders[order_id] = updated
+        core.order_repo.save(updated)
 
-        self.commerce._record(
+        core._record(
             trace_id=resolved_trace,
             actor=LedgerActor.COMMERCE_CORE,
             action="refund.initiated",

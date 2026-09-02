@@ -1,19 +1,20 @@
 """Merchant authentication for the console API (§55.3–§55.5).
 
-Two distinct surfaces are supported:
+Two distinct concerns, strictly separated:
 
-1. Production / demo with Supabase configured — the ``Authorization: Bearer``
-   token is a Supabase access token. The project issues ES256 access tokens, so
-   asymmetric tokens are verified locally against the project JWKS public keys
-   (matching ``kid``); HS256 tokens are verified offline with the Supabase JWT
-   secret when configured, and the online Auth API remains as a fallback. The
-   ``sub`` claim is resolved to a merchant via the ``merchant_users`` table
-   using the service-role key.
+1. **Authentication** — ``get_authenticated_user`` verifies the Supabase
+   access token (JWKS / Auth API) and returns the verified user id. It makes
+   no statement about what the user may access.
 
-2. Development fallback — when Supabase is not configured, an ``X-Agent-Key``
-   (the same demo key the console already sends) grants a dev session for the
-   demo merchant. This keeps the local buildathon flow working without a cloud
-   account while production remains locked down.
+2. **Merchant authorization** — ``get_merchant_session`` resolves the verified
+   user to their merchant via the real ``merchant_users`` and ``merchants``
+   tables. A user with no mapping gets an explicit onboarding-required error,
+   never silent access to demo data.
+
+3. **Development fallback** — when Supabase is not configured at all, the
+   demo ``X-Agent-Key`` grants a dev session for the demo merchant so the
+   local buildathon flow works without a cloud account. This is impossible in
+   production (the environment flag gates it).
 """
 
 from __future__ import annotations
@@ -35,12 +36,21 @@ from sellable.config import settings
 
 _DEMO_MERCHANT_ID = "mrc_demo_store"
 
+ONBOARDING_REQUIRED_CODE = "onboarding_required"
+
 
 @dataclass(frozen=True)
 class MerchantSession:
     merchant_id: str
     auth_user_id: str | None
     role: str
+    merchant_name: str | None = None
+
+
+@dataclass(frozen=True)
+class AuthenticatedUser:
+    auth_user_id: str
+    email: str | None = None
 
 
 def _b64decode(segment: str) -> bytes:
@@ -170,13 +180,25 @@ def verify_supabase_token(token: str) -> dict[str, object]:
 logger = logging.getLogger("sellable.merchant_auth")
 
 
-def _resolve_merchant(auth_user_id: str) -> tuple[str, str]:
+def _merchant_record(merchant_id: str) -> tuple[str | None, str | None]:
+    """Return (merchant_name, None) if the merchant record exists."""
+    from sellable.repositories import MerchantRepository
+
+    record = MerchantRepository().get(merchant_id)
+    if record is None:
+        return None, None
+    return record.name, None
+
+
+def _resolve_merchant(auth_user_id: str) -> tuple[str, str, str | None]:
     """Look up the merchant account associated with the verified Supabase user.
 
-    Queries ``merchant_users`` table by ``auth_user_id``. If no record exists,
-    returns 403 Forbidden with a clear authorization message.
+    Queries the ``merchant_users`` table (direct DB first, PostgREST fallback).
+    Returns ``(merchant_id, role, merchant_name)``. Raises an explicit
+    onboarding-required error when no real mapping exists — never auto-links.
     """
     from sqlalchemy.orm import Session
+
     from sellable.ledger.database import MerchantUserRecord, make_engine
 
     # Step 1: Direct SQL query on merchant_users table
@@ -185,7 +207,8 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str]:
         with Session(engine) as session:
             record = session.query(MerchantUserRecord).filter_by(auth_user_id=auth_user_id).first()
             if record:
-                return record.merchant_id, record.role
+                name, _ = _merchant_record(record.merchant_id)
+                return record.merchant_id, record.role, name
     except Exception as db_err:
         logger.warning("Direct database check for merchant_users failed: %s", db_err)
 
@@ -206,13 +229,18 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str]:
             with urllib.request.urlopen(request, timeout=10) as response:
                 rows = json.loads(response.read().decode("utf-8"))
                 if rows:
-                    return str(rows[0].get("merchant_id", "")), str(rows[0].get("role", "operator"))
+                    merchant_id = str(rows[0].get("merchant_id", ""))
+                    name, _ = _merchant_record(merchant_id)
+                    return merchant_id, str(rows[0].get("role", "operator")), name
         except Exception as http_err:
             logger.warning("PostgREST merchant resolution failed: %s", http_err)
 
     raise HTTPException(
         status_code=403,
-        detail="No merchant account is linked to this user. Please complete merchant onboarding.",
+        detail={
+            "code": ONBOARDING_REQUIRED_CODE,
+            "message": "No merchant account is linked to this user. Please complete merchant onboarding.",
+        },
     )
 
 
@@ -227,17 +255,47 @@ def _dev_session(x_agent_key: str | None) -> MerchantSession:
     )
 
 
+def _extract_bearer(authorization: str | None) -> str:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return ""
+
+
+def get_authenticated_user(
+    authorization: str | None = Header(default=None),
+    x_agent_key: str | None = Header(default=None),
+) -> AuthenticatedUser:
+    """FastAPI dependency: verify the caller's identity (no authorization claim).
+
+    Used by onboarding: a verified Supabase user may create their own merchant.
+    """
+    if not settings.supabase_is_configured:
+        # Dev-only: the demo key identifies the local developer.
+        if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH} and settings.environment != "production":
+            return AuthenticatedUser(auth_user_id="dev_local_user")
+        raise HTTPException(status_code=401, detail="Authentication is not configured")
+
+    bearer = _extract_bearer(authorization)
+    if not bearer:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    payload = verify_supabase_token(bearer)
+    sub = payload.get("sub")
+    if not isinstance(sub, str) or not sub:
+        raise HTTPException(status_code=401, detail="Token has no subject")
+    email = payload.get("email") if isinstance(payload.get("email"), str) else None
+    return AuthenticatedUser(auth_user_id=sub, email=email)
+
+
 def get_merchant_session(
     authorization: str | None = Header(default=None),
     x_agent_key: str | None = Header(default=None),
 ) -> MerchantSession:
-    """FastAPI dependency resolving the authenticated merchant for a console request."""
+    """FastAPI dependency resolving the authenticated + authorized merchant."""
     if not settings.supabase_is_configured:
         return _dev_session(x_agent_key)
 
-    bearer = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        bearer = authorization[7:].strip()
+    bearer = _extract_bearer(authorization)
     if not bearer:
         raise HTTPException(status_code=401, detail="Missing merchant bearer token")
 
@@ -245,8 +303,20 @@ def get_merchant_session(
     sub = payload.get("sub")
     if not isinstance(sub, str) or not sub:
         raise HTTPException(status_code=401, detail="Token has no subject")
-    merchant_id, role = _resolve_merchant(sub)
-    if merchant_id != _DEMO_MERCHANT_ID:
-        # The buildathon is scoped to a single demo merchant.
-        raise HTTPException(status_code=403, detail="Merchant is not authorized for this store")
-    return MerchantSession(merchant_id=merchant_id, auth_user_id=sub, role=role)
+    merchant_id, role, merchant_name = _resolve_merchant(sub)
+    return MerchantSession(
+        merchant_id=merchant_id,
+        auth_user_id=sub,
+        role=role,
+        merchant_name=merchant_name,
+    )
+
+
+__all__ = [
+    "AuthenticatedUser",
+    "MerchantSession",
+    "ONBOARDING_REQUIRED_CODE",
+    "get_authenticated_user",
+    "get_merchant_session",
+    "verify_supabase_token",
+]

@@ -64,7 +64,7 @@ def _start_llm_probe(provider: str, adapter: Any) -> None:
     thread.start()
 
 
-def _llm_status(adapter: Any) -> dict[str, object]:
+def _llm_status(adapter: Any, init_error: str | None = None) -> dict[str, object]:
     provider = (settings.llm_provider or "").lower()
     model = settings.llm_model or ""
     is_mock = provider in _MOCK_PROVIDERS
@@ -101,7 +101,11 @@ def _llm_status(adapter: Any) -> dict[str, object]:
             "state": "ERROR",
             "mode": "scripted",
             "reason": "LLM adapter failed to initialize",
-            "detail": "The configured LLM adapter could not be constructed.",
+            "detail": (
+                f"The configured LLM adapter could not be constructed: {init_error}"
+                if init_error
+                else "The configured LLM adapter could not be constructed."
+            ),
         }
 
     probe_error = _cached_llm_probe(provider)
@@ -308,9 +312,10 @@ def build_status(
     buyer_agent: Any,
     gateway: Any,
     llm_adapter: Any,
+    llm_init_error: str | None = None,
 ) -> dict[str, object]:
     """Assemble the full /agents/status payload from real backend state."""
-    llm = _llm_status(llm_adapter)
+    llm = _llm_status(llm_adapter, init_error=llm_init_error)
     seller = _seller_status(llm, seller_agent)
     buyer = _buyer_status(buyer_agent, gateway)
     gateway_status = _gateway_status(gateway)

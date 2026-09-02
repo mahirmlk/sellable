@@ -6,7 +6,6 @@ import {
   Send,
   Loader2,
   CheckCircle2,
-  AlertTriangle,
   RotateCcw,
   Wallet,
   ShieldCheck,
@@ -16,18 +15,18 @@ import {
   ArrowRight,
   ShieldAlert,
   ExternalLink,
-  CircleDollarSign,
 } from "lucide-react";
 import { formatPaise, formatTimestamp } from "@/lib/formatters";
 import { openRazorpayCheckout } from "@/lib/razorpay";
 import {
   getConsolePolicy,
   getConsoleTransactionDetail,
-  sellerRespond,
-  createOrder,
-  requestConsent,
-  startPayment,
-  retryPayment,
+  getStore,
+  consoleSellerRespond,
+  consoleCreateOrder,
+  consoleRequestConsent,
+  consoleStartPayment,
+  consoleRetryPayment,
   refundOrder,
   simulatePaymentCapture,
   simulatePaymentFailure,
@@ -73,10 +72,10 @@ const PAYMENT_TERMINAL = ["PAID", "FULFILLED", "PAYMENT_FAILED", "ABORTED", "REF
 
 function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2 py-1">
-      <span className="text-green-400 flex-shrink-0">{icon}</span>
-      <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] uppercase text-[var(--bb-grey-2)]">{label}</span>
-    </div>
+    <span className="inline-flex items-center gap-1.5 px-2 py-[3px] border border-[var(--bb-line-soft)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.5rem] tracking-[0.06em] text-[var(--bb-grey-3)]">
+      <span className="text-green-400">{icon}</span>
+      {label}
+    </span>
   );
 }
 
@@ -252,6 +251,7 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
+  const [storeName, setStoreName] = useState<string | null>(null);
 
   const sessionMessageRef = useRef<string>("");
   const lastTraceIdRef = useRef<string | null>(null);
@@ -290,6 +290,9 @@ export default function ChatPage() {
         setCategories(p.allowed_categories.length > 0 ? p.allowed_categories : ["accessories", "gifting", "snacks"]);
       })
       .catch(() => {});
+    getStore()
+      .then((s) => setStoreName(s.name))
+      .catch(() => setStoreName(null));
     return () => {
       abortPollRef.current = true;
     };
@@ -349,7 +352,7 @@ export default function ChatPage() {
                 consent_id: detail.consent_id,
                 order_id: orderId,
                 amount_paise: detail.amount_paise,
-                payee_id: detail.merchant_id || "mrc_demo_store",
+                payee_id: detail.merchant_id,
                 purpose: "single_transaction",
                 expires_at: detail.consent_expires_at || new Date().toISOString(),
                 single_use: true,
@@ -373,7 +376,7 @@ export default function ChatPage() {
       try {
         const i = buildIntent(message);
         setIntent(i);
-        const result = await sellerRespond({
+        const result = await consoleSellerRespond({
           message,
           intent: i,
           request_upsell: opts.upsell,
@@ -467,7 +470,7 @@ export default function ChatPage() {
     setBusy(true);
     setPhase("checkout");
     try {
-      const result = await createOrder({
+      const result = await consoleCreateOrder({
         intent,
         message: sessionMessageRef.current,
         idempotency_key: `idem_chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -479,7 +482,7 @@ export default function ChatPage() {
         setPhase("approval");
         pollOrder(result.order_id);
       } else {
-        const c = await requestConsent(result.order_id);
+        const c = await consoleRequestConsent(result.order_id);
         setConsent(c);
         setPhase("consent");
       }
@@ -504,7 +507,7 @@ export default function ChatPage() {
     setBusy(true);
     setPhase("payment");
     try {
-      const attempt = await startPayment(order.order_id, consent.consent_id);
+      const attempt = await consoleStartPayment(order.order_id, consent.consent_id);
       setPayment(attempt);
       let opened = false;
       if (RAZORPAY_KEY) {
@@ -512,7 +515,7 @@ export default function ChatPage() {
           key: RAZORPAY_KEY,
           amountPaise: order.amount_paise,
           orderId: attempt.provider_order_id,
-          name: "SELLABLE Demo Store",
+          name: storeName || "SELLABLE",
           description: `Order ${order.order_id}`,
           onSuccess: () => undefined,
         });
@@ -543,14 +546,14 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [order, consent, busy, pollOrder]);
+  }, [order, consent, busy, pollOrder, storeName]);
 
   const handleRetry = useCallback(async () => {
     if (!order || busy) return;
     setBusy(true);
     setPhase("payment");
     try {
-      const attempt = await retryPayment(order.order_id);
+      const attempt = await consoleRetryPayment(order.order_id);
       setPayment(attempt);
       let opened = false;
       if (RAZORPAY_KEY) {
@@ -558,7 +561,7 @@ export default function ChatPage() {
           key: RAZORPAY_KEY,
           amountPaise: order.amount_paise,
           orderId: attempt.provider_order_id,
-          name: "SELLABLE Demo Store",
+          name: storeName || "SELLABLE",
           description: `Order ${order.order_id} (retry)`,
           onSuccess: () => undefined,
         });
@@ -580,7 +583,7 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [order, busy, pollOrder]);
+  }, [order, busy, pollOrder, storeName]);
 
   const handleSimulate = useCallback(
     async (kind: "capture" | "failure") => {
@@ -632,16 +635,14 @@ export default function ChatPage() {
       {/* Header */}
       <div className="px-6 py-4 border-b border-[var(--bb-line)] flex items-center justify-between flex-shrink-0">
         <div>
-          <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">AI-assisted checkout</h1>
-          <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">
-            HUMAN CONVERSATIONAL CHECKOUT — SAME COMMERCE CORE AS A2A
+          <h1 className="font-[var(--font-sans)] text-[1.35rem] tracking-[-0.04em] text-[var(--bb-white)]">Checkout</h1>
+          <p className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mt-1">
+            AGENT-ASSISTED · POLICY-BOUND · HUMAN APPROVED
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={resetSession} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
-            <RefreshCw size={12} /> NEW SESSION
-          </button>
-        </div>
+        <button onClick={resetSession} className="inline-flex items-center gap-2 h-[30px] px-3 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.52rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
+          <RefreshCw size={11} /> NEW SESSION
+        </button>
       </div>
 
       {/* Session config strip */}
@@ -687,15 +688,14 @@ export default function ChatPage() {
         <div className="flex flex-col min-h-0">
           <div ref={listRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
             {messages.length === 0 && phase === "idle" && (
-              <div className="max-w-[560px] mx-auto mt-10 text-center">
-                <Sparkles size={28} className="mx-auto text-[var(--bb-orange)] mb-4" />
-                <div className="font-[var(--font-sans)] text-[1.1rem] text-[var(--bb-white)] mb-2">Describe what you need</div>
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)] leading-relaxed mb-6">
-                  The Seller Agent searches the real merchant catalog, quotes a policy-valid cart,
-                  suggests compatible upsells, and negotiates within merchant guardrails. Every
-                  action is recorded to the XAI Ledger.
+              <div className="max-w-[520px] mx-auto mt-14">
+                <Sparkles size={22} className="text-[var(--bb-orange)] mb-5" />
+                <div className="font-[var(--font-sans)] text-[1.05rem] text-[var(--bb-white)] mb-2">Describe what you need</div>
+                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)] leading-relaxed mb-7">
+                  The Seller Agent searches your real catalog, quotes a policy-valid cart, and
+                  negotiates within your guardrails. Every action is recorded to the XAI Ledger.
                 </div>
-                <div className="grid gap-2 text-left">
+                <div className="space-y-1.5">
                   {[
                     "I need a coffee setup for my desk under ₹2,000",
                     "A protective travel case for my headphones",
@@ -704,9 +704,9 @@ export default function ChatPage() {
                     <button
                       key={s}
                       onClick={() => handleSend(s)}
-                      className="px-4 py-3 border border-[var(--bb-line)] hover:border-[var(--bb-grey-4)] hover:bg-[var(--bb-panel)] transition-colors text-left cursor-pointer"
+                      className="w-full text-left px-4 py-2.5 border border-[var(--bb-line-soft)] hover:border-[var(--bb-grey-4)] hover:bg-[var(--bb-panel)] transition-colors cursor-pointer group"
                     >
-                      <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-2)]">{s}</span>
+                      <span className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-2)] group-hover:text-[var(--bb-white)] transition-colors">{s}</span>
                     </button>
                   ))}
                 </div>
@@ -715,8 +715,8 @@ export default function ChatPage() {
 
             {phase === "thinking" && (
               <div className="flex items-center gap-3">
-                <Loader2 size={16} className="animate-spin text-[var(--bb-orange)]" />
-                <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">Searching catalog… checking merchant policy… preparing quote…</span>
+                <Loader2 size={14} className="animate-spin text-[var(--bb-orange)]" />
+                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">SEARCHING CATALOG · CHECKING POLICY · PREPARING QUOTE</span>
               </div>
             )}
 
@@ -724,44 +724,37 @@ export default function ChatPage() {
               if (msg.role === "user") {
                 return (
                   <div key={msg.id} className="flex justify-end">
-                    <div className="max-w-[70%] px-4 py-3 border border-[var(--bb-line)] bg-[var(--bb-panel)]">
+                    <div className="max-w-[70%] px-4 py-2.5 bg-[var(--bb-orange)]/[0.08] border-l-2 border-[var(--bb-orange)]">
                       <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-white)] leading-relaxed">{msg.text}</div>
                     </div>
                   </div>
                 );
               }
               if (msg.role === "system") {
-                const color = msg.status === "error" ? "border-red-400/30 text-red-400" : msg.status === "warning" ? "border-amber-400/30 text-amber-400" : "border-[var(--bb-line)] text-[var(--bb-grey-2)]";
+                const color = msg.status === "error" ? "border-l-2 border-red-400/60 text-red-400" : msg.status === "warning" ? "border-l-2 border-amber-400/60 text-amber-400" : "border-l-2 border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]";
                 return (
-                  <div key={msg.id} className="flex items-start gap-2.5">
-                    {msg.status === "error" ? <AlertTriangle size={14} className="text-red-400 mt-0.5 flex-shrink-0" /> : msg.status === "warning" ? <ShieldAlert size={14} className="text-amber-400 mt-0.5 flex-shrink-0" /> : <CircleDollarSign size={14} className="text-[var(--bb-grey-4)] mt-0.5 flex-shrink-0" />}
-                    <div className={`flex-1 px-4 py-3 border bg-[var(--bb-panel)] ${color}`}>
-                      <div className="font-[var(--font-sans)] text-[0.78rem] leading-relaxed">{msg.text}</div>
-                    </div>
+                  <div key={msg.id} className={`px-4 py-2 bg-[var(--bb-panel)] ${color}`}>
+                    <div className="font-[var(--font-mono)] text-[0.68rem] leading-relaxed">{msg.text}</div>
                   </div>
                 );
               }
               return (
-                <div key={msg.id} className="flex justify-start">
-                  <div className="max-w-[80%]">
-                    <div className="px-4 py-3 border border-[var(--bb-orange)]/25 bg-[var(--bb-panel)] mb-2">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)]" />
-                        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-orange)]">SELLABLE</span>
-                      </div>
-                      <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-1)] leading-relaxed">{msg.text}</div>
-                    </div>
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
-                      <div className="border border-[var(--bb-line-soft)] bg-[var(--bb-panel)] px-4 py-2">
-                        {msg.toolCalls.includes("catalog.search") && <ToolRow icon={<CheckCircle2 size={11} />} label="Catalog searched" />}
-                        {msg.toolCalls.includes("catalog.get") && <ToolRow icon={<CheckCircle2 size={11} />} label="Catalog verified" />}
-                        {msg.toolCalls.includes("quotes.create") && <ToolRow icon={<CheckCircle2 size={11} />} label="Quote calculated by Commerce Core" />}
-                        {msg.toolCalls.includes("quotes.negotiate") && <ToolRow icon={<CheckCircle2 size={11} />} label="Counter-offer computed within floor" />}
-                        {msg.toolCalls.includes("upsell.suggest") && <ToolRow icon={<Sparkles size={11} />} label="Upsell allowed by policy" />}
-                        {msg.toolCalls.includes("policy.evaluate") && <ToolRow icon={<ShieldCheck size={11} />} label="Policy evaluated by Policy Engine" />}
-                      </div>
-                    )}
+                <div key={msg.id} className="max-w-[85%]">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="w-[5px] h-[5px] bg-[var(--bb-orange)]" />
+                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.14em] uppercase text-[var(--bb-orange)]">SELLER AGENT</span>
                   </div>
+                  <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-1)] leading-relaxed">{msg.text}</div>
+                  {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2.5">
+                      {msg.toolCalls.includes("catalog.search") && <ToolRow icon={<CheckCircle2 size={10} />} label="catalog.search" />}
+                      {msg.toolCalls.includes("catalog.get") && <ToolRow icon={<CheckCircle2 size={10} />} label="catalog.get" />}
+                      {msg.toolCalls.includes("quotes.create") && <ToolRow icon={<CheckCircle2 size={10} />} label="quotes.create" />}
+                      {msg.toolCalls.includes("quotes.negotiate") && <ToolRow icon={<CheckCircle2 size={10} />} label="quotes.negotiate" />}
+                      {msg.toolCalls.includes("upsell.suggest") && <ToolRow icon={<Sparkles size={10} />} label="upsell.suggest" />}
+                      {msg.toolCalls.includes("policy.evaluate") && <ToolRow icon={<ShieldCheck size={10} />} label="policy.evaluate" />}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -774,22 +767,22 @@ export default function ChatPage() {
                 e.preventDefault();
                 handleSend(input);
               }}
-              className="flex items-center gap-3"
+              className="flex items-center gap-2.5"
             >
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={phase === "payment" || phase === "receipt" ? "Session is processing a payment — start a new session to continue" : "Ask for a product, a price, or a desk setup…"}
+                placeholder={phase === "payment" || phase === "receipt" ? "Session is processing a payment — start a new session to continue" : "Describe what you need…"}
                 disabled={busy || phase === "thinking"}
-                className="flex-1 font-[var(--font-sans)] text-[0.85rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-4 py-3 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors disabled:opacity-50"
+                className="flex-1 h-[42px] font-[var(--font-sans)] text-[0.85rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-4 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors disabled:opacity-50"
               />
               <button
                 type="submit"
                 disabled={busy || phase === "thinking" || !input.trim()}
-                className="inline-flex items-center justify-center w-[44px] h-[44px] bg-[var(--bb-orange)] text-[var(--bb-black)] hover:bg-[var(--bb-orange-bright)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="inline-flex items-center justify-center w-[42px] h-[42px] bg-[var(--bb-orange)] text-[var(--bb-black)] hover:bg-[var(--bb-orange-bright)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 aria-label="Send message"
               >
-                <Send size={16} />
+                <Send size={15} />
               </button>
             </form>
           </div>

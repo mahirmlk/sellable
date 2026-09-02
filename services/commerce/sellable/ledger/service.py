@@ -43,28 +43,38 @@ class LedgerRepository:
                 .order_by(LedgerEventRecord.sequence)
             ).all()
 
-    def all_events(self, limit: int = 200, offset: int = 0) -> Sequence[LedgerEventRecord]:
+    def all_events(
+        self, limit: int = 200, offset: int = 0, trace_ids: Sequence[str] | None = None
+    ) -> Sequence[LedgerEventRecord]:
         with Session(self._engine) as session:
-            return session.scalars(
-                select(LedgerEventRecord)
-                .order_by(LedgerEventRecord.sequence.desc())
-                .offset(offset)
-                .limit(limit)
-            ).all()
+            query = select(LedgerEventRecord)
+            if trace_ids is not None:
+                if not trace_ids:
+                    return []
+                query = query.where(LedgerEventRecord.trace_id.in_(list(trace_ids)))
+            query = query.order_by(LedgerEventRecord.sequence.desc()).offset(offset).limit(limit)
+            return session.scalars(query).all()
 
-    def count_events(self) -> int:
+    def count_events(self, trace_ids: Sequence[str] | None = None) -> int:
         with Session(self._engine) as session:
-            return session.scalar(select(func.count(LedgerEventRecord.sequence))) or 0
+            query = select(func.count(LedgerEventRecord.sequence))
+            if trace_ids is not None:
+                if not trace_ids:
+                    return 0
+                query = query.where(LedgerEventRecord.trace_id.in_(list(trace_ids)))
+            return session.scalar(query) or 0
 
     def max_sequence(self) -> int:
         with Session(self._engine) as session:
             return session.scalar(select(func.max(LedgerEventRecord.sequence))) or 0
 
-    def events_after(self, sequence: int, limit: int = 200) -> Sequence[LedgerEventRecord]:
+    def events_after(
+        self, sequence: int, limit: int = 200, trace_ids: Sequence[str] | None = None
+    ) -> Sequence[LedgerEventRecord]:
         with Session(self._engine) as session:
-            return session.scalars(
-                select(LedgerEventRecord)
-                .where(LedgerEventRecord.sequence > sequence)
-                .order_by(LedgerEventRecord.sequence)
-                .limit(limit)
-            ).all()
+            query = select(LedgerEventRecord).where(LedgerEventRecord.sequence > sequence)
+            if trace_ids is not None:
+                if not trace_ids:
+                    return []
+                query = query.where(LedgerEventRecord.trace_id.in_(list(trace_ids)))
+            return session.scalars(query.order_by(LedgerEventRecord.sequence).limit(limit)).all()

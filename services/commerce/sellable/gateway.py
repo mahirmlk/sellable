@@ -6,6 +6,7 @@ from agents.seller.agent import SellerAgent, SellerDecision, SellerRequest
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import CatalogSearchRequest, Product
 from sellable.core import CommerceCore
+from sellable.repositories import MerchantRepository
 
 
 class AgentGateway:
@@ -13,9 +14,15 @@ class AgentGateway:
         self.commerce = commerce
         self.seller_agent = seller_agent
 
+    @property
+    def merchant_name(self) -> str:
+        """Real merchant name from the merchants table; never fabricated."""
+        name = MerchantRepository().name_of(self.commerce.policy.merchant_id)
+        return name or self.commerce.policy.merchant_id
+
     def discovery_manifest(self) -> dict[str, object]:
         return {
-            "name": "SELLABLE Demo Merchant",
+            "name": self.merchant_name,
             "merchant_id": self.commerce.policy.merchant_id,
             "protocol_version": "0.1",
             "capabilities": [

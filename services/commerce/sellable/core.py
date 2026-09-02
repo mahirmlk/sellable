@@ -52,6 +52,7 @@ class CommerceCore:
         consent_service: ConsentService | None = None,
         policy_engine: PolicyEngine | None = None,
         engine: object | None = None,
+        merchant_scope: str | None = None,
     ) -> None:
         self.catalog = catalog
         self.policy = policy
@@ -62,15 +63,16 @@ class CommerceCore:
         self.policy_engine = policy_engine or PolicyEngine()
         self._idempotency_keys: dict[str, str] = {}
         self._order_lock = threading.Lock()
+        self.merchant_scope = merchant_scope or policy.merchant_id
 
         # Hydrate from database
         self._hydrate()
 
     def _hydrate(self) -> None:
-        """Load persisted state from the database."""
+        """Load persisted state from the database (scoped to this core's merchant)."""
         try:
-            # Load orders
-            orders = self.order_repo.all()
+            # Load orders belonging to this merchant only
+            orders = self.order_repo.all(merchant_id=self.merchant_scope)
             self._orders: dict[str, Order] = {o.order_id: o for o in orders}
             # Rebuild idempotency key map
             self._idempotency_keys = {o.idempotency_key: o.order_id for o in orders}

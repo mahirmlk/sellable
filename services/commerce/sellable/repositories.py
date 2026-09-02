@@ -1,14 +1,45 @@
-"""Repository for persisting and loading orders and consents."""
+"""Repository for persisting and loading orders, consents, merchants, and catalog."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime, timezone
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from sellable.contracts import Consent, ConsentStatus, Order, OrderStatus
-from sellable.ledger.database import ConsentRecord, OrderRecord, make_engine
+from sellable.contracts import Consent, ConsentStatus, Order, OrderStatus, Product
+from sellable.ledger.database import (
+    CatalogProductRecord,
+    ConsentRecord,
+    MerchantRecord,
+    OrderRecord,
+    make_engine,
+)
+
+
+class MerchantRepository:
+    def __init__(self, engine: object | None = None) -> None:
+        self._engine = engine or make_engine()
+
+    def get(self, merchant_id: str) -> MerchantRecord | None:
+        with Session(self._engine) as session:
+            return session.get(MerchantRecord, merchant_id)
+
+    def name_of(self, merchant_id: str) -> str | None:
+        record = self.get(merchant_id)
+        return record.name if record else None
+
+    def create(self, merchant_id: str, name: str) -> MerchantRecord:
+        with Session(self._engine) as session:
+            record = MerchantRecord(
+                merchant_id=merchant_id,
+                name=name,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(record)
+            session.commit()
+            return record
 
 
 class OrderRepository:
@@ -66,9 +97,12 @@ class OrderRepository:
                 created_at=record.created_at,
             )
 
-    def all(self) -> list[Order]:
+    def all(self, merchant_id: str | None = None) -> list[Order]:
         with Session(self._engine) as session:
-            records = session.scalars(select(OrderRecord)).all()
+            query = select(OrderRecord)
+            if merchant_id is not None:
+                query = query.where(OrderRecord.merchant_id == merchant_id)
+            records = session.scalars(query).all()
             return [
                 Order(
                     order_id=r.order_id,
@@ -85,6 +119,85 @@ class OrderRepository:
                 )
                 for r in records
             ]
+
+
+class CatalogRepository:
+    """DB-backed, per-merchant product catalog (the real source of truth)."""
+
+    def __init__(self, engine: object | None = None) -> None:
+        self._engine = engine or make_engine()
+
+    @staticmethod
+    def _row_id(merchant_id: str, sku: str) -> str:
+        return f"{merchant_id}:{sku}"
+
+    def list(self, merchant_id: str) -> list[Product]:
+        with Session(self._engine) as session:
+            records = session.scalars(
+                select(CatalogProductRecord).where(
+                    CatalogProductRecord.merchant_id == merchant_id
+                )
+            ).all()
+            return [
+                Product(
+                    id=r.id,
+                    merchant_id=r.merchant_id,
+                    sku=r.sku,
+                    title=r.title,
+                    description=r.description,
+                    price_paise=r.price_paise,
+                    floor_paise=r.floor_paise,
+                    stock=r.stock,
+                    category=r.category,
+                    attributes=r.attributes or {},
+                )
+                for r in records
+            ]
+
+    def add(self, product: Product) -> Product:
+        with Session(self._engine) as session:
+            row_id = self._row_id(product.merchant_id, product.sku)
+            existing = session.get(CatalogProductRecord, row_id)
+            if existing:
+                raise ValueError(f"SKU already exists: {product.sku}")
+            session.add(
+                CatalogProductRecord(
+                    id=row_id,
+                    merchant_id=product.merchant_id,
+                    sku=product.sku,
+                    title=product.title,
+                    description=product.description,
+                    price_paise=product.price_paise,
+                    floor_paise=product.floor_paise,
+                    stock=product.stock,
+                    category=product.category,
+                    attributes=product.attributes,
+                )
+            )
+            session.commit()
+        return product
+
+    def add_many(self, products: list[Product]) -> None:
+        """Bulk insert used for seeding; skips SKUs that already exist."""
+        with Session(self._engine) as session:
+            for product in products:
+                row_id = self._row_id(product.merchant_id, product.sku)
+                if session.get(CatalogProductRecord, row_id) is None:
+                    session.add(
+                        CatalogProductRecord(
+                            id=row_id,
+                            merchant_id=product.merchant_id,
+                            sku=product.sku,
+                            title=product.title,
+                            description=product.description,
+                            price_paise=product.price_paise,
+                            floor_paise=product.floor_paise,
+                            stock=product.stock,
+                            category=product.category,
+                            attributes=product.attributes,
+                        )
+                    )
+            session.commit()
 
 
 class ConsentRepository:
