@@ -1319,7 +1319,6 @@ def console_order_create(
             message=body.message,
             intent=body.intent,
             requested_sku=body.requested_sku,
-            quantity=body.quantity,
             buyer_offer_paise=body.buyer_offer_paise,
             request_upsell=body.request_upsell,
         ),

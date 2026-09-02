@@ -195,6 +195,52 @@ def test_onboarding_creates_real_merchant_and_scopes_data(isolated_env):
             == "TEST-SKU-1"
         )
 
+        # Console checkout flow: seller respond → order → consent
+        from datetime import datetime, timedelta, timezone as tz
+
+        now = datetime.now(tz.utc)
+        intent = {
+            "mandate_id": "im_scope_test",
+            "buyer_agent_id": "human_chat",
+            "budget_ceiling_paise": 500000,
+            "allowed_categories": ["accessories"],
+            "purpose": "scoped checkout test",
+            "created_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=15)).isoformat(),
+        }
+        q = client.post(
+            "/console/agent/seller/respond",
+            headers=DEMO_H,
+            json={
+                "message": "I need a Test Widget",
+                "intent": intent,
+                "request_upsell": False,
+                "requested_sku": "TEST-SKU-1",
+            },
+        )
+        assert q.status_code == 200, q.text
+        quote = q.json()
+        assert quote["selected_product"]["sku"] == "TEST-SKU-1"
+
+        o = client.post(
+            "/console/orders",
+            headers=DEMO_H,
+            json={
+                "intent": intent,
+                "message": "I need a Test Widget",
+                "idempotency_key": "idem_scope_test_0001",
+                "request_upsell": False,
+            },
+        )
+        assert o.status_code == 200, o.text
+        order = o.json()
+        assert order["amount_paise"] == 100000
+
+        c = client.post(f"/console/orders/{order['order_id']}/consent", headers=DEMO_H)
+        assert c.status_code == 200, c.text
+        assert c.json()["amount_paise"] == 100000
+        assert c.json()["payee_id"] == store["merchant_id"]
+
         # Demo store catalog is NOT visible to this merchant
         demo_catalog = CatalogRepository(engine=engine).list("mrc_demo_store")
         assert len(demo_catalog) == 10
