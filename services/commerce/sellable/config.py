@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,53 @@ def _suffix_url(url: str | None, suffix: str) -> str | None:
     if not url:
         return None
     return url.rstrip("/") + suffix
+
+
+def _parse_cors_origins(raw: str | None) -> tuple[str, ...]:
+    """Parse the ``CORS_ORIGINS`` environment value into a tuple of origins.
+
+    Accepts several real-world formats so a mis-typed Railway variable cannot
+    silently break every browser request:
+
+    - comma-separated: ``https://a.example,https://b.example``
+    - JSON array:      ``["https://a.example", "https://b.example"]``
+    - quoted items:    ``"https://a.example", 'https://b.example'``
+    - whitespace / trailing slashes are tolerated
+    - empty/None produces an empty tuple (callers fall back to defaults)
+
+    Each item is normalized (quotes removed, trailing slash stripped) and
+    de-duplicated while preserving order.
+    """
+    if not raw or not raw.strip():
+        return ()
+
+    text = raw.strip()
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, list):
+            items = [str(item) for item in parsed]
+        else:
+            items = text.split(",")
+    else:
+        items = text.split(",")
+
+    origins: list[str] = []
+    for item in items:
+        origin = item.strip()
+        if not origin:
+            continue
+        if len(origin) >= 2 and origin[0] == origin[-1] and origin[0] in ("'", '"'):
+            origin = origin[1:-1].strip()
+        if not origin:
+            continue
+        if origin.startswith(("http://", "https://")):
+            origin = origin.rstrip("/")
+        if origin not in origins:
+            origins.append(origin)
+    return tuple(origins)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,11 +154,7 @@ class Settings:
             supabase_jwt_secret=os.getenv("SUPABASE_JWT_SECRET"),
             agent_api_key_hashes=key_hashes,
             agent_hmac_secret=os.getenv("BUYER_AGENT_HMAC_SECRET"),
-            cors_origins=tuple(
-                origin.strip()
-                for origin in os.getenv("CORS_ORIGINS", "").split(",")
-                if origin.strip()
-            )
+            cors_origins=_parse_cors_origins(os.getenv("CORS_ORIGINS"))
             or (
                 "https://sellable.shop",
                 "http://localhost:3000",

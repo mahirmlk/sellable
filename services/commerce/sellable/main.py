@@ -93,8 +93,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "PUT", "HEAD", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Agent-Key", "Accept", "X-Agent-Id", "X-Timestamp", "X-Nonce", "X-Signature"],
+    max_age=600,
 )
 
 app.add_middleware(RequestBodyCaptureMiddleware)
@@ -203,12 +204,13 @@ def get_ledger() -> LedgerRepository:
 
 @app.get("/health", tags=["operations"])
 @limiter.exempt
-def health() -> dict[str, str | bool]:
+def health() -> dict[str, str | bool | list[str]]:
     return {
         "status": "ok",
         "environment": settings.environment,
         "database": "connected",
         "razorpay_configured": settings.razorpay_is_configured,
+        "cors_origins": list(settings.cors_origins),
     }
 
 

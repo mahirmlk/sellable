@@ -26,6 +26,7 @@ def test_health_reports_the_unconfigured_test_payment_rail() -> None:
         "environment": "development",
         "database": "connected",
         "razorpay_configured": settings.razorpay_is_configured,
+        "cors_origins": list(settings.cors_origins),
     }
 
 
