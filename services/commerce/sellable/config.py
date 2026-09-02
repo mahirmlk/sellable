@@ -122,6 +122,7 @@ class Settings:
     # CORS
     cors_origins: tuple[str, ...] = (
         "https://sellable.shop",
+        "https://www.sellable.shop",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     )
@@ -157,6 +158,7 @@ class Settings:
             cors_origins=_parse_cors_origins(os.getenv("CORS_ORIGINS"))
             or (
                 "https://sellable.shop",
+                "https://www.sellable.shop",
                 "http://localhost:3000",
                 "http://127.0.0.1:3000",
             ),

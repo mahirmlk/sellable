@@ -21,6 +21,14 @@ def test_parse_simple_comma_separated() -> None:
     )
 
 
+def test_parse_production_apex_and_www() -> None:
+    raw = "https://sellable.shop,https://www.sellable.shop"
+    assert _parse_cors_origins(raw) == (
+        "https://sellable.shop",
+        "https://www.sellable.shop",
+    )
+
+
 def test_parse_json_array_format() -> None:
     raw = '["https://sellable.shop", "http://localhost:3000"]'
     assert _parse_cors_origins(raw) == ("https://sellable.shop", "http://localhost:3000")
@@ -63,12 +71,27 @@ def test_preflight_for_production_origin_is_allowed() -> None:
         assert header in headers
 
 
-def test_preflight_for_disallowed_origin_is_rejected() -> None:
+def test_preflight_for_www_origin_is_allowed() -> None:
     with TestClient(app) as client:
         response = client.options(
             "/agents/status",
             headers={
                 "Origin": "https://www.sellable.shop",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://www.sellable.shop"
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
+def test_preflight_for_disallowed_origin_is_rejected() -> None:
+    with TestClient(app) as client:
+        response = client.options(
+            "/agents/status",
+            headers={
+                "Origin": "https://evil.example.com",
                 "Access-Control-Request-Method": "GET",
             },
         )

@@ -61,7 +61,7 @@ python -m evals.runner
 | `RAZORPAY_WEBHOOK_SECRET` | Yes | Webhook signing secret |
 | `BUYER_AGENT_API_KEY_HASH` | Yes (prod) | SHA-256 hashes of agent API keys |
 | `BUYER_AGENT_HMAC_SECRET` | Yes (prod) | HMAC request-signing secret |
-| `CORS_ORIGINS` | Yes (prod) | Comma-separated frontend origins |
+| `CORS_ORIGINS` | Yes (prod) | Comma-separated frontend origins, e.g. `https://sellable.shop,https://www.sellable.shop` |
 
 **Never commit `.env` with real credentials.**
 
