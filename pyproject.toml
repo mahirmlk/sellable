@@ -9,11 +9,13 @@ description = "Safety-first commerce core for AI buyers and merchants."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cryptography>=42,<47",
     "fastapi>=0.115,<1.0",
     "langgraph>=0.2,<1.0",
     "psycopg[binary]>=3.1,<4.0",
     "pydantic>=2.8,<3.0",
     "python-dotenv>=1.0,<2.0",
+    "PyJWT>=2.9,<3.0",
     "razorpay>=1.4,<2.0",
     "slowapi>=0.1.9,<1.0",
     "SQLAlchemy>=2.0,<3.0",

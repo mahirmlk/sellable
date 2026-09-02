@@ -3,9 +3,12 @@
 Two distinct surfaces are supported:
 
 1. Production / demo with Supabase configured — the ``Authorization: Bearer``
-   token is a Supabase access token. It is verified offline (HS256 with the
-   Supabase JWT secret) and the ``sub`` claim is resolved to a merchant via the
-   ``merchant_users`` table using the service-role key.
+   token is a Supabase access token. The project issues ES256 access tokens, so
+   asymmetric tokens are verified locally against the project JWKS public keys
+   (matching ``kid``); HS256 tokens are verified offline with the Supabase JWT
+   secret when configured, and the online Auth API remains as a fallback. The
+   ``sub`` claim is resolved to a merchant via the ``merchant_users`` table
+   using the service-role key.
 
 2. Development fallback — when Supabase is not configured, an ``X-Agent-Key``
    (the same demo key the console already sends) grants a dev session for the
@@ -83,41 +86,70 @@ def _verify_online(token: str) -> dict[str, object]:
     return {"sub": user["id"], "role": role, "exp": time.time() + 3600, "email": user.get("email")}
 
 
+def _verify_hs256(token: str) -> dict[str, object]:
+    """Offline HS256 verification against ``SUPABASE_JWT_SECRET`` (legacy)."""
+    try:
+        header_b64, payload_b64, signature_b64 = token.split(".")
+        header = json.loads(_b64decode(header_b64))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        raise HTTPException(status_code=401, detail="Invalid token") from None
+    if header.get("alg") != "HS256":
+        raise HTTPException(status_code=401, detail="Unsupported token algorithm")
+    signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
+    expected = hmac.new(
+        settings.supabase_jwt_secret.encode("utf-8"), signing_input, hashlib.sha256
+    ).digest()
+    try:
+        signature = _b64decode(signature_b64)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token") from None
+    if not hmac.compare_digest(signature, expected):
+        raise HTTPException(status_code=401, detail="Invalid token signature")
+    try:
+        payload = json.loads(_b64decode(payload_b64))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token payload") from None
+    expires_at = payload.get("exp")
+    if not isinstance(expires_at, (int, float)) or expires_at <= time.time():
+        raise HTTPException(status_code=401, detail="Token missing or past its expiry")
+    if payload.get("role") != "authenticated":
+        raise HTTPException(status_code=401, detail="Token is not an authenticated user session")
+    return payload
+
+
 def verify_supabase_token(token: str) -> dict[str, object]:
     """Verify a Supabase access token and return its payload.
 
-    Uses offline HS256 verification when ``SUPABASE_JWT_SECRET`` is set,
-    otherwise falls back to online verification via the Auth API.
+    The production project issues **ES256** access tokens, so asymmetric
+    tokens are verified against the project JWKS public keys (matching ``kid``)
+    — never against ``SUPABASE_JWT_SECRET``. HS256 tokens are verified offline
+    when ``SUPABASE_JWT_SECRET`` is configured; the online Auth API is used as
+    a fallback when local verification is impossible or the JWKS is unreachable.
     """
-    if settings.supabase_jwt_secret:
+    from sellable import supabase_jwt
+
+    try:
+        header = supabase_jwt.decode_header(token)
+    except HTTPException:
+        raise
+
+    alg = (header.get("alg") or "").upper()
+    if alg in supabase_jwt.ASYMMETRIC_ALGS:
         try:
-            header_b64, payload_b64, signature_b64 = token.split(".")
-            header = json.loads(_b64decode(header_b64))
-        except (ValueError, Exception):
-            raise HTTPException(status_code=401, detail="Invalid token") from None
-        if header.get("alg") != "HS256":
-            raise HTTPException(status_code=401, detail="Unsupported token algorithm")
-        signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
-        expected = hmac.new(
-            settings.supabase_jwt_secret.encode("utf-8"), signing_input, hashlib.sha256
-        ).digest()
-        try:
-            signature = _b64decode(signature_b64)
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid token") from None
-        if not hmac.compare_digest(signature, expected):
-            raise HTTPException(status_code=401, detail="Invalid token signature")
-        try:
-            payload = json.loads(_b64decode(payload_b64))
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid token payload") from None
-        expires_at = payload.get("exp")
-        if not isinstance(expires_at, (int, float)) or expires_at <= time.time():
-            raise HTTPException(status_code=401, detail="Token missing or past its expiry")
-        if payload.get("role") != "authenticated":
-            raise HTTPException(status_code=401, detail="Token is not an authenticated user session")
-        return payload
-    return _verify_online(token)
+            return supabase_jwt.verify_access_token(token)
+        except HTTPException as exc:
+            # Infrastructure failure fetching the JWKS -> fall back to online
+            # verification; token-rejection (401) always propagates.
+            if exc.status_code == 502 and settings.supabase_url and settings.supabase_anon_key:
+                return _verify_online(token)
+            raise
+
+    if alg == "HS256" and settings.supabase_jwt_secret:
+        return _verify_hs256(token)
+
+    if settings.supabase_url and settings.supabase_anon_key:
+        return _verify_online(token)
+    raise HTTPException(status_code=401, detail="Unsupported token algorithm")
 
 
 def _resolve_merchant(auth_user_id: str) -> tuple[str, str]:
