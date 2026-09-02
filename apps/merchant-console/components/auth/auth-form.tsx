@@ -82,19 +82,10 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
           setError(error.message);
           return;
         }
-        if (data.user) {
-          // Link merchant_users entry for the demo store (backend also auto-links)
-          try {
-            await supabase.from("merchant_users").upsert({
-              id: `mu_${data.user.id.slice(0, 8)}`,
-              merchant_id: "mrc_demo_store",
-              auth_user_id: data.user.id,
-              role: "owner",
-            }, { onConflict: "auth_user_id" });
-          } catch {
-            // Backend auto-links on the first authenticated API request
-          }
-        }
+        // NOTE: merchant linking is intentionally NOT done here. The verified
+        // Supabase user is resolved to a merchant server-side via the
+        // `merchant_users` table (service-role only). Client-side linking
+        // would let any signup self-assign merchant access.
         if (data.session) {
           setSuccess("Account created. Redirecting...");
           setTimeout(() => {

@@ -318,7 +318,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     "Content-Type": "application/json",
     ...((options?.headers as Record<string, string>) || {}),
   };
-  if (AGENT_KEY) {
+  // The public demo agent key is ONLY for demo mode (no Supabase configured).
+  // It must never be sent in production — agent-gateway auth is separate from
+  // merchant auth and rejects the well-known demo key there.
+  if (isDemoMode() && AGENT_KEY) {
     headers["X-Agent-Key"] = AGENT_KEY;
   }
   const token = await getMerchantToken();
@@ -585,7 +588,7 @@ async function buildHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (AGENT_KEY) headers["X-Agent-Key"] = AGENT_KEY;
+  if (isDemoMode() && AGENT_KEY) headers["X-Agent-Key"] = AGENT_KEY;
   const token = await getMerchantToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;

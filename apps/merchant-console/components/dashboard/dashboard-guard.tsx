@@ -19,6 +19,8 @@ export function DashboardGuard() {
 
     async function check() {
       if (!isSupabaseConfigured()) {
+        // Demo mode only: when Supabase is not configured the demo cookie
+        // (set after /login) grants dashboard access.
         if (!hasDemoCookie()) {
           router.replace("/login?next=/dashboard");
         }
@@ -33,7 +35,8 @@ export function DashboardGuard() {
           router.replace("/login?next=/dashboard");
         }
       } catch {
-        if (!cancelled && !hasDemoCookie()) {
+        // With Supabase configured there is no demo fallback in production.
+        if (!cancelled) {
           router.replace("/login?next=/dashboard");
         }
       }

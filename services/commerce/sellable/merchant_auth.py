@@ -121,17 +121,9 @@ def _verify_hs256(token: str) -> dict[str, object]:
 def verify_supabase_token(token: str) -> dict[str, object]:
     """Verify a Supabase access token and return its payload.
 
-    The verification chain:
-    1. If the token header declares an asymmetric algorithm (ES256, RS256, etc.)
-       → verify against the project JWKS (``kid``-matched).
-    2. If local asymmetric verification fails, fall back to the online
-       ``/auth/v1/user`` endpoint (Supabase confirms the token server-side).
-    3. If the header declares HS256 and ``SUPABASE_JWT_SECRET`` is set →
-       verify offline with HMAC.
-    4. Otherwise → online verification via ``/auth/v1/user``.
-
-    The online fallback ensures that a valid Supabase session always works
-    even if the local JWKS/secret verification is misconfigured.
+    Asymmetric tokens (ES256, RS256, etc.) are verified against the project JWKS.
+    HS256 tokens are verified offline only when SUPABASE_JWT_SECRET is configured.
+    Online verification via /auth/v1/user remains as a resilient fallback.
     """
     from sellable import supabase_jwt
 
@@ -142,69 +134,62 @@ def verify_supabase_token(token: str) -> dict[str, object]:
 
     alg = (header.get("alg") or "").upper()
 
-    # --- Path 1: asymmetric (ES256 / RS256) → JWKS, then online fallback ---
+    # --- Path 1: asymmetric (ES256 / RS256) → remote JWKS, with online fallback ---
     if alg in supabase_jwt.ASYMMETRIC_ALGS:
         try:
-            return supabase_jwt.verify_access_token(token)
-        except HTTPException:
-            pass  # fall through to online verification below
+            payload = supabase_jwt.verify_access_token(token)
+            logger.info("Token verified via project JWKS (alg=%s)", alg)
+            return payload
+        except HTTPException as exc:
+            # Local verification failed (JWKS unreachable, rotation, etc.).
+            # The online Auth API is the official Supabase verification path
+            # and remains a resilient fallback — but never silently.
+            logger.warning("JWKS verification failed (%s); falling back to online Auth API", exc.detail)
 
         if settings.supabase_url and settings.supabase_anon_key:
-            return _verify_online(token)
+            payload = _verify_online(token)
+            logger.info("Token verified via online Auth API (alg=%s)", alg)
+            return payload
         raise HTTPException(status_code=401, detail="Local JWT verification failed")
 
     # --- Path 2: HS256 with configured secret ---
     if alg == "HS256" and settings.supabase_jwt_secret:
-        try:
-            return _verify_hs256(token)
-        except HTTPException:
-            pass  # fall through to online verification
+        payload = _verify_hs256(token)
+        logger.info("Token verified via SUPABASE_JWT_SECRET (HS256)")
+        return payload
 
-    # --- Path 3: online verification (catch-all for any remaining case) ---
+    # --- Path 3: online verification (fallback when anon key is configured) ---
     if settings.supabase_url and settings.supabase_anon_key:
-        return _verify_online(token)
+        payload = _verify_online(token)
+        logger.info("Token verified via online Auth API (alg=%s)", alg)
+        return payload
 
-    raise HTTPException(status_code=401, detail="Unsupported token algorithm")
+    raise HTTPException(status_code=401, detail=f"Unsupported token algorithm: {alg}")
 
 
 logger = logging.getLogger("sellable.merchant_auth")
 
 
 def _resolve_merchant(auth_user_id: str) -> tuple[str, str]:
-    """Resolve an authenticated Supabase user to their merchant account.
+    """Look up the merchant account associated with the verified Supabase user.
 
-    Resolution strategy:
-    1. Direct DB lookup via SQLAlchemy (`merchant_users` table).
-    2. If found, returns `(merchant_id, role)`.
-    3. If no row exists, auto-provisions the authenticated Supabase user as an
-       owner for the demo store (`mrc_demo_store`) in the DB.
-    4. If direct DB query fails, falls back to querying the Supabase PostgREST endpoint.
-    5. Always defaults gracefully to demo store access for validly authenticated sessions.
+    Queries ``merchant_users`` table by ``auth_user_id``. If no record exists,
+    returns 403 Forbidden with a clear authorization message.
     """
-    from datetime import datetime, timezone
     from sqlalchemy.orm import Session
     from sellable.ledger.database import MerchantUserRecord, make_engine
 
+    # Step 1: Direct SQL query on merchant_users table
     try:
         engine = make_engine()
         with Session(engine) as session:
             record = session.query(MerchantUserRecord).filter_by(auth_user_id=auth_user_id).first()
             if record:
                 return record.merchant_id, record.role
-
-            new_record = MerchantUserRecord(
-                id=f"mu_{auth_user_id[:8]}",
-                merchant_id=_DEMO_MERCHANT_ID,
-                auth_user_id=auth_user_id,
-                role="owner",
-                created_at=datetime.now(timezone.utc),
-            )
-            session.add(new_record)
-            session.commit()
-            return _DEMO_MERCHANT_ID, "owner"
     except Exception as db_err:
-        logger.warning("Direct database check for merchant_users failed, attempting PostgREST fallback: %s", db_err)
+        logger.warning("Direct database check for merchant_users failed: %s", db_err)
 
+    # Step 2: Fallback to PostgREST HTTP query with service-role key
     if settings.supabase_url and settings.supabase_service_role_key:
         url = (
             f"{settings.supabase_rest_url}/merchant_users"
@@ -221,11 +206,14 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str]:
             with urllib.request.urlopen(request, timeout=10) as response:
                 rows = json.loads(response.read().decode("utf-8"))
                 if rows:
-                    return str(rows[0].get("merchant_id", _DEMO_MERCHANT_ID)), str(rows[0].get("role", "owner"))
+                    return str(rows[0].get("merchant_id", "")), str(rows[0].get("role", "operator"))
         except Exception as http_err:
             logger.warning("PostgREST merchant resolution failed: %s", http_err)
 
-    return _DEMO_MERCHANT_ID, "owner"
+    raise HTTPException(
+        status_code=403,
+        detail="No merchant account is linked to this user. Please complete merchant onboarding.",
+    )
 
 
 def _dev_session(x_agent_key: str | None) -> MerchantSession:
@@ -251,8 +239,6 @@ def get_merchant_session(
     if authorization and authorization.lower().startswith("bearer "):
         bearer = authorization[7:].strip()
     if not bearer:
-        if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH} and settings.environment != "production":
-            return MerchantSession(merchant_id=_DEMO_MERCHANT_ID, auth_user_id=None, role="owner")
         raise HTTPException(status_code=401, detail="Missing merchant bearer token")
 
     payload = verify_supabase_token(bearer)

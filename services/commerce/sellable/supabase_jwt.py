@@ -1,28 +1,29 @@
 """Asymmetric Supabase access-token verification via the project JWKS.
 
 The production Supabase project signs access tokens with **ES256** (EC P-256).
-HS256 verification with ``SUPABASE_JWT_SECRET`` cannot verify those tokens, so
-this module fetches the project's public keys from
-``/auth/v1/.well-known/jwks.json``, matches the token's ``kid``, and verifies
-the JWT signature and claims locally.
+This module fetches the project's public keys from ``/auth/v1/.well-known/jwks.json``,
+matches the token's ``kid``, and verifies the JWT signature and claims locally using PyJWT.
 
-The JWKS is cached with a short TTL and refreshed when an unknown ``kid``
-appears (key rotation). No secrets, access tokens, private keys, or full JWTs
-are ever logged.
+The JWKS is cached with a 300s TTL and automatically refreshed on unknown ``kid``
+for key rotation. No secrets, access tokens, private keys, or full JWTs are ever logged.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import logging
 import threading
 import time
 import urllib.request
 from typing import Any
 
+import jwt
 from fastapi import HTTPException
 
 from sellable.config import settings
+
+logger = logging.getLogger("sellable.supabase_jwt")
 
 _JWKS_TTL_SECONDS = 300.0
 ASYMMETRIC_ALGS = frozenset({"ES256", "ES384", "ES512", "RS256", "RS384", "RS512"})
@@ -37,9 +38,12 @@ def _b64url_decode(segment: str) -> bytes:
 
 
 def decode_header(token: str) -> dict[str, Any]:
-    """Decode the JWT header only; raises 401 on a malformed token."""
+    """Decode the JWT header only without verifying signature or logging payload.
+
+    Raises 401 on malformed tokens.
+    """
     try:
-        header_b64, _payload_b64, _signature_b64 = token.split(".")
+        header_b64, _, _ = token.split(".")
         header = json.loads(_b64url_decode(header_b64))
     except (ValueError, TypeError, json.JSONDecodeError):
         raise HTTPException(status_code=401, detail="Invalid token") from None
@@ -57,7 +61,7 @@ def _fetch_jwks() -> dict[str, dict[str, Any]]:
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             document = json.loads(response.read().decode("utf-8"))
-    except Exception as exc:  # noqa: BLE001 - surfaced as a 502 upstream
+    except Exception as exc:
         raise HTTPException(status_code=502, detail="Could not fetch Supabase JWKS") from exc
 
     keys: dict[str, dict[str, Any]] = {}
@@ -81,73 +85,62 @@ def _get_jwks(force_refresh: bool = False) -> dict[str, dict[str, Any]]:
     return keys
 
 
-def _public_key_from_jwk(jwk: dict[str, Any]):
-    """Build a ``cryptography`` public key object from a JWK."""
-    from cryptography.hazmat.primitives.asymmetric import ec, rsa
-
-    kty = jwk.get("kty")
-    if kty == "EC":
-        curves = {
-            "P-256": ec.SECP256R1,
-            "P-384": ec.SECP384R1,
-            "P-521": ec.SECP521R1,
-        }
-        curve_cls = curves.get(jwk.get("crv"))
-        if curve_cls is None:
-            raise HTTPException(status_code=401, detail="Unsupported JWT curve")
-        x = _b64url_decode(jwk["x"])
-        y = _b64url_decode(jwk["y"])
-        return ec.EllipticCurvePublicKey.from_encoded_point(curve_cls(), b"\x04" + x + y)
-    if kty == "RSA":
-        n = int.from_bytes(_b64url_decode(jwk["n"]), "big")
-        e = int.from_bytes(_b64url_decode(jwk["e"]), "big")
-        return rsa.RSAPublicNumbers(e, n).public_key()
-    raise HTTPException(status_code=401, detail="Unsupported JWT signing key type")
-
-
 def verify_access_token(token: str) -> dict[str, Any]:
-    """Verify an asymmetric Supabase access token and return its payload.
+    """Verify an asymmetric Supabase access token using the project JWKS.
 
-    Validates the signature against the JWKS key matching the token's ``kid``,
-    then enforces ``exp``, ``iss``, ``sub`` and ``role == authenticated``.
-
-    PyJWT is used only for signature verification (no claim requirements) so
-    that missing/unexpected claims surface as clear, separate errors rather
-    than a misleading "Invalid token signature".
+    Steps:
+    1. Inspect JWT header (alg, kid).
+    2. Retrieve the signing key matching kid from remote JWKS (with caching & rotation).
+    3. Verify cryptographic signature and expiration (`exp`).
+    4. Validate claims:
+       - `iss`: matches Supabase URL (`https://<project-ref>.supabase.co/auth/v1`, `https://<project-ref>.supabase.co`, or `"supabase"`)
+       - `aud`: matches `"authenticated"`
+       - `sub`: non-empty subject UUID
+       - `role`: `"authenticated"`
     """
-    import jwt as _jwt
-
     header = decode_header(token)
     alg = (header.get("alg") or "").upper()
     if alg not in ASYMMETRIC_ALGS:
-        raise HTTPException(status_code=401, detail="Unsupported token algorithm")
+        raise HTTPException(status_code=401, detail=f"Unsupported token algorithm: {alg}")
 
     kid = header.get("kid")
+    if not isinstance(kid, str) or not kid:
+        # Supabase always sets kid on asymmetric tokens; a missing kid means we
+        # cannot pin the token to a specific public key, so refuse it.
+        raise HTTPException(status_code=401, detail="Token header is missing kid")
+    logger.debug("Verifying JWT header: alg=%s, kid=%s", alg, kid)
+
     keys = _get_jwks()
-    jwk = keys.get(kid) if kid else (next(iter(keys.values()), None))
+    jwk = keys.get(kid)
     if jwk is None:
+        # Unknown kid → key may have been rotated; refresh the cache once.
         keys = _get_jwks(force_refresh=True)
-        jwk = keys.get(kid) if kid else (next(iter(keys.values()), None))
+        jwk = keys.get(kid)
     if jwk is None:
         raise HTTPException(status_code=401, detail="Token signing key not found in JWKS")
 
-    public_key = _public_key_from_jwk(jwk)
-    from cryptography.hazmat.primitives import serialization
-
-    pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-
-    # Verify signature and expiry ONLY — no audience/issuer/subject requirements
-    # so PyJWT doesn't mask the real failure with a misleading error message.
     try:
-        payload = _jwt.decode(token, key=pem, algorithms=[alg])
-    except _jwt.ExpiredSignatureError as exc:
+        pyjwk = jwt.PyJWK.from_dict(jwk)
+        signing_key = pyjwk.key
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid JWK format: {exc}") from exc
+
+    try:
+        payload = jwt.decode(
+            token,
+            key=signing_key,
+            algorithms=[alg],
+            # PyJWT validates the aud claim when an expected audience is given;
+            # without this, a token carrying aud="authenticated" raises
+            # InvalidAudienceError and the JWKS path never succeeds.
+            audience="authenticated",
+            options={"verify_exp": True, "verify_signature": True},
+        )
+    except jwt.ExpiredSignatureError as exc:
         raise HTTPException(status_code=401, detail="Token expired") from exc
-    except _jwt.InvalidSignatureError as exc:
+    except jwt.InvalidSignatureError as exc:
         raise HTTPException(status_code=401, detail="Invalid token signature") from exc
-    except _jwt.InvalidTokenError as exc:
+    except jwt.InvalidTokenError as exc:
         raise HTTPException(
             status_code=401, detail=f"Invalid token: {type(exc).__name__}"
         ) from exc
@@ -155,17 +148,33 @@ def verify_access_token(token: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
+    # 1. Verify Issuer — exact match only. A substring check here would accept
+    # attacker-controlled issuers such as ``https://<project>.supabase.co.evil.com``.
     base_url = settings.supabase_url.rstrip("/") if settings.supabase_url else ""
-    accepted_issuers = {base_url, f"{base_url}/auth/v1", "supabase"} if base_url else set()
-
+    expected_issuer = f"{base_url}/auth/v1" if base_url else None
     token_iss = (payload.get("iss") or "").rstrip("/")
-    if accepted_issuers and token_iss not in accepted_issuers:
-        if not (base_url and base_url in token_iss):
-            raise HTTPException(status_code=401, detail="Invalid token issuer")
-    if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+    if expected_issuer and token_iss != expected_issuer:
+        raise HTTPException(status_code=401, detail="Invalid token issuer")
+
+    # 2. Verify Audience (defense in depth; PyJWT already validated aud above)
+    token_aud = payload.get("aud")
+    if isinstance(token_aud, str) and token_aud != "authenticated":
+        raise HTTPException(status_code=401, detail="Invalid token audience")
+    elif isinstance(token_aud, list) and "authenticated" not in token_aud:
+        raise HTTPException(status_code=401, detail="Invalid token audience")
+    elif token_aud is None:
+        raise HTTPException(status_code=401, detail="Token has no audience claim")
+
+    # 3. Verify Subject
+    sub = payload.get("sub")
+    if not isinstance(sub, str) or not sub.strip():
         raise HTTPException(status_code=401, detail="Token has no subject")
-    if payload.get("role") != "authenticated":
+
+    # 4. Verify Role
+    role = payload.get("role")
+    if role != "authenticated":
         raise HTTPException(status_code=401, detail="Token is not an authenticated user session")
+
     return payload
 
 

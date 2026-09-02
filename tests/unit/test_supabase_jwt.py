@@ -77,6 +77,7 @@ def _payload(**overrides) -> dict:
         "iss": f"{ISSUER}/auth/v1",
         "sub": "user-123",
         "role": "authenticated",
+        "aud": "authenticated",
         "iat": int(time.time()),
         "exp": int(time.time()) + 3600,
     }
@@ -145,6 +146,75 @@ def test_wrong_issuer_is_rejected(es256_keypair, patched_jwks) -> None:
         private,
         {"alg": "ES256", "typ": "JWT", "kid": "kid-1"},
         _payload(iss="https://evil.example.com"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        supabase_jwt.verify_access_token(token)
+    assert exc.value.status_code == 401
+
+
+def test_issuer_substring_attack_is_rejected(es256_keypair, patched_jwks) -> None:
+    """An issuer that merely *contains* the project URL must not pass."""
+    private, _public = es256_keypair
+    token = _sign_es256(
+        private,
+        {"alg": "ES256", "typ": "JWT", "kid": "kid-1"},
+        _payload(iss=f"{ISSUER}.evil.com/auth/v1"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        supabase_jwt.verify_access_token(token)
+    assert exc.value.status_code == 401
+
+
+def test_missing_audience_is_rejected(es256_keypair, patched_jwks) -> None:
+    private, _public = es256_keypair
+    payload = _payload()
+    payload.pop("aud")
+    token = _sign_es256(
+        private,
+        {"alg": "ES256", "typ": "JWT", "kid": "kid-1"},
+        payload,
+    )
+    with pytest.raises(HTTPException) as exc:
+        supabase_jwt.verify_access_token(token)
+    assert exc.value.status_code == 401
+
+
+def test_wrong_audience_is_rejected(es256_keypair, patched_jwks) -> None:
+    private, _public = es256_keypair
+    token = _sign_es256(
+        private,
+        {"alg": "ES256", "typ": "JWT", "kid": "kid-1"},
+        _payload(aud="evil-audience"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        supabase_jwt.verify_access_token(token)
+    assert exc.value.status_code == 401
+
+
+def test_missing_kid_is_rejected(es256_keypair, patched_jwks) -> None:
+    """A token without kid cannot be pinned to a JWKS key and must be refused."""
+    private, _public = es256_keypair
+    token = _sign_es256(
+        private,
+        {"alg": "ES256", "typ": "JWT"},
+        _payload(),
+    )
+    with pytest.raises(HTTPException) as exc:
+        supabase_jwt.verify_access_token(token)
+    assert exc.value.status_code == 401
+
+
+def test_unknown_kid_is_rejected_when_rotation_does_not_help(
+    monkeypatch: pytest.MonkeyPatch, es256_keypair
+) -> None:
+    """If the refreshed JWKS still lacks the kid, the token is refused."""
+    private, public = es256_keypair
+    jwks = {"kid-1": _make_es256_jwk(public, "kid-1")}
+    monkeypatch.setattr(supabase_jwt, "settings", SimpleNamespace(supabase_url=ISSUER))
+    monkeypatch.setattr(supabase_jwt, "_get_jwks", lambda force_refresh=False: jwks)
+
+    token = _sign_es256(
+        private, {"alg": "ES256", "typ": "JWT", "kid": "kid-rogue"}, _payload()
     )
     with pytest.raises(HTTPException) as exc:
         supabase_jwt.verify_access_token(token)

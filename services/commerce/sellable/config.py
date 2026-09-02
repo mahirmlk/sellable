@@ -176,11 +176,11 @@ class Settings:
 
     @property
     def supabase_is_configured(self) -> bool:
-        # Offline JWT verification needs the JWT secret; online verification needs anon + service role.
+        """True when Supabase is configured for JWKS / Auth / DB operations."""
         if self.supabase_url and self.supabase_jwt_secret:
             return True
         return bool(
-            self.supabase_url and self.supabase_anon_key and self.supabase_service_role_key
+            self.supabase_url and (self.supabase_anon_key or self.supabase_service_role_key)
         )
 
     @property
