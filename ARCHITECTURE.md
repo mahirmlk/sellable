@@ -1044,6 +1044,18 @@ Do not build a complete marketing automation platform during the buildathon.
 
 The UI should focus on proving the architecture rather than becoming a large admin dashboard.
 
+### Real users, real stores
+
+The console authenticates against Supabase Auth. Access tokens are ES256 and
+verified against the project JWKS (kid-matched, cached, rotation-aware).
+Authentication (who you are) and merchant authorization (what you can access)
+are separate steps: the verified `sub` is resolved through `merchant_users`
+to the caller's own merchant, and every console endpoint is scoped to it.
+An authenticated user with no store gets an explicit onboarding state and
+creates their own merchant via `POST /console/onboarding` — the system never
+auto-links users to the demo merchant, never substitutes demo data, and never
+marks a failing component as healthy.
+
 ## 16.1 Core views
 
 ### Live transaction feed
@@ -1095,22 +1107,22 @@ Only a few clearly useful metrics.
 
 Use Postgres/Supabase for persistent state.
 
-Suggested core tables:
+Implemented tables (every store is a real row; the demo store is a seed row
+accessed through the same flow, never a fallback):
 
 ```text
-merchants
-products
-policies
-buyers
-quotes
-quote_items
-orders
-order_items
-consents
-payments
-refunds
-ledger_events
+merchants           -- one row per store (id, name, created_at)
+merchant_users      -- auth_user_id -> merchant_id + role (explicit linking only)
+catalog_products    -- per-merchant products (persisted; survive restarts)
+orders              -- per-merchant orders
+consents            -- single-use payment consents
+ledger_events       -- append-only XAI ledger (trace-scoped)
+policy              -- per-merchant policy row
 ```
+
+All application tables have RLS enabled and no grants for the public
+`anon`/`authenticated` roles — the browser only holds the public Supabase
+client key and never touches these tables directly.
 
 ## 17.1 Suggested fields
 

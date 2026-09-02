@@ -526,7 +526,7 @@ export default function CaseStudyClient() {
             </div>
             {[
               ["Explainable transactions", "Every agent action that touches money leaves a human-readable audit trail: what it did, why, which policy/price it consulted, what it cost.", "XAI Ledger event per action"],
-              ["Real rails, not mocks", "Payments via Razorpay sandbox, real webhooks, real refunds.", "Razorpay test mode + HMAC webhooks"],
+              ["Real rails, not mocks", "Payments via Razorpay sandbox, real webhooks, real refunds - and real Supabase Auth (ES256 / JWKS) with per-merchant Postgres records.", "Razorpay test mode + JWKS auth + per-merchant DB"],
               ["Consent & guardrails", "Per-transaction consent (NPCI-style), spend caps, HITL above thresholds.", "Single-use consent + Policy Engine"],
               ["End-to-end demo", "Discovery → negotiation → consent → payment → receipt → refund, all live.", "Buyer ↔ Gateway ↔ Seller ↔ Razorpay"],
             ].map(([a, b, c]) => (
@@ -929,15 +929,43 @@ export default function CaseStudyClient() {
           </div>
         </div>
 
+        {/* Part 10 — Production hardening */}
+        <div className="pt-14">
+          <div className="flex items-center gap-3">
+            <span className="block w-3 h-3 bg-[#ff6900] flex-shrink-0" />
+            <span className="font-mono text-[0.7rem] tracking-[0.16em] uppercase text-neutral-500">Part 10 - Production hardening (real users, real stores)</span>
+          </div>
+          <p className="mt-4 max-w-[70ch] font-sans text-[0.95rem] leading-[1.65] text-neutral-700">
+            A demo that fakes its own auth is a toy. The console now runs on real Supabase Auth
+            with asymmetric ES256 session tokens verified against the project&apos;s JWKS - and
+            every authenticated user gets their own real merchant record, not a shared demo
+            store. The demo store still exists, but as an actual database row used by the
+            agent-to-agent surface - never as a fallback for a human login.
+          </p>
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              ["01 - Identity is verified, authorization is separate", "Signature, expiry, issuer and audience are checked against the JWKS (kid-matched, rotation-aware). Then the user id is resolved through merchant_users to their own store. No row means onboarding - never silent demo access."],
+              ["02 - Every store is a real row", "merchants, catalog_products, policy, orders and the ledger are per-merchant database records. Catalog persists across restarts. The console shows only your rows; a foreign order id is a 404."],
+              ["03 - No mock paths in production", "The browser authenticates with the merchant JWT end-to-end - quote, order, consent, Razorpay test-mode payment. The LLM adapter reports its real state (connected / degraded / error). If a component fails, the dashboard says so."],
+            ].map(([h, d]) => (
+              <div key={h} className="border border-black/10 bg-white px-5 py-4 hover:border-black/20 transition-colors">
+                <div className="font-mono text-[0.64rem] tracking-[0.1em] uppercase text-[#111]">{h}</div>
+                <div className="mt-1 font-sans text-[0.86rem] leading-[1.55] text-neutral-600">{d}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Safety invariants table */}
         <div className="pt-14">
           <h3 className="font-serif text-[1.35rem] leading-[0.98] tracking-[-0.02em] text-[#111]">Safety invariants — encoded as tests</h3>
           <div className="mt-4 border border-black/10 overflow-hidden">
             {[
-              ["Money", "No LLM call can directly execute payment · No payment if policy = DENY · No price below floor · No order above hard limits"],
-              ["Agent", "Cannot invent SKU · Cannot create arbitrary prices · Cannot alter policy · Cannot mark PAID · Cannot skip consent/HITL"],
-              ["Webhook", "Signature must verify · Unknown order must not mutate state · Duplicate webhook is idempotent"],
-              ["Audit", "Every money event has a ledger event + reason_code + trace_id · Failures are visible in replay"],
+              ["Money", "No LLM call can directly execute payment  No payment if policy = DENY  No price below floor  No order above hard limits"],
+              ["Agent", "Cannot invent SKU  Cannot create arbitrary prices  Cannot alter policy  Cannot mark PAID  Cannot skip consent/HITL"],
+              ["Auth", "ES256 signature verified against JWKS  Authentication and merchant authorization are separate  No auto-linking to a demo store  Console data is scoped per merchant"],
+              ["Webhook", "Signature must verify  Unknown order must not mutate state  Duplicate webhook is idempotent"],
+              ["Audit", "Every money event has a ledger event + reason_code + trace_id  Failures are visible in replay"],
             ].map(([k, v]) => (
               <div key={k} className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-0 border-t first:border-t-0 border-black/10">
                 <div className="px-4 py-3 bg-[#fcfcfa] font-mono text-[0.66rem] tracking-[0.1em] uppercase text-neutral-500 border-b sm:border-b-0 sm:border-r border-black/5">{k}</div>

@@ -401,33 +401,51 @@ open http://localhost:3000
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/console/transactions` | GET | Transaction list |
-| `/console/events` | GET | XAI Ledger events |
-| `/activity/stream` | GET | SSE live ledger stream |
-| `/agents/status` | GET | Agent + payment-rail health |
-| `/console/approvals` | GET | Pending approval queue |
+| `/console/store` | GET | The authenticated merchant's own store record |
+| `/console/onboarding` | POST | Create the verified user's own merchant store |
+| `/console/transactions` | GET | Transaction list (scoped to the caller's merchant) |
+| `/console/catalog` | GET | The merchant's own DB-persisted catalog |
+| `/console/events` | GET | XAI Ledger events (scoped) |
+| `/activity/stream` | GET | SSE live ledger stream (scoped) |
+| `/agents/status` | GET | Agent + payment-rail health (summary scoped) |
+| `/console/approvals` | GET | Pending approval queue (scoped) |
 | `/console/approvals/{id}/approve` | POST | Approve pending action (merchant auth) |
 | `/console/approvals/{id}/reject` | POST | Reject pending action (merchant auth) |
-| `/console/insights` | GET | Growth metrics |
-| `/console/policy` | GET/PUT | Read/update merchant policy (PUT requires merchant auth) |
-| `/catalog/products` | POST | Add a catalog product (merchant auth) |
+| `/console/insights` | GET | Growth metrics (scoped) |
+| `/console/policy` | GET/PUT | Read/update the merchant's own policy |
+| `/catalog/products` | POST | Add a product to the merchant's own catalog |
+| `/console/agent/seller/respond` | POST | Conversational checkout (merchant JWT) |
+| `/console/orders` | POST | Create order via chat checkout (merchant JWT) |
+| `/console/orders/{id}/consent` | POST | Issue single-use consent (merchant JWT) |
+| `/console/orders/{id}/payment` | POST | Start Razorpay test-mode payment (merchant JWT) |
 
 ---
 
 ## Authentication
 
-SELLABLE keeps two auth surfaces separate:
+SELLABLE keeps authentication and authorization strictly separate, with no
+mock fallbacks in production:
 
-- **Human merchants** -- Supabase Auth. The Next.js console has a `/login` page
-  and a middleware that protects every `/dashboard/*` route. When Supabase is
-  not configured the console runs in demo mode. Backend privileged actions
-  (`approve`, `reject`, `refund`, policy updates, catalog writes) resolve the
-  authenticated merchant from the Supabase access token and verify ownership.
+- **Human merchants** -- Supabase Auth. Access tokens are asymmetric (ES256)
+  and are verified locally against the project's JWKS (kid-matched, cached,
+  rotation-aware) with the online Auth API as a resilience fallback. After
+  verification, the token's `sub` is resolved to the caller's merchant via
+  the real `merchant_users` and `merchants` tables. A user with no mapping
+  receives an explicit `onboarding_required` (403) state and creates their
+  own store through `POST /console/onboarding` — the system never auto-links
+  an authenticated user to the demo store. Every console endpoint is scoped
+  to the resolved merchant; foreign order ids are 404s.
 - **Buyer agents** -- API key + HMAC request signing. Agent calls authenticate
-  with `X-Agent-Key` (demo) or an HMAC-SHA256 signature over
+  with `X-Agent-Key` or an HMAC-SHA256 signature over
   `timestamp.nonce.agent_id.method.path` with `X-Timestamp`, `X-Nonce`, and
   `X-Signature` headers, including server-side replay protection. Only a
   SHA-256 hash of the long-lived key is stored (`BUYER_AGENT_API_KEY_HASH`).
+  The well-known demo key is accepted only outside production; the agent
+  gateway serves the demo merchant's records.
+- **Database** — application tables (`merchant_users`, `merchants`,
+  `catalog_products`, `orders`, `consents`, `ledger_events`, `policy`) have
+  RLS enabled and no `anon`/`authenticated` grants; only the backend
+  (service role / direct connection) touches them.
 
 The model layer is provider-agnostic via `get_llm()` (`agents/llm/`). Changing
 `LLM_PROVIDER`/`LLM_MODEL` in `.env` never touches policy, commerce, consent,
