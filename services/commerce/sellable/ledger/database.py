@@ -117,6 +117,9 @@ def _migrate(engine) -> None:
     """Add columns introduced after the initial schema without dropping data."""
     from sqlalchemy import text
 
+    if engine.dialect.name == "sqlite":
+        return  # SQLite dev databases are always created fresh from the models
+
     # Use a raw connection without prepared statements for PgBouncer compatibility
     with engine.begin() as connection:
         # Check if orders table exists via information_schema (avoids inspector prepared statements)

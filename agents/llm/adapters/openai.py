@@ -84,3 +84,22 @@ class OpenCodeZenAdapter(_OpenAICompatibleAdapter):
         "HTTP-Referer": "https://sellable.shop",
         "X-Title": "SELLABLE",
     }
+
+
+class OpenCodeGoAdapter(_OpenAICompatibleAdapter):
+    """OpenCode Go OpenAI-compatible endpoint ($10/month subscription).
+
+    Go keys are scoped to ``opencode.ai/zen/go/v1`` (OpenAI-compatible
+    ``chat/completions`` for DeepSeek/GLM/Kimi/Qwen models). Per the Go docs
+    the client must properly identify itself, so we send a product
+    User-Agent plus the app identity headers.
+    """
+
+    provider_name = "opencode-go"
+    default_model = "deepseek-v4-flash"
+    base_url = "https://opencode.ai/zen/go/v1"
+    default_headers = {
+        "User-Agent": "sellable-commerce/1.0 (https://sellable.shop)",
+        "HTTP-Referer": "https://sellable.shop",
+        "X-Title": "SELLABLE",
+    }

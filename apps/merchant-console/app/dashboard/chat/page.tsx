@@ -645,57 +645,23 @@ export default function ChatPage() {
         </button>
       </div>
 
-      {/* Session config strip */}
-      <div className="px-6 py-3 border-b border-[var(--bb-line-soft)] bg-[var(--bb-panel)] flex flex-wrap items-center gap-x-6 gap-y-2 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">SESSION BUDGET</span>
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-3)]">₹</span>
-          <input
-            type="number"
-            value={Math.round(budgetPaise / 100)}
-            onChange={(e) => setBudgetPaise(Math.max(1, Math.round((parseFloat(e.target.value) || 0) * 100)))}
-            className="w-[90px] font-[var(--font-mono)] text-[0.7rem] text-right bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-2 py-1 focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">UPSELLS</span>
-          <button
-            onClick={() => setUpsellOn((v) => !v)}
-            className={`h-[26px] px-3 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase border transition-all cursor-pointer ${upsellOn ? "border-[var(--bb-orange)] bg-[var(--bb-orange)]/10 text-[var(--bb-orange)]" : "border-[var(--bb-line)] bg-transparent text-[var(--bb-grey-4)] hover:text-[var(--bb-white)]"}`}
-          >
-            {upsellOn ? "ON" : "OFF"}
-          </button>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">HITL THRESHOLD</span>
-          <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">
-            {policy ? formatPaise(policy.human_approval_threshold_paise) : "—"}
-          </span>
-        </div>
-        {phase === "quote" && decision?.trace_id && (
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">TRACE {decision.trace_id}</span>
-            <button onClick={() => handleCopy(decision.trace_id!)} className="inline-flex items-center gap-1 h-[24px] px-2 border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors cursor-pointer">
-              <Copy size={10} /> {copied ? "COPIED" : "COPY"}
-            </button>
-          </div>
-        )}
-      </div>
-
       {/* Main grid */}
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
         {/* Conversation column */}
         <div className="flex flex-col min-h-0">
-          <div ref={listRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          <div ref={listRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
             {messages.length === 0 && phase === "idle" && (
-              <div className="max-w-[520px] mx-auto mt-14">
-                <Sparkles size={22} className="text-[var(--bb-orange)] mb-5" />
-                <div className="font-[var(--font-sans)] text-[1.05rem] text-[var(--bb-white)] mb-2">Describe what you need</div>
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)] leading-relaxed mb-7">
-                  The Seller Agent searches your real catalog, quotes a policy-valid cart, and
-                  negotiates within your guardrails. Every action is recorded to the XAI Ledger.
+              <div className="max-w-[480px] mx-auto mt-[8vh]">
+                <div className="flex items-center gap-2 mb-4">
+                  <Sparkles size={16} className="text-[var(--bb-orange)]" />
+                  <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-orange)]">Seller Agent</span>
                 </div>
-                <div className="space-y-1.5">
+                <div className="font-[var(--font-sans)] text-[1.15rem] text-[var(--bb-white)] mb-2 leading-snug">Describe what you need.</div>
+                <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-3)] leading-relaxed mb-6">
+                  I search your catalog, quote a policy-valid cart, and negotiate within your
+                  guardrails. Every step lands in the ledger.
+                </div>
+                <div className="flex flex-col gap-1.5">
                   {[
                     "I need a coffee setup for my desk under ₹2,000",
                     "A protective travel case for my headphones",
@@ -704,9 +670,9 @@ export default function ChatPage() {
                     <button
                       key={s}
                       onClick={() => handleSend(s)}
-                      className="w-full text-left px-4 py-2.5 border border-[var(--bb-line-soft)] hover:border-[var(--bb-grey-4)] hover:bg-[var(--bb-panel)] transition-colors cursor-pointer group"
+                      className="self-start text-left px-3.5 py-2 border border-[var(--bb-line-soft)] text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors cursor-pointer"
                     >
-                      <span className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-2)] group-hover:text-[var(--bb-white)] transition-colors">{s}</span>
+                      <span className="font-[var(--font-mono)] text-[0.65rem]">{s}</span>
                     </button>
                   ))}
                 </div>
@@ -789,14 +755,53 @@ export default function ChatPage() {
         </div>
 
         {/* Checkout panel */}
-        <div className="flex flex-col min-h-0 lg:w-[400px] border-t lg:border-t-0 lg:border-l border-[var(--bb-line)]">
-          <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex-shrink-0">
-            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">CHECKOUT SESSION</div>
+        <div className="flex flex-col min-h-0 lg:w-[380px] border-t lg:border-t-0 lg:border-l border-[var(--bb-line)]">
+          <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between flex-shrink-0">
+            <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)]">Checkout Session</div>
+            {phase === "quote" && decision?.trace_id && (
+              <button onClick={() => handleCopy(decision.trace_id!)} className="inline-flex items-center gap-1 h-[22px] px-2 border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.48rem] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors cursor-pointer">
+                <Copy size={9} /> {copied ? "COPIED" : "TRACE"}
+              </button>
+            )}
           </div>
-          <div className="overflow-y-auto p-5 space-y-4 max-h-[45vh] lg:max-h-none lg:flex-1">
+          <div className="overflow-y-auto p-5 space-y-4 max-h-[50vh] lg:max-h-none lg:flex-1">
+            {/* Session settings — always visible */}
+            <div className="space-y-2.5 pb-4 border-b border-[var(--bb-line-soft)]">
+              <div className="flex items-center justify-between">
+                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">Session budget</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">₹</span>
+                  <input
+                    type="number"
+                    value={Math.round(budgetPaise / 100)}
+                    onChange={(e) => setBudgetPaise(Math.max(1, Math.round((parseFloat(e.target.value) || 0) * 100)))}
+                    className="w-[76px] font-[var(--font-mono)] text-[0.68rem] text-right bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-2 py-1 tabular-nums focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+                    aria-label="Session budget in rupees"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">Upsells</span>
+                <button
+                  onClick={() => setUpsellOn((v) => !v)}
+                  className={`h-[24px] w-[44px] font-[var(--font-mono)] text-[0.52rem] tracking-[0.08em] uppercase border transition-all cursor-pointer ${upsellOn ? "border-[var(--bb-orange)]/50 bg-[var(--bb-orange)]/10 text-[var(--bb-orange)]" : "border-[var(--bb-line)] bg-transparent text-[var(--bb-grey-4)] hover:text-[var(--bb-white)]"}`}
+                  aria-pressed={upsellOn}
+                >
+                  {upsellOn ? "ON" : "OFF"}
+                </button>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">HITL threshold</span>
+                <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)] tabular-nums">
+                  {policy ? formatPaise(policy.human_approval_threshold_paise) : "—"}
+                </span>
+              </div>
+            </div>
+
             {phase === "idle" && (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)] leading-relaxed">
-                Send a request to start a checkout session. The merchant policy and budget are enforced by the backend Policy Engine — never by the browser.
+              <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-3)] leading-relaxed">
+                Policy and budget are enforced by the backend Policy Engine — never by the
+                browser. Quotes appear here as you negotiate.
               </div>
             )}
             {phase === "thinking" && (
