@@ -179,3 +179,31 @@ def test_malformed_token_is_rejected(patched_jwks) -> None:
     with pytest.raises(HTTPException) as exc:
         supabase_jwt.verify_access_token("not-a-jwt")
     assert exc.value.status_code == 401
+
+
+def test_merchant_auth_verifies_asymmetric_token(
+    es256_keypair, monkeypatch: pytest.MonkeyPatch, jwks: dict
+) -> None:
+    """Verify the full merchant-auth entrypoint routes ES256 to the JWKS."""
+    import sellable.merchant_auth as merchant_auth
+
+    monkeypatch.setattr(
+        merchant_auth, "settings", SimpleNamespace(
+            supabase_url=ISSUER,
+            supabase_anon_key="anon",
+            supabase_service_role_key="svc",
+            supabase_jwt_secret=None,
+        )
+    )
+    monkeypatch.setattr(
+        supabase_jwt, "settings", SimpleNamespace(supabase_url=ISSUER)
+    )
+    monkeypatch.setattr(supabase_jwt, "_get_jwks", lambda force_refresh=False: jwks)
+
+    private, _public = es256_keypair
+    token = _sign_es256(
+        private, {"alg": "ES256", "typ": "JWT", "kid": "kid-1"}, _payload()
+    )
+    result = merchant_auth.verify_supabase_token(token)
+    assert result["sub"] == "user-123"
+    assert result["role"] == "authenticated"

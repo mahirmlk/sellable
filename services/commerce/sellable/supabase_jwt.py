@@ -25,7 +25,7 @@ from fastapi import HTTPException
 from sellable.config import settings
 
 _JWKS_TTL_SECONDS = 300.0
-_ASYMMETRIC_ALGS = frozenset({"ES256", "ES384", "ES512", "RS256", "RS384", "RS512"})
+ASYMMETRIC_ALGS = frozenset({"ES256", "ES384", "ES512", "RS256", "RS384", "RS512"})
 
 _jwks_cache: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 _jwks_lock = threading.Lock()
@@ -115,7 +115,7 @@ def verify_access_token(token: str) -> dict[str, Any]:
 
     header = decode_header(token)
     alg = (header.get("alg") or "").upper()
-    if alg not in _ASYMMETRIC_ALGS:
+    if alg not in ASYMMETRIC_ALGS:
         raise HTTPException(status_code=401, detail="Unsupported token algorithm")
 
     kid = header.get("kid")
