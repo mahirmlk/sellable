@@ -207,3 +207,38 @@ def test_merchant_auth_verifies_asymmetric_token(
     result = merchant_auth.verify_supabase_token(token)
     assert result["sub"] == "user-123"
     assert result["role"] == "authenticated"
+
+
+def test_merchant_auth_falls_back_to_online_on_local_failure(
+    es256_keypair, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When local JWKS verification fails, merchant_auth falls back to /auth/v1/user."""
+    import sellable.merchant_auth as merchant_auth
+
+    monkeypatch.setattr(
+        merchant_auth, "settings", SimpleNamespace(
+            supabase_url=ISSUER,
+            supabase_anon_key="anon",
+            supabase_service_role_key="svc",
+            supabase_jwt_secret=None,
+        )
+    )
+    # Force local verification to fail by returning no matching JWKS
+    monkeypatch.setattr(supabase_jwt, "_get_jwks", lambda force_refresh=False: {})
+
+    online_called = {"called": False}
+
+    def fake_online(token):
+        online_called["called"] = True
+        return {"sub": "online-user", "role": "authenticated", "exp": 9999999999}
+
+    monkeypatch.setattr(merchant_auth, "_verify_online", fake_online)
+
+    # Any ES256 token — local verification will fail (no JWKS key), but online should succeed
+    private, _public = es256_keypair
+    token = _sign_es256(
+        private, {"alg": "ES256", "typ": "JWT", "kid": "missing-kid"}, _payload()
+    )
+    result = merchant_auth.verify_supabase_token(token)
+    assert result["sub"] == "online-user"
+    assert online_called["called"]

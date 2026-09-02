@@ -110,8 +110,12 @@ def verify_access_token(token: str) -> dict[str, Any]:
 
     Validates the signature against the JWKS key matching the token's ``kid``,
     then enforces ``exp``, ``iss``, ``sub`` and ``role == authenticated``.
+
+    PyJWT is used only for signature verification (no claim requirements) so
+    that missing/unexpected claims surface as clear, separate errors rather
+    than a misleading "Invalid token signature".
     """
-    import jwt
+    import jwt as _jwt
 
     header = decode_header(token)
     alg = (header.get("alg") or "").upper()
@@ -122,7 +126,6 @@ def verify_access_token(token: str) -> dict[str, Any]:
     keys = _get_jwks()
     jwk = keys.get(kid) if kid else (next(iter(keys.values()), None))
     if jwk is None:
-        # Unknown kid: force a refresh (the project may have rotated keys).
         keys = _get_jwks(force_refresh=True)
         jwk = keys.get(kid) if kid else (next(iter(keys.values()), None))
     if jwk is None:
@@ -136,23 +139,25 @@ def verify_access_token(token: str) -> dict[str, Any]:
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
 
-    base_url = settings.supabase_url.rstrip("/") if settings.supabase_url else ""
-    accepted_issuers = {base_url, f"{base_url}/auth/v1"} if base_url else set()
-
+    # Verify signature and expiry ONLY — no audience/issuer/subject requirements
+    # so PyJWT doesn't mask the real failure with a misleading error message.
     try:
-        payload = jwt.decode(
-            token,
-            key=pem,
-            algorithms=[alg],
-            options={"require": ["exp", "sub", "iss"]},
-        )
-    except jwt.ExpiredSignatureError as exc:
-        raise HTTPException(status_code=401, detail="Token missing or past its expiry") from exc
-    except jwt.InvalidTokenError as exc:
+        payload = _jwt.decode(token, key=pem, algorithms=[alg])
+    except _jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="Token expired") from exc
+    except _jwt.InvalidSignatureError as exc:
         raise HTTPException(status_code=401, detail="Invalid token signature") from exc
+    except _jwt.InvalidTokenError as exc:
+        raise HTTPException(
+            status_code=401, detail=f"Invalid token: {type(exc).__name__}"
+        ) from exc
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    base_url = settings.supabase_url.rstrip("/") if settings.supabase_url else ""
+    accepted_issuers = {base_url, f"{base_url}/auth/v1"} if base_url else set()
+
     if accepted_issuers and payload.get("iss") not in accepted_issuers:
         raise HTTPException(status_code=401, detail="Invalid token issuer")
     if not isinstance(payload.get("sub"), str) or not payload["sub"]:

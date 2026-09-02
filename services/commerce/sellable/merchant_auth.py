@@ -120,11 +120,17 @@ def _verify_hs256(token: str) -> dict[str, object]:
 def verify_supabase_token(token: str) -> dict[str, object]:
     """Verify a Supabase access token and return its payload.
 
-    The production project issues **ES256** access tokens, so asymmetric
-    tokens are verified against the project JWKS public keys (matching ``kid``)
-    — never against ``SUPABASE_JWT_SECRET``. HS256 tokens are verified offline
-    when ``SUPABASE_JWT_SECRET`` is configured; the online Auth API is used as
-    a fallback when local verification is impossible or the JWKS is unreachable.
+    The verification chain:
+    1. If the token header declares an asymmetric algorithm (ES256, RS256, etc.)
+       → verify against the project JWKS (``kid``-matched).
+    2. If local asymmetric verification fails, fall back to the online
+       ``/auth/v1/user`` endpoint (Supabase confirms the token server-side).
+    3. If the header declares HS256 and ``SUPABASE_JWT_SECRET`` is set →
+       verify offline with HMAC.
+    4. Otherwise → online verification via ``/auth/v1/user``.
+
+    The online fallback ensures that a valid Supabase session always works
+    even if the local JWKS/secret verification is misconfigured.
     """
     from sellable import supabase_jwt
 
@@ -134,21 +140,29 @@ def verify_supabase_token(token: str) -> dict[str, object]:
         raise
 
     alg = (header.get("alg") or "").upper()
+
+    # --- Path 1: asymmetric (ES256 / RS256) → JWKS, then online fallback ---
     if alg in supabase_jwt.ASYMMETRIC_ALGS:
         try:
             return supabase_jwt.verify_access_token(token)
-        except HTTPException as exc:
-            # Infrastructure failure fetching the JWKS -> fall back to online
-            # verification; token-rejection (401) always propagates.
-            if exc.status_code == 502 and settings.supabase_url and settings.supabase_anon_key:
-                return _verify_online(token)
-            raise
+        except HTTPException:
+            pass  # fall through to online verification below
 
+        if settings.supabase_url and settings.supabase_anon_key:
+            return _verify_online(token)
+        raise HTTPException(status_code=401, detail="Local JWT verification failed")
+
+    # --- Path 2: HS256 with configured secret ---
     if alg == "HS256" and settings.supabase_jwt_secret:
-        return _verify_hs256(token)
+        try:
+            return _verify_hs256(token)
+        except HTTPException:
+            pass  # fall through to online verification
 
+    # --- Path 3: online verification (catch-all for any remaining case) ---
     if settings.supabase_url and settings.supabase_anon_key:
         return _verify_online(token)
+
     raise HTTPException(status_code=401, detail="Unsupported token algorithm")
 
 
