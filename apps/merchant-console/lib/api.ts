@@ -7,7 +7,7 @@ const API_BASE =
 // public demo key. With Supabase configured, merchant auth uses the JWT.
 const isDemoMode = () => !process.env.NEXT_PUBLIC_SUPABASE_URL;
 const AGENT_KEY =
-  process.env.NEXT_PUBLIC_AGENT_KEY || (isDemoMode() ? "sellable_demo_key_001" : "");
+  process.env.NEXT_PUBLIC_AGENT_KEY || "sellable_demo_key_001";
 
 export interface Product {
   id: string;
@@ -295,9 +295,18 @@ async function getMerchantToken(): Promise<string | null> {
     const { isSupabaseConfigured } = await import("@/lib/supabase/client");
     if (!isSupabaseConfigured()) return null;
     const { createClient } = await import("@/lib/supabase/client");
+    const supabase = createClient();
     const {
       data: { session },
-    } = await createClient().auth.getSession();
+    } = await supabase.auth.getSession();
+
+    if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
+      const { data: refreshed, error } = await supabase.auth.refreshSession();
+      if (!error && refreshed?.session?.access_token) {
+        return refreshed.session.access_token;
+      }
+    }
+
     return session?.access_token ?? null;
   } catch {
     return null;

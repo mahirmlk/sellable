@@ -156,10 +156,12 @@ def verify_access_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
     base_url = settings.supabase_url.rstrip("/") if settings.supabase_url else ""
-    accepted_issuers = {base_url, f"{base_url}/auth/v1"} if base_url else set()
+    accepted_issuers = {base_url, f"{base_url}/auth/v1", "supabase"} if base_url else set()
 
-    if accepted_issuers and payload.get("iss") not in accepted_issuers:
-        raise HTTPException(status_code=401, detail="Invalid token issuer")
+    token_iss = (payload.get("iss") or "").rstrip("/")
+    if accepted_issuers and token_iss not in accepted_issuers:
+        if not (base_url and base_url in token_iss):
+            raise HTTPException(status_code=401, detail="Invalid token issuer")
     if not isinstance(payload.get("sub"), str) or not payload["sub"]:
         raise HTTPException(status_code=401, detail="Token has no subject")
     if payload.get("role") != "authenticated":

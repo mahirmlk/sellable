@@ -83,16 +83,16 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
           return;
         }
         if (data.user) {
-          // Ensure merchant_users entry for the demo store
-          const { error: insertError } = await supabase.from("merchant_users").insert({
-            id: `mu_${data.user.id.slice(0, 8)}`,
-            merchant_id: "mrc_demo_store",
-            auth_user_id: data.user.id,
-            role: "owner",
-          });
-          // Ignore duplicate (23505) – user already linked
-          if (insertError && !insertError.message.includes("duplicate")) {
-            console.warn("merchant_users insert:", insertError.message);
+          // Link merchant_users entry for the demo store (backend also auto-links)
+          try {
+            await supabase.from("merchant_users").upsert({
+              id: `mu_${data.user.id.slice(0, 8)}`,
+              merchant_id: "mrc_demo_store",
+              auth_user_id: data.user.id,
+              role: "owner",
+            }, { onConflict: "auth_user_id" });
+          } catch {
+            // Backend auto-links on the first authenticated API request
           }
         }
         if (data.session) {

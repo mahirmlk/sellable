@@ -172,7 +172,7 @@ export default function OverviewPage() {
             <AlertTriangle size={14} className="text-amber-400 mt-0.5 shrink-0" />
             <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-400">
               {statusError.kind === "auth"
-                ? "Authentication problem fetching status — re-authenticate or check backend Supabase config."
+                ? `Authentication problem fetching status (${statusError.message || "re-authenticate or check backend Supabase config"}).`
                 : statusError.kind === "network"
                   ? "Backend unreachable while fetching status."
                   : statusError.kind === "endpoint"
