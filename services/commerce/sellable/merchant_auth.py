@@ -59,8 +59,21 @@ def _verify_online(token: str) -> dict[str, object]:
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             user = json.loads(response.read().decode("utf-8"))
-    except Exception as error:
-        raise HTTPException(status_code=401, detail="Invalid or expired Supabase session") from error
+    except urllib.error.HTTPError as error:
+        # Supabase answered: the token (or the project config) is the problem.
+        detail = "Invalid or expired Supabase session"
+        if error.code in (401, 403):
+            detail = (
+                "Invalid or expired Supabase session. "
+                "If your browser session is valid, check that the backend's "
+                "SUPABASE_URL / SUPABASE_ANON_KEY match the frontend's Supabase project."
+            )
+        raise HTTPException(status_code=401, detail=detail) from error
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
+        raise HTTPException(
+            status_code=502,
+            detail="Supabase auth service is unreachable from the backend",
+        ) from error
     if not user.get("id"):
         raise HTTPException(status_code=401, detail="Invalid Supabase session")
     role = user.get("role", "authenticated")

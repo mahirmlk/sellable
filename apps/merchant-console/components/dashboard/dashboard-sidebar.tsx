@@ -17,7 +17,7 @@ import {
   Menu,
   X,
 } from "lucide-react";
-import { getAgentsStatus, type AgentsStatusResponse } from "@/lib/api";
+import { getAgentsStatus, type AgentsStatusResponse, type ComponentState } from "@/lib/api";
 
 const sidebarLinks = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
@@ -30,6 +30,35 @@ const sidebarLinks = [
   { label: "AI Storefront", href: "/dashboard/storefront", icon: Globe },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
+
+const STATE_LABEL: Record<ComponentState, string> = {
+  CONNECTED: "Connected",
+  UNCONFIGURED: "Unconfigured",
+  DEGRADED: "Degraded",
+  ERROR: "Error",
+  OFFLINE: "Offline",
+};
+
+const STATE_DOT: Record<ComponentState, string> = {
+  CONNECTED: "bg-green-500",
+  UNCONFIGURED: "bg-yellow-400",
+  DEGRADED: "bg-amber-400",
+  ERROR: "bg-red-400",
+  OFFLINE: "bg-red-400",
+};
+
+function HealthRow({ name, state, detail }: { name: string; state?: ComponentState | null; detail?: string }) {
+  const meta = state ? STATE_LABEL[state] : null;
+  const dot = state ? STATE_DOT[state] : "bg-[var(--bb-grey-4)]";
+  return (
+    <div className="flex items-center gap-2" title={detail || undefined}>
+      <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+      <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+        {name} {meta ?? "…"}
+      </span>
+    </div>
+  );
+}
 
 export function DashboardSidebar() {
   const pathname = usePathname();
@@ -47,10 +76,6 @@ export function DashboardSidebar() {
       cancelled = true;
     };
   }, []);
-
-  const gatewayOk = status?.agent_gateway.status === "online";
-  const policyOk = status?.policy_engine.status === "healthy";
-  const ledgerOk = status?.ledger.status === "recording";
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
@@ -133,24 +158,9 @@ export function DashboardSidebar() {
         {/* System health strip */}
         <div className="px-5 py-4 border-t border-[var(--bb-line)]">
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className={`w-1.5 h-1.5 rounded-full ${gatewayOk ? "bg-green-500" : "bg-yellow-400"}`} />
-              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                Gateway {gatewayOk ? "Healthy" : "Offline"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`w-1.5 h-1.5 rounded-full ${policyOk ? "bg-green-500" : "bg-yellow-400"}`} />
-              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                Policy {policyOk ? "Active" : "Offline"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`w-1.5 h-1.5 rounded-full ${ledgerOk ? "bg-green-500" : "bg-yellow-400"}`} />
-              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                Ledger {ledgerOk ? "Recording" : "Offline"}
-              </span>
-            </div>
+            <HealthRow name="Gateway" state={status?.agent_gateway.state} detail={status?.agent_gateway.detail} />
+            <HealthRow name="Policy" state={status?.policy_engine.state} detail={status?.policy_engine.detail} />
+            <HealthRow name="Ledger" state={status?.ledger.state} detail={status?.ledger.detail} />
           </div>
         </div>
       </aside>

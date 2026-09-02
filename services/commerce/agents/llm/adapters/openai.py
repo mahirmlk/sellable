@@ -31,6 +31,18 @@ class _OpenAICompatibleAdapter(LLMAdapter):
         message = data["choices"][0]["message"]
         return message.get("content") or ""
 
+    def probe(self, *, timeout: int = 10) -> None:
+        """Confirm the provider accepts our credentials with a tiny request."""
+        self._require_key()
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "temperature": 0,
+            "max_tokens": 4,
+        }
+        headers = {"Authorization": f"Bearer {self.config.api_key}", **self.default_headers}
+        post_json(f"{self.base_url}/chat/completions", payload, headers, timeout=timeout)
+
 
 class OpenAIAdapter(_OpenAICompatibleAdapter):
     provider_name = "openai"

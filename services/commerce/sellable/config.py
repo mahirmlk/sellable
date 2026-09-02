@@ -146,15 +146,25 @@ class Settings:
 
     @property
     def llm_api_key(self) -> str | None:
-        """Return the credential for the active provider, or the generic one."""
+        """Return the credential for the active provider.
+
+        ``opencode`` uses the generic ``LLM_API_KEY`` (an OpenCode Zen key).
+        ``openrouter`` uses only ``OPENROUTER_API_KEY`` so a Zen key is never
+        sent to OpenRouter. Other providers accept their provider-specific key
+        with ``LLM_API_KEY`` as a fallback.
+        """
         generic = os.getenv("LLM_API_KEY")
+        provider = (self.llm_provider or "").lower()
+        if provider == "opencode":
+            return generic
+        if provider == "openrouter":
+            return self.openrouter_api_key
         by_provider = {
             "openai": self.openai_api_key,
             "anthropic": self.anthropic_api_key,
-            "openrouter": self.openrouter_api_key,
             "google": self.google_api_key,
         }
-        return by_provider.get(self.llm_provider, generic) or generic
+        return by_provider.get(provider, generic) or generic
 
     @property
     def supabase_rest_url(self) -> str | None:

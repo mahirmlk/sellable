@@ -5,8 +5,9 @@ import { useEffect, useState, useCallback } from "react";
 import { ArrowRight, AlertTriangle, RefreshCw } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { useSystemStatus } from "@/components/dashboard/use-system-status";
 import { formatPaise, formatTimeAgo } from "@/lib/formatters";
-import { getConsoleTransactions, getConsoleApprovals, getConsoleEvents, getConsoleInsights, getAgentsStatus, type ConsoleTransaction, type LedgerEvent, type ConsoleGrowthMetrics, type AgentsStatusResponse } from "@/lib/api";
+import { getConsoleTransactions, getConsoleApprovals, getConsoleEvents, getConsoleInsights, type ConsoleTransaction, type LedgerEvent, type ConsoleGrowthMetrics } from "@/lib/api";
 import { type Transaction, type TransactionStatus } from "@/lib/types/domain";
 
 function mapTx(tx: ConsoleTransaction): Transaction {
@@ -38,18 +39,17 @@ export default function OverviewPage() {
   const [approvals, setApprovals] = useState<Array<{ orderId: string; buyerId: string; amountPaise: number; reason: string; requestedAt: string; status: string }>>([]);
   const [recentEvents, setRecentEvents] = useState<Array<{ time: string; label: string; type: "info" | "success" | "error" | "warning" }>>([]);
   const [growth, setGrowth] = useState<ConsoleGrowthMetrics | null>(null);
-  const [agentsStatus, setAgentsStatus] = useState<AgentsStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const { data: agentsStatus, error: statusError, reload: reloadStatus } = useSystemStatus();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [txData, approvalData, eventData, growthData, statusData] = await Promise.allSettled([
+      const [txData, approvalData, eventData, growthData] = await Promise.allSettled([
         getConsoleTransactions(),
         getConsoleApprovals(),
         getConsoleEvents(8),
         getConsoleInsights(),
-        getAgentsStatus(),
       ]);
 
       if (txData.status === "fulfilled") setTransactions(txData.value.map(mapTx));
@@ -75,7 +75,6 @@ export default function OverviewPage() {
         }));
       }
       if (growthData.status === "fulfilled") setGrowth(growthData.value);
-      if (statusData.status === "fulfilled") setAgentsStatus(statusData.value);
     } catch {} finally { setLoading(false); }
   }, []);
 
@@ -93,7 +92,7 @@ export default function OverviewPage() {
           <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">Overview</h1>
           <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">WHAT IS HAPPENING IN YOUR STORE RIGHT NOW</p>
         </div>
-        <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
+        <button onClick={() => { void fetchData(); reloadStatus(); }} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
         </button>
       </div>
@@ -168,21 +167,50 @@ export default function OverviewPage() {
 
       <div className="border border-[var(--bb-line)] p-5 stagger-child">
         <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-4)] mb-4">SYSTEM HEALTH</div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-          {[
-            { label: "Agent", ok: agentsStatus?.seller_agent.status === "online", text: agentsStatus?.seller_agent.status ?? "…" },
-            { label: "Gateway", ok: agentsStatus?.agent_gateway.status === "online", text: agentsStatus?.agent_gateway.status ?? "…" },
-            { label: "Policy", ok: agentsStatus?.policy_engine.status === "healthy", text: agentsStatus?.policy_engine.status ?? "…" },
-            { label: "Payments", ok: agentsStatus?.payment_rail.configured === true, text: agentsStatus?.payment_rail.configured ? "Connected" : "Unconfigured" },
-            { label: "Ledger", ok: agentsStatus?.ledger.status === "recording", text: agentsStatus?.ledger.status ?? "…" },
-          ].map((item) => (
-            <div key={item.label} className="flex items-center gap-2">
-              <span className={`w-1.5 h-1.5 rounded-full ${item.ok ? "bg-green-500 animate-[blink_3s_ease-in-out_infinite]" : "bg-yellow-400"}`} />
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)]">{item.label}</span>
-              <span className={`font-[var(--font-mono)] text-[0.55rem] ${item.ok ? "text-green-400" : "text-yellow-400"}`}>{item.text}</span>
-            </div>
-          ))}
-        </div>
+        {statusError ? (
+          <div className="flex items-start gap-2" title={statusError.message}>
+            <AlertTriangle size={14} className="text-amber-400 mt-0.5 shrink-0" />
+            <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-400">
+              {statusError.kind === "auth"
+                ? "Authentication problem fetching status — re-authenticate or check backend Supabase config."
+                : statusError.kind === "network"
+                  ? "Backend unreachable while fetching status."
+                  : statusError.kind === "endpoint"
+                    ? "Wrong status endpoint on the backend."
+                    : `Status fetch failed: ${statusError.message}`}
+            </span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            {[
+              { label: "Agent", state: agentsStatus?.seller_agent.state, detail: agentsStatus?.seller_agent.detail },
+              { label: "Gateway", state: agentsStatus?.agent_gateway.state, detail: agentsStatus?.agent_gateway.detail },
+              { label: "Policy", state: agentsStatus?.policy_engine.state, detail: agentsStatus?.policy_engine.detail },
+              { label: "Payments", state: agentsStatus?.payment_rail.state, detail: agentsStatus?.payment_rail.detail },
+              { label: "Ledger", state: agentsStatus?.ledger.state, detail: agentsStatus?.ledger.detail },
+            ].map((item) => {
+              const state = item.state ?? null;
+              const dot = state === "CONNECTED" ? "bg-green-500 animate-[blink_3s_ease-in-out_infinite]"
+                : state === "UNCONFIGURED" ? "bg-yellow-400"
+                  : state === "DEGRADED" ? "bg-amber-400"
+                    : state === "ERROR" || state === "OFFLINE" ? "bg-red-400"
+                      : "bg-[var(--bb-grey-4)]";
+              const text = state === "CONNECTED" ? "text-green-400"
+                : state === "UNCONFIGURED" ? "text-yellow-400"
+                  : state === "DEGRADED" ? "text-amber-400"
+                    : state === "ERROR" || state === "OFFLINE" ? "text-red-400"
+                      : "text-[var(--bb-grey-4)]";
+              const label = state ?? "…";
+              return (
+                <div key={item.label} className="flex items-center gap-2" title={item.detail || undefined}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+                  <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)]">{item.label}</span>
+                  <span className={`font-[var(--font-mono)] text-[0.55rem] ${text}`}>{label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {agentsStatus && (
           <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] flex items-center gap-3">
             <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">

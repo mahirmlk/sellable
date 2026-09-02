@@ -117,24 +117,73 @@ export interface ConsolePolicySettings {
 
 // --- Agents / system status ---
 
-export interface AgentStatus {
+export type ComponentState = "CONNECTED" | "UNCONFIGURED" | "DEGRADED" | "ERROR" | "OFFLINE";
+
+export interface SystemComponent {
   status: string;
+  state: ComponentState;
   mode?: string;
+  detail?: string;
+  reason?: string | null;
+}
+
+export interface PaymentRailStatus {
+  provider: string;
+  mode: string;
+  configured: boolean;
+  state: ComponentState;
+  webhook_configured: boolean;
+  webhook_last_verified_at: string | null;
+  reason?: string | null;
+  detail?: string;
+}
+
+export interface LlmStatus {
+  provider: string;
+  model: string;
+  enabled: boolean;
+  status: "scripted" | "connected" | "unconfigured" | "error";
+  state: ComponentState;
+  mode?: string;
+  reason?: string | null;
+  detail?: string;
 }
 
 export interface AgentsStatusResponse {
-  buyer_agent: AgentStatus;
-  seller_agent: AgentStatus;
-  llm: { provider: string; model: string | null; enabled: boolean };
-  policy_engine: AgentStatus;
-  agent_gateway: AgentStatus;
-  payment_rail: {
-    provider: string;
-    mode: string;
-    configured: boolean;
-  };
-  ledger: AgentStatus;
+  buyer_agent: SystemComponent;
+  seller_agent: SystemComponent;
+  agent_gateway: SystemComponent;
+  policy_engine: SystemComponent;
+  ledger: SystemComponent;
+  payment_rail: PaymentRailStatus;
+  llm: LlmStatus;
   summary: { total_orders: number; paid_orders: number };
+}
+
+// --- API error with a structured classification for the UI ---
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: string;
+  readonly body: unknown;
+
+  constructor(status: number, statusText: string, detail: string, body?: unknown) {
+    super(`API error: ${status} ${statusText}${detail ? ` — ${detail}` : ""}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+    this.body = body;
+  }
+
+  get isAuthFailure(): boolean {
+    return this.status === 401 || this.status === 403;
+  }
+  get isNotFound(): boolean {
+    return this.status === 404;
+  }
+  get isServerError(): boolean {
+    return this.status >= 500;
+  }
 }
 
 // --- Seller agent / chat contracts (mirror backend) ---
@@ -272,9 +321,25 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     headers,
   });
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    const detail = await extractErrorDetail(res);
+    throw new ApiError(res.status, res.statusText, detail, null);
   }
-  return res.json();
+  try {
+    return (await res.json()) as T;
+  } catch {
+    throw new ApiError(200, "OK", `Malformed JSON from ${path}`, null);
+  }
+}
+
+async function extractErrorDetail(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { detail?: unknown };
+    if (typeof body?.detail === "string") return body.detail;
+    if (body?.detail !== undefined) return JSON.stringify(body.detail);
+  } catch {
+    // Non-JSON error body; fall back to the status text.
+  }
+  return res.statusText;
 }
 
 // --- Health ---

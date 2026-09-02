@@ -58,6 +58,7 @@ from sellable.payments.service import (
     UnsupportedWebhookEventError,
 )
 from sellable.refunds import RefundService
+from sellable.status import build_status
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1084,34 +1085,21 @@ def transaction_events(
 def agents_status(
     request: Request,
     commerce: CommerceCore = Depends(get_commerce),
+    ledger: LedgerRepository = Depends(get_ledger),
+    seller_agent: SellerAgent = Depends(get_seller_agent),
+    buyer_agent: BuyerAgent = Depends(get_buyer_agent),
+    gateway: AgentGateway = Depends(get_agent_gateway),
     _merchant: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
-    orders = commerce.all_orders()
-    paid = sum(1 for o in orders if o.status is OrderStatus.PAID)
-    llm_mode = (
-        "live" if _seller_llm is not None else "scripted"
+    """Report real, backend-driven component state (never hardcoded green)."""
+    return build_status(
+        commerce=commerce,
+        ledger=ledger,
+        seller_agent=seller_agent,
+        buyer_agent=buyer_agent,
+        gateway=gateway,
+        llm_adapter=_seller_llm,
     )
-    return {
-        "buyer_agent": {"status": "online", "mode": llm_mode},
-        "seller_agent": {"status": "online", "mode": llm_mode},
-        "llm": {
-            "provider": settings.llm_provider,
-            "model": settings.llm_model,
-            "enabled": _seller_llm is not None,
-        },
-        "policy_engine": {"status": "healthy"},
-        "agent_gateway": {"status": "online"},
-        "payment_rail": {
-            "provider": "razorpay",
-            "mode": "test",
-            "configured": settings.razorpay_is_configured,
-        },
-        "ledger": {"status": "recording"},
-        "summary": {
-            "total_orders": len(orders),
-            "paid_orders": paid,
-        },
-    }
 
 
 @app.post("/catalog/products", response_model=Product, tags=["console"])

@@ -24,3 +24,7 @@ class MockAdapter(LLMAdapter):
             (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""
         )
         return f"[mock:{self.model}] Acknowledged: {last_user}"
+
+    def probe(self, *, timeout: int = 10) -> None:
+        """Deterministic provider is always available; nothing to check."""
+        return None

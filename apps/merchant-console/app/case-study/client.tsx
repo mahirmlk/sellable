@@ -46,7 +46,6 @@ function InteractionModelLive() {
       timers.forEach(clearTimeout);
       clearInterval(iv);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const visibleText = fullLeft.slice(0, typed);
   const showHold = step >= 2;
@@ -439,10 +438,10 @@ export default function CaseStudyClient() {
               keeps the information available while the user continues typing, then adds it when the writing reaches a place where the score naturally belongs.
             </p>
             <p>
-              This is the "held fact" pattern. The fact is <em className="font-medium not-italic text-[#111]">not hidden</em> — it is <em className="font-medium not-italic text-[#111]">timed</em>. The model holds it in memory, aware of its relevance, but defers insertion until the context is right. Inserting it too early would disrupt the sentence flow. Inserting it too late would miss the moment. The discipline is in the timing.
+              This is the &quot;held fact&quot; pattern. The fact is <em className="font-medium not-italic text-[#111]">not hidden</em> — it is <em className="font-medium not-italic text-[#111]">timed</em>. The model holds it in memory, aware of its relevance, but defers insertion until the context is right. Inserting it too early would disrupt the sentence flow. Inserting it too late would miss the moment. The discipline is in the timing.
             </p>
             <p>
-              In agentic commerce, the same pattern governs money. The Seller Agent holds a valid quote — a price computed from catalog, margin rules, and negotiation history. It holds an upsell suggestion — a complementary product checked against stock and budget. It holds a consent token — a single-use, amount-bound, expiring authorization. Each of these is a "held fact" about money. The agent cannot insert them arbitrarily. They must wait for the policy engine to confirm that every guardrail is satisfied, and then release exactly once.
+              In agentic commerce, the same pattern governs money. The Seller Agent holds a valid quote — a price computed from catalog, margin rules, and negotiation history. It holds an upsell suggestion — a complementary product checked against stock and budget. It holds a consent token — a single-use, amount-bound, expiring authorization. Each of these is a &quot;held fact&quot; about money. The agent cannot insert them arbitrarily. They must wait for the policy engine to confirm that every guardrail is satisfied, and then release exactly once.
             </p>
             <p>
               This is why the held fact is not just a UX metaphor. It is the safety architecture. The model proposes; the policy engine disposes; the ledger records the moment of insertion with a trace_id, a reasoning_summary, and the policy references that governed the decision. Every rupee has an explanation. Every hold has a reason. Every insertion has an anchor.
@@ -474,13 +473,13 @@ export default function CaseStudyClient() {
 
           <div className="mt-6 space-y-5 font-sans text-[1.0rem] leading-[1.72] tracking-[-0.012em] text-[#1e1e1c]">
             <p>
-              In 2025, NPCI — which runs UPI — published agent payment protocols that let AI agents initiate and approve payments on a user's behalf with per-transaction
-              consent, spend caps, and human-in-the-loop above thresholds. At the same time, AI buyers shifted from <em>recommending</em> to <em>purchasing</em>: Perplexity's
-              buy-with-Pro, OpenAI's shopping agents, Google's procurement agents. Commerce is no longer "human clicks Buy". It is "agent negotiates and buys".
+              In 2025, NPCI — which runs UPI — published agent payment protocols that let AI agents initiate and approve payments on a user&apos;s behalf with per-transaction
+              consent, spend caps, and human-in-the-loop above thresholds. At the same time, AI buyers shifted from <em>recommending</em> to <em>purchasing</em>: Perplexity&apos;s
+              buy-with-Pro, OpenAI&apos;s shopping agents, Google&apos;s procurement agents. Commerce is no longer &quot;human clicks Buy&quot;. It is &quot;agent negotiates and buys&quot;.
             </p>
             <p>
               This is not a future-state prediction. It is a present-tense infrastructure gap. Razorpay already runs pilot programs with merchants who receive orders from AI agents.
-              NPCI's 2025 protocol specification defines consent tokens, spend limits, and audit requirements that merchants must implement <em>now</em> to participate in this channel.
+              NPCI&apos;s 2025 protocol specification defines consent tokens, spend limits, and audit requirements that merchants must implement <em>now</em> to participate in this channel.
               The merchants who build agent-facing infrastructure today will capture the first wave of autonomous procurement spend — estimated at $47B globally by 2027.
             </p>
             <p>
@@ -488,12 +487,12 @@ export default function CaseStudyClient() {
               machine-readable catalog, no agent-facing API, no negotiation policy, no consent flow, no audit trail when an agent spends money. The problem is not that AI cannot buy — it is that merchants have not been built to be bought <em>by</em> AI.
             </p>
             <p>
-              The Track 01 brief asks for both: <span className="font-medium text-[#111]">(a) grow the merchant's revenue</span> using agents and{" "}
+              The Track 01 brief asks for both: <span className="font-medium text-[#111]">(a) grow the merchant&apos;s revenue</span> using agents and{" "}
               <span className="font-medium text-[#111]">(b) make the merchant sellable to AI buyers</span>. We chose to solve (b) end-to-end and let (a) emerge from the
               same transaction — upsell attach, bounded negotiation that protects margin, and AI discoverability itself as a revenue channel.
             </p>
             <p>
-              The core insight is timing. In writing, the "held fact" model teaches that information should be held until the natural insertion point. In commerce, the same discipline applies to money:
+              The core insight is timing. In writing, the &quot;held fact&quot; model teaches that information should be held until the natural insertion point. In commerce, the same discipline applies to money:
               the agent holds a valid quote, a negotiated price, and a consent token until the policy engine confirms that every gate — budget, floor, HITL, single-use — is clear.
               Then and only then does the payment execute. This is not just good UX. It is the safety invariant that makes autonomous commerce auditable.
             </p>
@@ -553,7 +552,7 @@ export default function CaseStudyClient() {
             The same timing discipline from the Spurs example governs money. The agent may hold a valid quote while the system waits for the natural insertion point — consent, policy, HITL — then releases it exactly once.
           </p>
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
-            Each step in the workflow is not just a UI state — it is a ledger event. The Buyer Agent discovers the merchant via <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">/.well-known/agents.json</code>, reads the machine-readable catalog, and initiates a quote request. The Seller Agent responds with a price computed from real catalog data, bounded negotiation rules, and margin floors. The Policy Engine validates both sides: the buyer's budget ceiling and the merchant's floor price. Only when both allow does the flow proceed to consent. The consent token is single-use, amount-bound, and expiring — it cannot be replayed, cannot exceed the amount, and cannot be reused after payment. If any gate fails, the flow stops gracefully with a structured explanation. Nothing is retried silently. Nothing is left ambiguous.
+            Each step in the workflow is not just a UI state — it is a ledger event. The Buyer Agent discovers the merchant via <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">/.well-known/agents.json</code>, reads the machine-readable catalog, and initiates a quote request. The Seller Agent responds with a price computed from real catalog data, bounded negotiation rules, and margin floors. The Policy Engine validates both sides: the buyer&apos;s budget ceiling and the merchant&apos;s floor price. Only when both allow does the flow proceed to consent. The consent token is single-use, amount-bound, and expiring — it cannot be replayed, cannot exceed the amount, and cannot be reused after payment. If any gate fails, the flow stops gracefully with a structured explanation. Nothing is retried silently. Nothing is left ambiguous.
           </p>
           <WorkflowStepper />
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-[0.66rem] leading-[1.5]">
@@ -794,7 +793,7 @@ export default function CaseStudyClient() {
             <span className="font-mono text-[0.84rem] bg-black/5 border border-black/10 px-1 mx-1">NEEDS_HUMAN_APPROVAL</span>.
           </p>
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
-            The engine is deterministic: given the same inputs, it always returns the same decision. This means it can be unit-tested without an LLM, debugged without a model, and audited without a prompt. The LLM's role is to <em className="text-[#111] font-medium">propose</em> — to phrase a counter-offer, to suggest an upsell, to present a quote. The engine's role is to <em className="text-[#111] font-medium">dispose</em> — to validate that the proposal falls within every guardrail. This separation is what makes the system explainable: every decision has a reason_code, every reason_code maps to a policy, and every policy is documented and testable.
+            The engine is deterministic: given the same inputs, it always returns the same decision. This means it can be unit-tested without an LLM, debugged without a model, and audited without a prompt. The LLM&apos;s role is to <em className="text-[#111] font-medium">propose</em> — to phrase a counter-offer, to suggest an upsell, to present a quote. The engine&apos;s role is to <em className="text-[#111] font-medium">dispose</em> — to validate that the proposal falls within every guardrail. This separation is what makes the system explainable: every decision has a reason_code, every reason_code maps to a policy, and every policy is documented and testable.
           </p>
 
           <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -840,10 +839,10 @@ export default function CaseStudyClient() {
 
           <div className="mt-4 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             <p>
-              Consent in NPCI's agent payment protocol is not a blanket authorization. It is a per-transaction, amount-bound, single-use token that expires if not consumed. This means the user (or their agent) must explicitly approve each payment, knowing the exact amount, payee, and purpose. The token cannot be reused, cannot be altered, and cannot exceed the authorized amount. If any condition changes — the cart total increases, the merchant changes, the scope expands — a new consent token is required.
+              Consent in NPCI&apos;s agent payment protocol is not a blanket authorization. It is a per-transaction, amount-bound, single-use token that expires if not consumed. This means the user (or their agent) must explicitly approve each payment, knowing the exact amount, payee, and purpose. The token cannot be reused, cannot be altered, and cannot exceed the authorized amount. If any condition changes — the cart total increases, the merchant changes, the scope expands — a new consent token is required.
             </p>
             <p>
-              Human-in-the-loop (HITL) adds a second safety layer: orders above a configurable threshold (default ₹2,000) are routed to the merchant operator for manual approval before consent can proceed. This is not a UI nicety — it is a policy engine decision. The engine returns <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">NEEDS_HUMAN_APPROVAL</code> and the flow pauses until the operator acts. The operator sees the full context: order details, agent identity, policy evaluation, and the reason for escalation. They can approve, reject, or modify the order. This is the human-in-the-loop that NPCI's protocol requires for high-value transactions.
+              Human-in-the-loop (HITL) adds a second safety layer: orders above a configurable threshold (default ₹2,000) are routed to the merchant operator for manual approval before consent can proceed. This is not a UI nicety — it is a policy engine decision. The engine returns <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">NEEDS_HUMAN_APPROVAL</code> and the flow pauses until the operator acts. The operator sees the full context: order details, agent identity, policy evaluation, and the reason for escalation. They can approve, reject, or modify the order. This is the human-in-the-loop that NPCI&apos;s protocol requires for high-value transactions.
             </p>
           </div>
 
@@ -874,7 +873,7 @@ export default function CaseStudyClient() {
           </div>
           <h2 className="font-serif text-[1.7rem] sm:text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#111] mt-4">The ledger is the winning slide</h2>
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
-            The bar says <em className="text-[#111] font-medium">"every money action must be explainable"</em>. The ledger makes that a data structure, not a slide. Each event answers: who acted, what they attempted, what inputs were used, which policy fired, what changed, why.
+            The bar says <em className="text-[#111] font-medium">&quot;every money action must be explainable&quot;</em>. The ledger makes that a data structure, not a slide. Each event answers: who acted, what they attempted, what inputs were used, which policy fired, what changed, why.
           </p>
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             The XAI Ledger is append-only and immutable. Every event — from catalog search to payment confirmation — is recorded with a unique <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">trace_id</code> that links all actions in a single transaction. The event schema includes: <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">actor</code> (who initiated), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">action</code> (what was attempted), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">inputs</code> (what data was used), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">output</code> (what decision was made), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">reasoning_summary</code> (plain-English explanation), and <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">policy_refs</code> (which rules were consulted). This is not optional logging — it is the core of the trust architecture. Without it, an autonomous agent spending money is unauditable. With it, every rupee has a story.
@@ -890,7 +889,7 @@ export default function CaseStudyClient() {
           </div>
           <h2 className="font-serif text-[1.7rem] sm:text-[2rem] leading-[0.96] tracking-[-0.03em] text-[#111] mt-4">Revenue without a separate marketing product</h2>
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
-            The growth story is not a separate product — it emerges from the same transaction infrastructure. When an AI buyer discovers a merchant through <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">agents.json</code>, negotiates within policy, and pays via Razorpay, the merchant gains a new revenue channel that was previously invisible. The "growth" is not about adding marketing features — it is about making the merchant discoverable to a new class of buyer that did not exist before.
+            The growth story is not a separate product — it emerges from the same transaction infrastructure. When an AI buyer discovers a merchant through <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">agents.json</code>, negotiates within policy, and pays via Razorpay, the merchant gains a new revenue channel that was previously invisible. The &quot;growth&quot; is not about adding marketing features — it is about making the merchant discoverable to a new class of buyer that did not exist before.
           </p>
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
@@ -960,7 +959,7 @@ export default function CaseStudyClient() {
                 In writing, timing is craft. In commerce, timing is safety. SELLABLE holds every money-relevant fact — quote, floor, consent, refund — until the policy engine says the sentence is ready for it. That is the whole case study in one interaction pattern.
               </p>
               <p className="mt-3 max-w-[60ch] font-sans text-[0.95rem] leading-[1.65] text-white/70">
-                The merchant side of agentic commerce is not about building a chatbot or adding an API endpoint. It is about rebuilding the merchant's interface for a new class of buyer — one that reads machine-readable manifests, negotiates within deterministic policy, pays through real rails with real consent, and leaves an audit trail that explains every rupee. This is infrastructure, not features. And it is what makes a merchant truly sellable.
+                The merchant side of agentic commerce is not about building a chatbot or adding an API endpoint. It is about rebuilding the merchant&apos;s interface for a new class of buyer — one that reads machine-readable manifests, negotiates within deterministic policy, pays through real rails with real consent, and leaves an audit trail that explains every rupee. This is infrastructure, not features. And it is what makes a merchant truly sellable.
               </p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <Link href="/dashboard" className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 font-mono text-[0.72rem] tracking-[0.11em] uppercase hover:bg-gray-100 transition-colors">

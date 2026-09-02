@@ -2,16 +2,40 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Save, RefreshCw, Check, AlertCircle } from "lucide-react";
-import { getConsolePolicy, updateConsolePolicy, getAgentsStatus, type ConsolePolicySettings, type AgentsStatusResponse } from "@/lib/api";
+import {
+  getConsolePolicy,
+  updateConsolePolicy,
+  type ConsolePolicySettings,
+} from "@/lib/api";
+import { StatusIndicator } from "@/components/dashboard/status-indicator";
+import { useSystemStatus, classifyError, type StatusError } from "@/components/dashboard/use-system-status";
+import { providerLabel, modelLabel, llmDisplayState } from "@/lib/llm-display";
 
-function StatusLine({ label, ok, text }: { label: string; ok: boolean | undefined; text: string }) {
+const LLM_STATE_TEXT: Record<string, { text: string; color: string }> = {
+  connected: { text: "Connected", color: "text-green-400" },
+  scripted: { text: "Scripted", color: "text-yellow-400" },
+  unconfigured: { text: "Unconfigured", color: "text-yellow-400" },
+  error: { text: "Error", color: "text-red-400" },
+  unknown: { text: "Unknown", color: "text-[var(--bb-grey-4)]" },
+};
+
+function PolicyLoadBanner({ error, loading }: { error: StatusError | null; loading: boolean }) {
+  if (loading) return null;
+  if (!error) return null;
+  const message =
+    error.kind === "auth"
+      ? "Authentication problem — policy could not be loaded. Sign in again or check the backend Supabase configuration."
+      : error.kind === "endpoint"
+        ? "Wrong endpoint — the policy route was not found on the backend."
+        : error.kind === "network"
+          ? "Backend unreachable — policy could not be loaded."
+          : error.kind === "contract"
+            ? "Malformed policy response from the backend."
+            : `Backend error while loading policy: ${error.message}`;
   return (
-    <div className="flex items-center justify-between py-2 border-b border-[var(--bb-line-soft)] last:border-b-0">
-      <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-4)]">{label}</span>
-      <span className="flex items-center gap-2">
-        <span className={`w-1.5 h-1.5 rounded-full ${ok ? "bg-green-500" : "bg-yellow-400"}`} />
-        <span className={`font-[var(--font-mono)] text-[0.65rem] ${ok ? "text-green-400" : "text-yellow-400"}`}>{text}</span>
-      </span>
+    <div className="border border-red-400/30 bg-red-400/5 px-5 py-3 flex items-start gap-2">
+      <AlertCircle size={14} className="text-red-400 mt-0.5 shrink-0" />
+      <span className="font-[var(--font-mono)] text-[0.6rem] text-red-400">{message}</span>
     </div>
   );
 }
@@ -20,26 +44,35 @@ export default function SettingsPage() {
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
   const [editing, setEditing] = useState<Partial<ConsolePolicySettings>>({});
   const [loading, setLoading] = useState(true);
+  const [policyError, setPolicyError] = useState<StatusError | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<"success" | "error" | null>(null);
-  const [agentsStatus, setAgentsStatus] = useState<AgentsStatusResponse | null>(null);
+  const { data: status, loading: statusLoading, error: statusError, reload: reloadStatus } = useSystemStatus();
 
-  const fetchData = useCallback(async () => {
+  const fetchPolicy = useCallback(async () => {
     setLoading(true);
+    setPolicyError(null);
     try {
-      const [p, s] = await Promise.allSettled([getConsolePolicy(), getAgentsStatus()]);
-      if (p.status === "fulfilled") {
-        setPolicy(p.value);
-        setEditing({});
-      }
-      if (s.status === "fulfilled") setAgentsStatus(s.value);
-    } catch {} finally { setLoading(false); }
+      const p = await getConsolePolicy();
+      setPolicy(p);
+      setEditing({});
+    } catch (err) {
+      setPolicy(null);
+      setPolicyError(classifyError(err));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    const t = window.setTimeout(() => void fetchData(), 0);
+    const t = window.setTimeout(() => void fetchPolicy(), 0);
     return () => window.clearTimeout(t);
-  }, [fetchData]);
+  }, [fetchPolicy]);
+
+  const handleRefresh = () => {
+    void fetchPolicy();
+    reloadStatus();
+  };
 
   const handleChange = (key: keyof ConsolePolicySettings, value: string) => {
     if (!policy) return;
@@ -88,6 +121,9 @@ export default function SettingsPage() {
     { label: "HITL THRESHOLD", key: "human_approval_threshold_paise" as const, isPaise: true, highlight: true },
   ];
 
+  const llmState = llmDisplayState(status?.llm ?? null);
+  const llmMeta = LLM_STATE_TEXT[llmState] ?? LLM_STATE_TEXT.unknown;
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -96,8 +132,8 @@ export default function SettingsPage() {
           <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">MERCHANT-CONTROLLED BOUNDARIES</p>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
+          <button onClick={handleRefresh} disabled={loading || statusLoading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
+            <RefreshCw size={12} className={loading || statusLoading ? "animate-spin" : ""} /> REFRESH
           </button>
           <button onClick={handleSave} disabled={!hasChanges || saving} className="inline-flex items-center gap-2 h-[32px] px-4 border font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: hasChanges ? "var(--bb-orange)" : "var(--bb-line)", backgroundColor: hasChanges ? "color-mix(in srgb, var(--bb-orange) 10%, transparent)" : "var(--bb-panel)", color: hasChanges ? "var(--bb-orange)" : "var(--bb-grey-3)" }}>
             <Save size={12} /> {saving ? "SAVING..." : "SAVE CHANGES"}
@@ -120,7 +156,7 @@ export default function SettingsPage() {
 
       {!current ? (
         <div className="border border-[var(--bb-line)] px-5 py-12 text-center font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">
-          {loading ? "Loading policy..." : "Failed to load policy."}
+          {loading ? "Loading policy..." : "Policy unavailable."}
         </div>
       ) : (
         <>
@@ -188,40 +224,70 @@ export default function SettingsPage() {
         </>
       )}
 
+      <PolicyLoadBanner error={policyError} loading={loading} />
+
       <div className="border border-[var(--bb-line)] overflow-hidden">
         <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between">
           <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">AGENT & SYSTEM STATUS</div>
           <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">READ FROM BACKEND /agents/status</div>
         </div>
         <div className="px-5 py-2">
-          <StatusLine label="Seller Agent" ok={agentsStatus?.seller_agent.status === "online"} text={agentsStatus?.seller_agent.status ?? "…"} />
-          <StatusLine label="Buyer Agent" ok={agentsStatus?.buyer_agent.status === "online"} text={agentsStatus?.buyer_agent.status ?? "…"} />
-          <StatusLine label="Agent Gateway" ok={agentsStatus?.agent_gateway.status === "online"} text={agentsStatus?.agent_gateway.status ?? "…"} />
-          <StatusLine label="Policy Engine" ok={agentsStatus?.policy_engine.status === "healthy"} text={agentsStatus?.policy_engine.status ?? "…"} />
-          <StatusLine label="Payment Rail" ok={agentsStatus?.payment_rail.configured === true} text={agentsStatus?.payment_rail.configured ? `${agentsStatus.payment_rail.provider} · ${agentsStatus.payment_rail.mode}` : "Unconfigured"} />
-          <StatusLine label="Ledger" ok={agentsStatus?.ledger.status === "recording"} text={agentsStatus?.ledger.status ?? "…"} />
+          {statusError ? (
+            <div className="flex items-start gap-2 px-1 py-2" title={statusError.message}>
+              <AlertCircle size={14} className="text-amber-400 mt-0.5 shrink-0" />
+              <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-400">
+                {statusError.kind === "auth"
+                  ? "Authentication problem fetching status."
+                  : statusError.kind === "network"
+                    ? "Backend unreachable while fetching status."
+                    : statusError.kind === "endpoint"
+                      ? "Wrong status endpoint on the backend."
+                      : `Status fetch failed: ${statusError.message}`}
+              </span>
+            </div>
+          ) : (
+            <>
+              <StatusIndicator label="Seller Agent" state={status?.seller_agent.state} detail={status?.seller_agent.detail} mode={status?.seller_agent.mode} loading={statusLoading} />
+              <StatusIndicator label="Buyer Agent" state={status?.buyer_agent.state} detail={status?.buyer_agent.detail} mode={status?.buyer_agent.mode} loading={statusLoading} />
+              <StatusIndicator label="Agent Gateway" state={status?.agent_gateway.state} detail={status?.agent_gateway.detail} loading={statusLoading} />
+              <StatusIndicator label="Policy Engine" state={status?.policy_engine.state} detail={status?.policy_engine.detail} loading={statusLoading} />
+              <StatusIndicator label="Payment Rail" state={status?.payment_rail.state} detail={status?.payment_rail.detail} loading={statusLoading} />
+              <StatusIndicator label="Ledger" state={status?.ledger.state} detail={status?.ledger.detail} loading={statusLoading} />
+            </>
+          )}
         </div>
         <div className="px-5 py-4 border-t border-[var(--bb-line-soft)]">
           <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-2">AI / MODEL CONFIGURATION</div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Provider</div>
-              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{agentsStatus?.llm.provider || "mock"}</div>
+              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{providerLabel(status?.llm.provider)}</div>
             </div>
             <div>
               <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Model</div>
-              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{agentsStatus?.llm.model || "deterministic"}</div>
+              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{modelLabel(status?.llm.model)}</div>
             </div>
             <div>
               <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Status</div>
               <div className="flex items-center gap-2">
-                <span className={`w-1.5 h-1.5 rounded-full ${agentsStatus?.llm.enabled ? "bg-green-500" : "bg-yellow-400"}`} />
-                <span className={`font-[var(--font-mono)] text-[0.7rem] ${agentsStatus?.llm.enabled ? "text-green-400" : "text-yellow-400"}`}>
-                  {agentsStatus?.llm.enabled ? "Connected" : "Scripted"}
+                <span className={`w-1.5 h-1.5 rounded-full ${llmState === "connected" ? "bg-green-500" : llmState === "scripted" ? "bg-yellow-400" : llmState === "error" ? "bg-red-400" : "bg-yellow-400"}`} />
+                <span className={`font-[var(--font-mono)] text-[0.7rem] ${llmMeta.color}`}>
+                  {llmMeta.text}
                 </span>
               </div>
+              {status?.llm.reason && (
+                <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)] mt-1">Reason: {status.llm.reason}</div>
+              )}
+              {status?.llm.detail && (
+                <div className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)] mt-1">{status.llm.detail}</div>
+              )}
             </div>
           </div>
+          {status?.payment_rail.webhook_last_verified_at && (
+            <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)]">
+              Payment API configured · Webhook configured · Last webhook verified {new Date(status.payment_rail.webhook_last_verified_at).toISOString()}
+            </div>
+          )}
           <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] font-[var(--font-sans)] text-[0.7rem] text-[var(--bb-grey-3)] leading-relaxed">
             Provider and model can be substituted without changing Commerce Core, Policy, Payments, Ledger, or the console. Credentials never leave the backend.
           </div>

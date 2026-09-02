@@ -70,20 +70,24 @@ python -m evals.runner
 ## LLM Providers
 
 SELLABLE uses a provider-agnostic adapter (`agents/llm/`). The demo uses
-**OpenCode Zen**:
+**OpenCode Zen** with the free `mimo-v2.5-free` model:
 
 ```env
 LLM_PROVIDER=opencode
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=mimo-v2.5-free
 LLM_API_KEY=sk-...   # OpenCode Zen key
 ```
 
-- Zen keys/models must use the `opencode` provider (base URL
-  `https://opencode.ai/zen/v1`). Sending a Zen key to the OpenRouter endpoint
+- `LLM_PROVIDER=opencode` uses the OpenAI-compatible Zen endpoint
+  (`https://opencode.ai/zen/v1`). Sending a Zen key to the OpenRouter endpoint
   fails with `401 Missing Authentication header`.
+- `OPENROUTER_API_KEY` is used **only** when `LLM_PROVIDER=openrouter`.
 - Default `LLM_PROVIDER=mock` keeps tests/evals offline and deterministic.
-- Agents fall back to scripted (deterministic) responses if the LLM is
-  unavailable, so the commerce flow never breaks.
+- If a non-mock provider is selected but `LLM_API_KEY` is missing, `/agents/status`
+  reports **UNCONFIGURED** (it does not silently fall back to mock).
+- `/agents/status` performs a cached, time-boxed connectivity probe; the seller
+  agent falls back to deterministic phrasing if the LLM call fails, so the
+  commerce flow never breaks.
 
 ---
 

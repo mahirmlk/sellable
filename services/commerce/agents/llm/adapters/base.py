@@ -39,6 +39,15 @@ class LLMAdapter:
         """Return the assistant's textual reply for the given conversation."""
         raise NotImplementedError
 
+    def probe(self, *, timeout: int = 10) -> None:
+        """Perform a lightweight connectivity/config check. Raise on failure.
+
+        Used by the backend status service to report an honest LLM state. The
+        result is cached with a short TTL by the caller; this is never called on
+        every dashboard refresh.
+        """
+        raise NotImplementedError
+
     def _require_key(self) -> None:
         if not self.config.api_key:
             raise LLMError(
@@ -51,7 +60,13 @@ class LLMAdapter:
             _ADAPTER_REGISTRY[cls.provider_name] = cls
 
 
-def post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+def post_json(
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    *,
+    timeout: int = 90,
+) -> dict[str, Any]:
     """POST JSON and decode the JSON response using only the standard library."""
     request = urllib.request.Request(
         url,
@@ -60,10 +75,12 @@ def post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dic
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")[:400]
         raise LLMError(f"Provider returned HTTP {error.code}: {detail}") from error
     except urllib.error.URLError as error:
         raise LLMError(f"Provider request failed: {error.reason}") from error
+    except TimeoutError as error:
+        raise LLMError("Provider request timed out") from error

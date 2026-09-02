@@ -1,30 +1,40 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { Activity, Wifi, CreditCard, LogOut } from "lucide-react";
+import { LogOut, AlertTriangle } from "lucide-react";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
-import { getAgentsStatus, type AgentsStatusResponse } from "@/lib/api";
+import { useSystemStatus } from "@/components/dashboard/use-system-status";
+import type { ComponentState } from "@/lib/api";
+
+const STATE_META: Record<ComponentState, { label: string; dot: string; text: string }> = {
+  CONNECTED: { label: "Connected", dot: "bg-green-500", text: "text-green-400" },
+  UNCONFIGURED: { label: "Unconfigured", dot: "bg-yellow-400", text: "text-yellow-400" },
+  DEGRADED: { label: "Degraded", dot: "bg-amber-400", text: "text-amber-400" },
+  ERROR: { label: "Error", dot: "bg-red-400", text: "text-red-400" },
+  OFFLINE: { label: "Offline", dot: "bg-red-400", text: "text-red-400" },
+};
+
+function Pill({ label, state, detail }: { label: string; state?: ComponentState | null; detail?: string }) {
+  const meta = state ? STATE_META[state] : null;
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={`w-1.5 h-1.5 rounded-full ${meta ? meta.dot : "bg-[var(--bb-grey-4)]"}`} />
+      <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+        {label}
+      </span>
+      <span
+        className={`font-[var(--font-mono)] text-[0.55rem] ${meta ? meta.text : "text-[var(--bb-grey-4)]"}`}
+        title={detail || undefined}
+      >
+        {meta ? meta.label : "…"}
+      </span>
+    </div>
+  );
+}
 
 export function DashboardTopBar() {
   const router = useRouter();
-  const [status, setStatus] = useState<AgentsStatusResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getAgentsStatus()
-      .then((s) => {
-        if (!cancelled) setStatus(s);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const agentOnline = status?.seller_agent.status === "online";
-  const gatewayOnline = status?.agent_gateway.status === "online";
-  const razorpayConfigured = status?.payment_rail.configured === true;
+  const { data: status, error } = useSystemStatus();
 
   const handleSignOut = async () => {
     try {
@@ -57,29 +67,31 @@ export function DashboardTopBar() {
       {/* Right: Status indicators + sign out */}
       <div className="flex items-center gap-4">
         <div className="hidden sm:flex items-center gap-5">
-          <div className="flex items-center gap-1.5">
-            <Activity size={12} className={agentOnline ? "text-green-400" : "text-yellow-400"} />
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-              Agent
-            </span>
-            <span className={`font-[var(--font-mono)] text-[0.55rem] ${agentOnline ? "text-green-400" : "text-yellow-400"}`}>{agentOnline ? "Online" : "Offline"}</span>
-          </div>
-          <div className="w-px h-3 bg-[var(--bb-line)]" />
-          <div className="flex items-center gap-1.5">
-            <Wifi size={12} className={gatewayOnline ? "text-green-400" : "text-yellow-400"} />
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-              Gateway
-            </span>
-            <span className={`font-[var(--font-mono)] text-[0.55rem] ${gatewayOnline ? "text-green-400" : "text-yellow-400"}`}>{gatewayOnline ? "Healthy" : "Offline"}</span>
-          </div>
-          <div className="w-px h-3 bg-[var(--bb-line)]" />
-          <div className="flex items-center gap-1.5">
-            <CreditCard size={12} className={razorpayConfigured ? "text-green-400" : "text-yellow-400"} />
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-              Razorpay
-            </span>
-            <span className={`font-[var(--font-mono)] text-[0.55rem] ${razorpayConfigured ? "text-green-400" : "text-yellow-400"}`}>{razorpayConfigured ? "Connected" : "Unconfigured"}</span>
-          </div>
+          {error ? (
+            <div
+              className="flex items-center gap-1.5 text-[var(--bb-grey-3)]"
+              title={error.message}
+            >
+              <AlertTriangle size={12} className="text-amber-400" />
+              <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase">
+                {error.kind === "auth"
+                  ? "Re-auth needed"
+                  : error.kind === "network"
+                    ? "Backend unreachable"
+                    : error.kind === "endpoint"
+                      ? "Wrong endpoint"
+                      : "Status error"}
+              </span>
+            </div>
+          ) : (
+            <>
+              <Pill label="Agent" state={status?.seller_agent.state} detail={status?.seller_agent.detail} />
+              <div className="w-px h-3 bg-[var(--bb-line)]" />
+              <Pill label="Gateway" state={status?.agent_gateway.state} detail={status?.agent_gateway.detail} />
+              <div className="w-px h-3 bg-[var(--bb-line)]" />
+              <Pill label="Razorpay" state={status?.payment_rail.state} detail={status?.payment_rail.detail} />
+            </>
+          )}
         </div>
         <div className="w-px h-6 bg-[var(--bb-line)] hidden sm:block" />
         <button
