@@ -285,6 +285,9 @@ export interface PaymentAttemptPayload {
   provider: string;
   provider_order_id: string;
   provider_payment_id: string | null;
+  // Hosted Razorpay Payment Link — the browser only ever receives this
+  // public URL; settlement is confirmed exclusively by the signed webhook.
+  payment_url: string | null;
   status: "PAYMENT_PENDING" | "CAPTURED" | "FAILED";
   idempotency_key: string;
   failure_reason: string | null;
@@ -563,6 +566,22 @@ export async function getConsoleCatalog(query = ""): Promise<Product[]> {
 
 export async function getConsoleCatalogItem(sku: string): Promise<Product> {
   return apiFetch<Product>(`/console/catalog/${encodeURIComponent(sku)}`);
+}
+
+export async function createConsoleProduct(body: {
+  sku: string;
+  title: string;
+  description: string;
+  price_paise: number;
+  floor_paise: number;
+  stock: number;
+  category: string;
+  attributes: Record<string, unknown>;
+}): Promise<Product> {
+  return apiFetch<Product>("/catalog/products", {
+    method: "POST",
+    body: JSON.stringify({ ...body, merchant_id: "IGNORED" }),
+  });
 }
 
 // --- Console commerce flow (merchant JWT, never agent keys) ---

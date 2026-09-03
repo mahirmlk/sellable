@@ -31,6 +31,7 @@ class PaymentService:
         self.rail = rail
         self._attempt_by_order_id: dict[str, PaymentAttempt] = {}
         self._local_order_by_provider_order_id: dict[str, str] = {}
+        self._local_order_by_link_id: dict[str, str] = {}
         self._processed_delivery_keys: set[str] = set()
         self._retry_count_by_order_id: dict[str, int] = {}
         self._core_by_order_id: dict[str, CommerceCore] = {}
@@ -109,10 +110,13 @@ class PaymentService:
     def _create_provider_attempt(self, order_id: str, trace_id: str, core: CommerceCore) -> PaymentAttempt:
         pending_order = core.get_order(order_id)
         try:
-            provider_order = self.rail.create_order(pending_order)
+            # Human checkout uses a hosted Razorpay Payment Link (spec §10):
+            # the browser receives only a public short_url — no keys, no SDK,
+            # and the provider never confirms through the frontend.
+            provider_link = self.rail.create_payment_link(pending_order)
             if (
-                provider_order.amount_paise != pending_order.amount_paise
-                or provider_order.currency != "INR"
+                provider_link.amount_paise != pending_order.amount_paise
+                or provider_link.currency != "INR"
             ):
                 raise RazorpayRequestError(
                     "Razorpay response does not match the local order amount or currency"
@@ -134,18 +138,25 @@ class PaymentService:
 
         attempt = PaymentAttempt(
             order_id=order_id,
-            provider_order_id=provider_order.provider_order_id,
+            provider_order_id=provider_link.provider_link_id,
+            payment_url=provider_link.short_url,
             idempotency_key=pending_order.idempotency_key,
         )
         self._attempt_by_order_id[order_id] = attempt
-        self._local_order_by_provider_order_id[provider_order.provider_order_id] = order_id
+        self._local_order_by_link_id[provider_link.provider_link_id] = order_id
+        # Razorpay creates an internal order for every payment link; mapping
+        # it lets payment.captured webhooks (which reference payment.order_id)
+        # resolve even when only the captured event arrives.
+        if provider_link.provider_order_id:
+            self._local_order_by_provider_order_id[provider_link.provider_order_id] = order_id
         self._record(
+            core=core,
             trace_id=trace_id,
             action="payment.attempted",
             inputs={"order_id": order_id, "amount_paise": pending_order.amount_paise},
-            output={"provider_order_id": provider_order.provider_order_id},
-            provider_ref=provider_order.provider_order_id,
-            explanation="Created a Razorpay test-mode order after policy approval and consent.",
+            output={"provider_link_id": provider_link.provider_link_id, "payment_url": provider_link.short_url},
+            provider_ref=provider_link.provider_link_id,
+            explanation="Created a Razorpay test-mode Payment Link after policy approval and consent.",
         )
         return attempt
 
@@ -156,19 +167,27 @@ class PaymentService:
             event_name = payload["event"]
             payment = payload["payload"]["payment"]["entity"]
             provider_payment_id = payment["id"]
-            provider_order_id = payment["order_id"]
         except (KeyError, TypeError, json.JSONDecodeError) as error:
             raise UnsupportedWebhookEventError("Webhook payload is not a supported Razorpay payment event") from error
 
-        delivery_key = f"{event_name}:{provider_payment_id}"
-        local_order_id = self._local_order_by_provider_order_id.get(provider_order_id)
+        # Payment-link flows identify the local order via the link's
+        # reference_id (set to the local order id at creation); checkout-order
+        # flows identify it via payment.order_id.
+        local_order_id: str | None = None
+        if event_name.startswith("payment_link."):
+            link_entity = (payload.get("payload", {}).get("payment_link", {}) or {}).get("entity", {}) or {}
+            local_order_id = self._local_order_by_link_id.get(str(link_entity.get("id") or "")) or self._local_order_by_provider_order_id.get(str(link_entity.get("reference_id") or ""))
+        else:
+            provider_order_id = str(payment.get("order_id") or "")
+            local_order_id = self._local_order_by_provider_order_id.get(provider_order_id)
         if local_order_id is None:
             raise UnknownProviderOrderError("Webhook references an unknown provider order")
         attempt = self._attempt_by_order_id[local_order_id]
+        delivery_key = f"{event_name}:{provider_payment_id}"
         if delivery_key in self._processed_delivery_keys:
             return attempt
 
-        if event_name == "payment.captured":
+        if event_name in ("payment.captured", "payment_link.paid"):
             core = self._core_for(local_order_id)
             local_order = core.get_order(local_order_id)
             captured_amount = payment.get("amount")
@@ -196,8 +215,8 @@ class PaymentService:
                     "status": PaymentStatus.CAPTURED,
                 }
             )
-            explanation = "Verified Razorpay payment.captured webhook and settled the local order."
-        elif event_name == "payment.failed":
+            explanation = "Verified Razorpay payment webhook and settled the local order."
+        elif event_name in ("payment.failed", "payment_link.failed"):
             core = self._core_for(local_order_id)
             reason = str(payment.get("error_description") or "Razorpay reported a failed payment")
             core.mark_payment_failed(
@@ -220,7 +239,7 @@ class PaymentService:
             core=self._core_for(local_order_id),
             trace_id=self._core_for(local_order_id).get_order(local_order_id).trace_id,
             action="webhook.reconciled",
-            inputs={"event": event_name, "provider_order_id": provider_order_id},
+            inputs={"event": event_name, "provider_order_id": attempt.provider_order_id},
             output={"order_id": local_order_id, "status": updated_attempt.status},
             provider_ref=provider_payment_id,
             explanation=explanation,

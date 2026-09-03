@@ -207,7 +207,7 @@ export function PolicyRules() {
           <div className="order-1 lg:order-2">
             <Eyebrow label="05 — POLICY ENGINE" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              Seven rules between intent and money
+              The gauntlet between intent and money
             </h2>
             <p className="body-copy mt-6">
               Before any order exists, the candidate cart crosses the deterministic

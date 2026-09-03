@@ -17,13 +17,11 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { formatPaise, formatTimestamp } from "@/lib/formatters";
-import { openRazorpayCheckout } from "@/lib/razorpay";
 import {
   ApiError,
   getConsoleCatalog,
   getConsolePolicy,
   getConsoleTransactionDetail,
-  getStore,
   consoleSellerRespond,
   consoleCreateOrder,
   consoleRequestConsent,
@@ -69,7 +67,6 @@ function uid(prefix = "msg"): string {
 }
 
 const DEMO_MODE = process.env.NEXT_PUBLIC_AGENT_KEY === "sellable_demo_key_001";
-const RAZORPAY_KEY = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "";
 const PAYMENT_TERMINAL = ["PAID", "FULFILLED", "PAYMENT_FAILED", "ABORTED", "REFUNDED"];
 
 function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
@@ -251,7 +248,6 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
-  const [storeName, setStoreName] = useState<string | null>(null);
   const [catalogEmpty, setCatalogEmpty] = useState<boolean | null>(null);
 
   const sessionMessageRef = useRef<string>("");
@@ -291,9 +287,6 @@ export default function ChatPage() {
         setCategories(p.allowed_categories.length > 0 ? p.allowed_categories : ["accessories", "gifting", "snacks"]);
       })
       .catch(() => {});
-    getStore()
-      .then((s) => setStoreName(s.name))
-      .catch(() => setStoreName(null));
     getConsoleCatalog()
       .then((items) => setCatalogEmpty(items.length === 0))
       .catch(() => setCatalogEmpty(null));
@@ -525,44 +518,42 @@ export default function ChatPage() {
     try {
       const attempt = await consoleStartPayment(order.order_id, consent.consent_id);
       setPayment(attempt);
-      let opened = false;
-      if (RAZORPAY_KEY) {
-        opened = await openRazorpayCheckout({
-          key: RAZORPAY_KEY,
-          amountPaise: order.amount_paise,
-          orderId: attempt.provider_order_id,
-          name: storeName || "SELLABLE",
-          description: `Order ${order.order_id}`,
-          onSuccess: () => undefined,
-        });
-      }
-      if (!opened) {
+      // The backend returns a hosted Razorpay Payment Link — the browser never
+      // holds payment credentials and can never mark the order PAID itself.
+      if (attempt.payment_url) {
+        window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
         setMessages((prev) => [
           ...prev,
           {
             id: uid(),
             role: "system",
-            text: "Awaiting verified provider confirmation. The order stays in PAYMENT_PENDING until a signed Razorpay webhook settles it.",
+            text: "Razorpay test-mode payment link opened in a new tab. Complete the test payment there — this order stays PAYMENT_PENDING until the signed webhook settles it.",
             status: "info",
+          },
+        ]);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: uid(),
+            role: "system",
+            text: "Payment started, but no payment link was returned. Awaiting provider confirmation.",
+            status: "warning",
           },
         ]);
       }
       pollOrder(order.order_id);
-    } catch {
+    } catch (err) {
+      const detail = err instanceof ApiError ? err.detail : "Razorpay test-mode credentials or connectivity may be unavailable.";
       setMessages((prev) => [
         ...prev,
-        {
-          id: uid(),
-          role: "system",
-          text: "Payment could not be started. Razorpay test-mode credentials or connectivity may be unavailable in this environment.",
-          status: "error",
-        },
+        { id: uid(), role: "system", text: `Payment could not be started: ${detail}`, status: "error" },
       ]);
       setPhase("consent");
     } finally {
       setBusy(false);
     }
-  }, [order, consent, busy, pollOrder, storeName]);
+  }, [order, consent, busy, pollOrder]);
 
   const handleRetry = useCallback(async () => {
     if (!order || busy) return;
@@ -571,18 +562,18 @@ export default function ChatPage() {
     try {
       const attempt = await consoleRetryPayment(order.order_id);
       setPayment(attempt);
-      let opened = false;
-      if (RAZORPAY_KEY) {
-        opened = await openRazorpayCheckout({
-          key: RAZORPAY_KEY,
-          amountPaise: order.amount_paise,
-          orderId: attempt.provider_order_id,
-          name: storeName || "SELLABLE",
-          description: `Order ${order.order_id} (retry)`,
-          onSuccess: () => undefined,
-        });
-      }
-      if (!opened) {
+      if (attempt.payment_url) {
+        window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: uid(),
+            role: "system",
+            text: "A single bounded retry was started — a fresh payment link is open in a new tab. The order is again awaiting a verified provider event.",
+            status: "info",
+          },
+        ]);
+      } else {
         setMessages((prev) => [
           ...prev,
           {
@@ -599,7 +590,7 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [order, busy, pollOrder, storeName]);
+  }, [order, busy, pollOrder]);
 
   const handleSimulate = useCallback(
     async (kind: "capture" | "failure") => {
@@ -982,6 +973,16 @@ export default function ChatPage() {
                   <div className="mt-3 border-t border-[var(--bb-line-soft)] pt-3 font-[var(--font-sans)] text-[0.7rem] text-[var(--bb-grey-3)] leading-relaxed">
                     Awaiting verified provider confirmation. The order will not be marked PAID from the browser — only a signature-verified webhook settles it.
                   </div>
+                  {payment.payment_url && (
+                    <a
+                      href={payment.payment_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-3 inline-flex items-center justify-center w-full h-[36px] border border-[var(--bb-orange)]/50 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-colors"
+                    >
+                      REOPEN PAYMENT LINK ↗
+                    </a>
+                  )}
                 </div>
 
                 {DEMO_MODE && (

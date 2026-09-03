@@ -43,6 +43,21 @@ class FakeRazorpayOrders:
         }
 
 
+class FakeRazorpayPaymentLinks:
+    def create(self, data: dict[str, object]) -> dict[str, object]:
+        assert data["currency"] == "INR"
+        return {
+            "id": "plink_test_0001",
+            "short_url": "https://rzp.io/i/testlink",
+            "amount": data["amount"],
+            "currency": "INR",
+            "status": "created",
+            # Razorpay creates an internal order for every payment link;
+            # payment.captured webhooks reference it via payment.order_id.
+            "order_id": "order_razorpay_test_01",
+        }
+
+
 class FakeRazorpayUtility:
     def verify_webhook_signature(self, body: str, signature: str, secret: str) -> bool:
         expected = hmac.new(secret.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -56,6 +71,7 @@ class FakeRazorpayUtility:
 class FakeRazorpayClient:
     def __init__(self) -> None:
         self.order = FakeRazorpayOrders()
+        self.payment_link = FakeRazorpayPaymentLinks()
         self.utility = FakeRazorpayUtility()
 
 
@@ -130,15 +146,67 @@ def captured_payload() -> dict[str, object]:
     }
 
 
+def payment_link_paid_payload(
+    reference_id: str = "ord_unknown",
+    payment_id: str = "pay_test_0001",
+) -> dict[str, object]:
+    return {
+        "event": "payment_link.paid",
+        "payload": {
+            "payment_link": {
+                "entity": {
+                    "id": "plink_test_0001",
+                    "reference_id": reference_id,
+                    "status": "paid",
+                }
+            },
+            "payment": {
+                "entity": {
+                    "id": payment_id,
+                    "amount": 69_900,
+                    "status": "captured",
+                }
+            },
+        },
+    }
+
+
+def payment_link_failed_payload(
+    reference_id: str = "ord_unknown",
+    payment_id: str = "pay_test_0001",
+) -> dict[str, object]:
+    return {
+        "event": "payment_link.failed",
+        "payload": {
+            "payment_link": {
+                "entity": {
+                    "id": "plink_test_0001",
+                    "reference_id": reference_id,
+                    "status": "failed",
+                }
+            },
+            "payment": {
+                "entity": {
+                    "id": payment_id,
+                    "amount": 69_900,
+                    "status": "failed",
+                    "error_description": "Payment declined in test mode",
+                }
+            },
+        },
+    }
+
+
 def test_verified_webhook_is_authoritative_and_idempotent(commerce_core: CommerceCore) -> None:
     order, consent = create_consented_order(commerce_core)
     payments = PaymentService(commerce_core, razorpay_adapter())
 
     started = payments.start_payment(order_id=order.order_id, consent_id=consent.consent_id)
     assert started.status is PaymentStatus.PAYMENT_PENDING
+    assert started.payment_url == "https://rzp.io/i/testlink"
     assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
 
-    body, signature = signed_webhook(captured_payload())
+    body, signature = signed_webhook(payment_link_paid_payload(reference_id=order.order_id))
     settled = payments.handle_webhook(body, signature)
     duplicate = payments.handle_webhook(body, signature)
 
@@ -185,16 +253,12 @@ def test_verified_payment_failure_is_explicit(commerce_core: CommerceCore) -> No
     order, consent = create_consented_order(commerce_core)
     payments = PaymentService(commerce_core, razorpay_adapter())
     payments.start_payment(order_id=order.order_id, consent_id=consent.consent_id)
-    failed = captured_payload()
-    failed["event"] = "payment.failed"
-    payment = failed["payload"]["payment"]["entity"]
-    assert isinstance(payment, dict)
-    payment["error_description"] = "Payment declined in test mode"
-    body, signature = signed_webhook(failed)
+    body, signature = signed_webhook(payment_link_failed_payload(reference_id=order.order_id))
 
     result = payments.handle_webhook(body, signature)
 
     assert result.status is PaymentStatus.FAILED
+    assert result.failure_reason == "Payment declined in test mode"
     assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_FAILED
 
 
@@ -204,7 +268,7 @@ def test_payment_and_webhook_endpoints_use_the_verified_service_boundary(
     order, consent = create_consented_order(commerce_core)
     service = PaymentService(commerce_core, razorpay_adapter())
     app.dependency_overrides[get_payment_service] = lambda: service
-    body, signature = signed_webhook(captured_payload())
+    body, signature = signed_webhook(payment_link_paid_payload(reference_id=order.order_id))
     try:
         with TestClient(app) as client:
             started = client.post(

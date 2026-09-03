@@ -349,7 +349,7 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
         {[
           { icon: Zap, label: "<2s", sub: "Agent response", hint: "Typical p95 latency" },
           { icon: ShieldCheck, label: "100%", sub: "Audit coverage", hint: "Every money action logged" },
-          { icon: BarChart3, label: "7", sub: "Policy rules", hint: "SKU → HITL checks" },
+          { icon: BarChart3, label: "14", sub: "Policy checks", hint: "SKU → HITL checks" },
         ].map((s) => (
           <div
             key={s.label}

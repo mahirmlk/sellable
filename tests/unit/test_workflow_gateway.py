@@ -230,17 +230,21 @@ def test_refund_requires_paid_order(commerce_core: CommerceCore, monkeypatch: py
     assert response.status_code == 400
 
 
-class _FakeOrders:
+class _FakePaymentLinks:
     def __init__(self) -> None:
         self.calls = 0
 
     def create(self, data: dict[str, object]) -> dict[str, object]:
         self.calls += 1
         return {
-            "id": f"order_retry_{self.calls}",
+            "id": f"plink_retry_{self.calls}",
+            "short_url": f"https://rzp.io/i/retry_{self.calls}",
             "amount": data["amount"],
             "currency": "INR",
             "status": "created",
+            # Razorpay creates an internal order for every payment link;
+            # payment.captured/failed webhooks reference it via order_id.
+            "order_id": f"order_test_{self.calls}",
         }
 
 
@@ -256,7 +260,7 @@ class _FakeUtility:
 
 class _FakeClient:
     def __init__(self) -> None:
-        self.order = _FakeOrders()
+        self.payment_link = _FakePaymentLinks()
         self.utility = _FakeUtility()
 
 
@@ -272,7 +276,9 @@ def _settings() -> object:
     )
 
 
-def _webhook(event: str, provider_order_id: str = "order_retry_1") -> tuple[bytes, str]:
+def _webhook(event: str, provider_order_id: str = "order_test_1") -> tuple[bytes, str]:
+    """Signature-valid payment.captured/failed payload referencing the fake
+    payment link's internal Razorpay order id."""
     payload = {
         "event": event,
         "payload": {
@@ -323,10 +329,10 @@ def test_bounded_retry_is_idempotent_and_aborts_after_limit(commerce_core: Comme
 
     retried = payments.retry_payment(order_id=order.order_id)
     assert retried.status is PaymentStatus.PAYMENT_PENDING
-    assert client.order.calls == 2
+    assert client.payment_link.calls == 2
 
     # The retried attempt fails again, then the bounded limit is reached.
-    body2, signature2 = _webhook("payment.failed", provider_order_id="order_retry_2")
+    body2, signature2 = _webhook("payment.failed", provider_order_id="order_test_2")
     payments.handle_webhook(body2, signature2)
     assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_FAILED
 
@@ -420,7 +426,7 @@ def test_webhook_amount_mismatch_does_not_settle(commerce_core: CommerceCore) ->
             "payment": {
                 "entity": {
                     "id": "pay_mismatch_1",
-                    "order_id": "order_retry_1",
+                    "order_id": "order_test_1",
                     "status": "captured",
                     "amount": 69_999,
                 }

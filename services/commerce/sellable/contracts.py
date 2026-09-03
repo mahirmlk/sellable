@@ -193,6 +193,10 @@ class PaymentAttempt(StrictModel):
     provider: str = "razorpay"
     provider_order_id: str
     provider_payment_id: str | None = None
+    # Hosted Razorpay Payment Link URL — the browser only ever receives this
+    # public link, never credentials. Settlement still happens exclusively
+    # through the signature-verified webhook.
+    payment_url: str | None = None
     status: PaymentStatus = PaymentStatus.PAYMENT_PENDING
     idempotency_key: str = Field(min_length=16, max_length=256)
     failure_reason: str | None = Field(default=None, max_length=500)
@@ -212,7 +216,12 @@ class OrderCreateRequest(StrictModel):
     message: str = Field(min_length=1, max_length=1_000)
     idempotency_key: str = Field(min_length=16, max_length=256)
     request_upsell: bool = True
-    trace_id: str | None = Field(default=None, max_length=128)
+    # Client-supplied trace ids must match the server format exactly. A free-form
+    # trace_id could collide with another merchant's trace and leak ledger
+    # events into their console; server-generated ids are uuid4 (unguessable).
+    trace_id: str | None = Field(
+        default=None, max_length=128, pattern=r"^trc_[0-9a-f]{32}$"
+    )
     requested_sku: str | None = Field(default=None, max_length=64)
     buyer_offer_paise: int | None = Field(default=None, gt=0)
 

@@ -21,15 +21,15 @@ interface Fact {
 const FACTS: Fact[] = [
   {
     index: "01",
-    value: 7,
-    label: "POLICY RULES",
-    note: "deterministic, SKU → floor → HITL",
+    value: 14,
+    label: "POLICY CHECKS",
+    note: "deterministic — grounding → floor → HITL",
   },
   {
     index: "02",
-    value: 5,
+    value: 6,
     label: "AGENT TOOLS",
-    note: "catalog · quote · negotiate · upsell · policy",
+    note: "search · get · quote · negotiate · upsell · policy",
   },
   {
     index: "03",

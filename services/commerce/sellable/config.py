@@ -137,7 +137,10 @@ class Settings:
             if h.strip()
         )
         return cls(
-            environment=os.getenv("SELLABLE_ENVIRONMENT", "development"),
+            # Fail closed: an unset SELLABLE_ENVIRONMENT means production — the
+            # development fallback (demo keys, simulation endpoints) must never
+            # activate because a deploy forgot to set the variable.
+            environment=os.getenv("SELLABLE_ENVIRONMENT", "production"),
             database_url=_resolve_database_url(raw_db_url),
             razorpay_key_id=os.getenv("RAZORPAY_KEY_ID"),
             razorpay_key_secret=os.getenv("RAZORPAY_KEY_SECRET"),

@@ -38,6 +38,10 @@ class ProviderPaymentLink(StrictModel):
     amount_paise: int
     currency: str
     status: str
+    # Razorpay creates an internal order for every payment link; carrying it
+    # lets payment.captured webhooks (which reference payment.order_id)
+    # resolve back to the local order.
+    provider_order_id: str | None = None
 
 
 class RazorpayAdapter:
@@ -87,6 +91,7 @@ class RazorpayAdapter:
             amount_paise=response["amount"],
             currency=response["currency"],
             status=response["status"],
+            provider_order_id=response.get("order_id"),
         )
 
     def verify_webhook(self, body: bytes, signature: str | None) -> None:

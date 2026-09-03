@@ -1252,7 +1252,9 @@ def console_onboarding(
         with _Session(engine) as db:
             db.add(
                 MerchantUserRecord(
-                    id=f"mu_{user.auth_user_id[:8]}",
+                    # Full auth user id: truncating to 8 chars risks a primary-key
+                    # collision between two users sharing a prefix (500 on onboarding).
+                    id=f"mu_{user.auth_user_id}",
                     merchant_id=merchant_id,
                     auth_user_id=user.auth_user_id,
                     role="owner",
