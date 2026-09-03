@@ -54,13 +54,16 @@ export function Discovery() {
       .catch(() => setState({ status: "offline", manifest: "" }));
   }, [isInView]);
 
-  // Progressive reveal of the live JSON
+  // Progressive reveal — coarse chunks so the whole animation costs ~25
+  // renders total instead of re-rendering per character.
   useEffect(() => {
     if (state.status !== "live") return;
     if (chars >= state.manifest.length) return;
+    const remaining = state.manifest.length - chars;
+    const step = Math.max(24, Math.ceil(remaining / 24));
     const t = window.setTimeout(() => {
-      setChars((c) => Math.min(c + 96, state.manifest.length));
-    }, 16);
+      setChars((c) => Math.min(c + step, state.manifest.length));
+    }, 55);
     return () => window.clearTimeout(t);
   }, [state, chars]);
 

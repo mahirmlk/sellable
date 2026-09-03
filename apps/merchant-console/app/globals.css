@@ -626,8 +626,8 @@ svg {
     radial-gradient(680px 420px at 18% 18%, rgba(255, 105, 0, 0.14) 0%, transparent 62%),
     radial-gradient(720px 520px at 82% 72%, rgba(255, 115, 0, 0.07) 0%, transparent 65%),
     radial-gradient(900px 600px at 50% -10%, rgba(255, 105, 0, 0.045) 0%, transparent 70%);
-  filter: blur(0.2px);
   animation: aurora-drift 18s ease-in-out infinite alternate;
+  will-change: transform;
 }
 .ambient-aurora-2 {
   background:
@@ -661,6 +661,8 @@ svg {
   animation: orb-drift-c 24s ease-in-out infinite alternate;
 }
 .ambient-grid {
+  position: absolute;
+  inset: -80px;
   background-image:
     linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255,255,255,0.028) 1px, transparent 1px);
@@ -668,6 +670,7 @@ svg {
   mask-image: radial-gradient(90% 85% at 50% 30%, black 45%, transparent 92%);
   opacity: 0.45;
   animation: grid-pan 28s linear infinite;
+  will-change: transform;
 }
 .ambient-scan-line {
   position: absolute;
@@ -676,6 +679,7 @@ svg {
   background: linear-gradient(90deg, transparent, rgba(255,105,0,0.9) 18%, rgba(255,105,0,0.35) 52%, transparent 90%);
   opacity: 0.18;
   animation: scan-sweep 4.2s linear infinite;
+  will-change: transform;
 }
 .ambient-grain {
   opacity: 0.055;
@@ -703,14 +707,15 @@ svg {
   animation: hero-grad-drift 14s ease-in-out infinite alternate;
 }
 .hero-video-grid {
-  position: absolute; inset: 0;
+  position: absolute; inset: -28px;
   background-image:
     linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
   background-size: 28px 28px;
   mask-image: radial-gradient(85% 70% at 50% 50%, black 55%, transparent 100%);
   opacity: 0.22;
-  animation: grid-pan 18s linear infinite;
+  animation: grid-pan-sm 6s linear infinite;
+  will-change: transform;
 }
 .hero-video-noise {
   position: absolute; inset: 0;
@@ -782,8 +787,8 @@ svg {
   100% { transform: translate3d(10px, -12px,0) scale(1.03); }
 }
 @keyframes grid-pan {
-  0% { background-position: 0 0; }
-  100% { background-position: 72px 72px; }
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(72px, 72px, 0); }
 }
 @keyframes scan-sweep {
   0% { transform: translateY(-16vh); opacity: 0; }
@@ -1065,5 +1070,25 @@ a:active:not([aria-disabled="true"]) {
   .footer-wordmark {
     font-size: clamp(3rem, 10vw, 6rem);
     bottom: -25%;
+  }
+}
+
+@keyframes grid-pan-sm {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(28px, 28px, 0); }
+}
+/* --------------------------------------------------
+   REDUCED MOTION — stop ambient layers for users who opt out
+   -------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .ambient-aurora,
+  .ambient-aurora-2,
+  .ambient-orb,
+  .ambient-grid,
+  .ambient-scan-line,
+  .hero-video-grad,
+  .hero-video-grid,
+  .ambient-grain {
+    animation: none;
   }
 }

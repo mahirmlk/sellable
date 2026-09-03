@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Real ledger actions recorded by the platform, in transaction order.
 // This is a presentation loop over the documented event schema — not a
@@ -22,22 +22,45 @@ const TONE_CLASS: Record<string, string> = {
   grey: "text-[var(--bb-grey-1)]",
 };
 
+const TYPE_TICK_MS = 45;
+const HOLD_MS = 1600;
+
 export function TraceTicker() {
   const [index, setIndex] = useState(0);
   const [chars, setChars] = useState(0);
+  const raf = useRef(0);
+  const last = useRef(0);
 
   const line = TRACE_LINES[index];
   const full = `${line.action}  ·  ${line.detail}`;
 
   useEffect(() => {
-    if (chars < full.length) {
-      const t = window.setTimeout(() => setChars((c) => c + 1), 26);
-      return () => window.clearTimeout(t);
-    }
+    // rAF-driven timing: pauses automatically when the tab is hidden,
+    // and coalesces to ~22 updates/sec instead of unbounded timers.
+    const loop = (t: number) => {
+      if (t - last.current >= TYPE_TICK_MS) {
+        last.current = t;
+        setChars((c) => {
+          if (c < full.length) return c + 1;
+          if (c === full.length) {
+            // holding; advance after hold via the timeout branch below
+            return c;
+          }
+          return c;
+        });
+      }
+      raf.current = requestAnimationFrame(loop);
+    };
+    raf.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf.current);
+  }, [full]);
+
+  useEffect(() => {
+    if (chars < full.length) return;
     const hold = window.setTimeout(() => {
       setChars(0);
       setIndex((i) => (i + 1) % TRACE_LINES.length);
-    }, 1600);
+    }, HOLD_MS);
     return () => window.clearTimeout(hold);
   }, [chars, full]);
 
@@ -46,10 +69,11 @@ export function TraceTicker() {
       <span className="text-[var(--bb-grey-4)] uppercase tracking-[0.14em] text-[0.55rem] shrink-0">
         trace
       </span>
-      <span className={`truncate ${TONE_CLASS[line.tone]}`}>
+      {/* fixed-size box: the growing text never shifts siblings */}
+      <span className={`block w-[240px] sm:w-[310px] truncate ${TONE_CLASS[line.tone]}`}>
         {full.slice(0, chars)}
-        <span className="inline-block w-[7px] h-[13px] -mb-[2px] ml-0.5 bg-[var(--bb-orange)] animate-[blink_1s_steps(1)_infinite]" />
       </span>
+      <span className="inline-block w-[7px] h-[13px] -mb-[2px] bg-[var(--bb-orange)] animate-[blink_1s_steps(1)_infinite]" />
       <span className="text-[var(--bb-grey-4)] text-[0.55rem] tabular-nums shrink-0 ml-auto">
         {String(index + 1).padStart(2, "0")}/{String(TRACE_LINES.length).padStart(2, "0")}
       </span>
