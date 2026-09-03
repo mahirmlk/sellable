@@ -5,7 +5,7 @@ import { RefreshCw, Radio, Play } from "lucide-react";
 import { ActorBadge, ActorIcon } from "@/components/dashboard/actor-badge";
 import { formatTimestamp } from "@/lib/formatters";
 import { type ActorType, type LedgerEvent } from "@/lib/types/domain";
-import { getConsoleEvents, streamConsoleEvents, runBuyerMission } from "@/lib/api";
+import { getConsoleEvents, streamConsoleEvents, consoleRunBuyerMission } from "@/lib/api";
 
 const actorFilters: { label: string; value: ActorType | "all" }[] = [
   { label: "All Actors", value: "all" },
@@ -52,10 +52,13 @@ export default function ActivityPage() {
   const [loading, setLoading] = useState(true);
   const [streamMode, setStreamMode] = useState<"live" | "polling" | "offline">("polling");
   const [runningMission, setRunningMission] = useState(false);
+  const [missionMsg, setMissionMsg] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const seenIds = useRef<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await getConsoleEvents(200);
       if (data.events) {
@@ -63,7 +66,13 @@ export default function ActivityPage() {
         for (const e of mapped) seenIds.current.add(e.eventId);
         setEvents(mapped);
       }
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      setLoadError(
+        err instanceof TypeError
+          ? "Backend unreachable — the activity feed could not be loaded."
+          : "Activity feed could not be loaded from the backend."
+      );
+    } finally { setLoading(false); }
   }, []);
 
   // Live SSE with graceful fallback to polling.
@@ -110,8 +119,9 @@ export default function ActivityPage() {
   const handleRunMission = useCallback(async () => {
     if (runningMission) return;
     setRunningMission(true);
+    setMissionMsg(null);
     try {
-      await runBuyerMission({
+      await consoleRunBuyerMission({
         buyer_agent_id: "buyer_demo_01",
         message: "I need coffee for my desk",
         budget_ceiling_paise: 200_000,
@@ -120,9 +130,11 @@ export default function ActivityPage() {
         expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
         request_upsell: true,
       });
+      setMissionMsg({ kind: "success", text: "Buyer mission completed against your store — events are streaming into the feed below." });
       fetchData();
-    } catch {
-      // Backend is unreachable or rate-limited; the feed will show nothing new.
+    } catch (err) {
+      const detail = err instanceof Error && err.message ? err.message : "unknown error";
+      setMissionMsg({ kind: "error", text: `Buyer mission failed: ${detail}` });
     } finally {
       setRunningMission(false);
     }
@@ -172,6 +184,19 @@ export default function ActivityPage() {
         </div>
         <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{filtered.length} events</span>
       </div>
+
+      {missionMsg && (
+        <div className={`px-4 py-3 border flex items-start gap-2 ${missionMsg.kind === "error" ? "border-red-400/30 bg-red-400/5" : "border-green-400/30 bg-green-400/5"}`}>
+          <span className={`font-[var(--font-mono)] text-[0.62rem] leading-relaxed ${missionMsg.kind === "error" ? "text-red-400" : "text-green-400"}`}>
+            {missionMsg.text}
+          </span>
+        </div>
+      )}
+      {loadError && (
+        <div className="px-4 py-3 border border-amber-400/30 bg-amber-400/5 flex items-start gap-2">
+          <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{loadError}</span>
+        </div>
+      )}
 
       <div className="border border-[var(--bb-line)] overflow-hidden stagger-child">
         {filtered.length === 0 ? (

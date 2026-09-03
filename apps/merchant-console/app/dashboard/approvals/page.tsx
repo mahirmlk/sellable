@@ -21,13 +21,22 @@ function mapApproval(a: ConsoleApproval) {
 export default function ApprovalsPage() {
   const [approvals, setApprovals] = useState<Array<{ orderId: string; buyerId: string; amountPaise: number; reason: string; requestedAt: string; status: string }>>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await getConsoleApprovals();
       setApprovals(data.map(mapApproval));
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      setLoadError(
+        err instanceof TypeError
+          ? "Backend unreachable — approvals could not be loaded."
+          : "Approvals could not be loaded from the backend."
+      );
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -36,20 +45,30 @@ export default function ApprovalsPage() {
   }, [fetchData]);
 
   const handleApprove = async (orderId: string) => {
+    setActionError(null);
     try {
       await approveConsoleOrder(orderId);
       setApprovals((prev) => prev.map((a) => a.orderId === orderId ? { ...a, status: "APPROVED" } : a));
-    } catch {
-      // Leave the approval pending so the merchant can retry.
+    } catch (err) {
+      setActionError(
+        err instanceof TypeError
+          ? "Backend unreachable — the approval was not recorded. Try again."
+          : "The backend rejected the approval. Refresh and try again."
+      );
     }
   };
 
   const handleReject = async (orderId: string) => {
+    setActionError(null);
     try {
       await rejectConsoleOrder(orderId);
       setApprovals((prev) => prev.map((a) => a.orderId === orderId ? { ...a, status: "REJECTED" } : a));
-    } catch {
-      // Leave the approval pending so the merchant can retry.
+    } catch (err) {
+      setActionError(
+        err instanceof TypeError
+          ? "Backend unreachable — the rejection was not recorded. Try again."
+          : "The backend rejected the rejection request. Refresh and try again."
+      );
     }
   };
 
@@ -67,6 +86,17 @@ export default function ApprovalsPage() {
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
         </button>
       </div>
+
+      {loadError && (
+        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-3 flex items-start gap-2">
+          <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{loadError}</span>
+        </div>
+      )}
+      {actionError && (
+        <div className="border border-red-400/30 bg-red-400/5 px-5 py-3 flex items-start gap-2">
+          <span className="font-[var(--font-mono)] text-[0.62rem] text-red-400">{actionError}</span>
+        </div>
+      )}
 
       {pending.length === 0 ? (
         <div className="border border-[var(--bb-line)] px-5 py-12 text-center">

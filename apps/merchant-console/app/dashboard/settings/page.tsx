@@ -176,6 +176,7 @@ export default function SettingsPage() {
             {policyFields.map((field, i) => {
               const value = current[field.key];
               const isEditing = field.key in editing;
+              const unit = field.suffix ?? (field.isPaise ? "₹" : "");
               return (
                 <div key={field.key} className={`px-5 py-4 flex items-center justify-between ${i < policyFields.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
                   <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)]">{field.label}</span>
@@ -197,7 +198,7 @@ export default function SettingsPage() {
                         style={{ borderColor: isEditing ? "var(--bb-orange)" : "var(--bb-line)", color: isEditing ? "var(--bb-orange)" : "var(--bb-white)" }}
                       />
                     )}
-                    <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-4)] w-[20px]">₹</span>
+                    <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-4)] w-[20px]">{unit}</span>
                   </div>
                 </div>
               );

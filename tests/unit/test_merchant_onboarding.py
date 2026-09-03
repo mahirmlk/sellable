@@ -66,14 +66,17 @@ DEMO_H = {"X-Agent-Key": "sellable_demo_key_001"}
 
 
 def _intent(budget: int = 500000) -> IntentMandate:
+    from datetime import datetime, timedelta, timezone as tz
+
+    now = datetime.now(tz.utc)
     return IntentMandate(
         mandate_id=f"im_{uuid4().hex[:10]}",
         buyer_agent_id="test_buyer",
         budget_ceiling_paise=budget,
         allowed_categories=["accessories", "gifting", "snacks"],
         purpose="test mission",
-        created_at="2026-09-02T00:00:00Z",
-        expires_at="2026-09-02T23:59:59Z",
+        created_at=now.isoformat(),
+        expires_at=(now + timedelta(hours=1)).isoformat(),
     )
 
 
@@ -308,3 +311,71 @@ def test_onboarding_requires_authentication(isolated_env):
     # credentials the request must fail.
     r = client.post("/console/onboarding", json={"store_name": "Nope"})
     assert r.status_code in (401, 403)
+
+
+def test_console_buyer_run_scopes_to_merchant(isolated_env):
+    """The console buyer-mission endpoint runs against the caller's own store."""
+    from datetime import datetime, timedelta, timezone as tz
+    from uuid import uuid4 as _uuid4
+
+    client, engine, registry = isolated_env
+    user = AuthenticatedUser(auth_user_id=f"usr_{uuid4().hex[:10]}")
+    _override_auth(
+        main_module.app,
+        MerchantSession(merchant_id="mrc_none", auth_user_id=user.auth_user_id, role="owner"),
+        user,
+    )
+    try:
+        store = client.post("/console/onboarding", json={"store_name": "Buyer Run Store"}).json()
+    finally:
+        _clear_overrides(main_module.app)
+    merchant_id = store["merchant_id"]
+
+    # Give the merchant one affordable product
+    from sellable.repositories import CatalogRepository
+    from sellable.contracts import Product
+
+    CatalogRepository(engine=engine).add(
+        Product(
+            id=f"{merchant_id}:BUY-RUN-01",
+            merchant_id=merchant_id,
+            sku="BUY-RUN-01",
+            title="Buyer Run Widget",
+            description="A widget for the buyer mission",
+            price_paise=99000,
+            floor_paise=89000,
+            stock=5,
+            category="accessories",
+            attributes={},
+        )
+    )
+    registry.invalidate(merchant_id)
+
+    session = MerchantSession(merchant_id=merchant_id, auth_user_id=user.auth_user_id, role="owner")
+    _override_auth(main_module.app, session, user)
+    try:
+        now = datetime.now(tz.utc)
+        r = client.post(
+            "/console/agent/buyer/run",
+            headers=DEMO_H,
+            json={
+                "buyer_agent_id": "buyer_demo_01",
+                "message": "I need a Buyer Run Widget",
+                "budget_ceiling_paise": 200000,
+                "allowed_categories": ["accessories"],
+                "purpose": "buyer run scope test",
+                "expires_at": (now + timedelta(minutes=10)).isoformat(),
+                "request_upsell": False,
+            },
+        )
+        assert r.status_code == 200, r.text
+        result = r.json()
+        # The buyer ran against the merchant's own catalog and produced a quote
+        assert result["action"] in ("READY_FOR_CONSENT", "NEEDS_HUMAN_APPROVAL")
+        seller = result["seller_decision"]
+        assert seller is not None
+        assert seller["selected_product"]["sku"] == "BUY-RUN-01"
+        # The order belongs to the merchant, not the demo store
+        assert seller["cart"] is not None
+    finally:
+        _clear_overrides(main_module.app)

@@ -19,6 +19,8 @@ import {
 import { formatPaise, formatTimestamp } from "@/lib/formatters";
 import { openRazorpayCheckout } from "@/lib/razorpay";
 import {
+  ApiError,
+  getConsoleCatalog,
   getConsolePolicy,
   getConsoleTransactionDetail,
   getStore,
@@ -79,22 +81,25 @@ function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-function CartCard({ cart, highlight }: { cart: CartPayload; highlight?: boolean }) {
+function CartCard({ cart }: { cart: CartPayload }) {
   return (
-    <div className={`border ${highlight ? "border-[var(--bb-orange)]/40 bg-[var(--bb-orange-wash)]" : "border-[var(--bb-line)]"} p-4`}>
-      <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-4)] mb-3">
-        {highlight ? "CANDIDATE CART" : "CART"}
+    <div className="border border-[var(--bb-line)] p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)]">Cart</span>
+        <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase text-[var(--bb-grey-4)]">
+          ROUND {cart.negotiation_round}
+        </span>
       </div>
       <div className="space-y-2 mb-3">
         {cart.items.map((item) => (
           <div key={item.sku} className="flex items-center justify-between gap-3">
             <div>
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)]">{item.sku}</div>
-              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">
+              <div className="font-[var(--font-mono)] text-[0.72rem] text-[var(--bb-white)]">{item.sku}</div>
+              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] tabular-nums">
                 {item.quantity} × {formatPaise(item.offered_price_paise)}
               </div>
             </div>
-            <div className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-white)]">
+            <div className="font-[var(--font-mono)] text-[0.78rem] text-[var(--bb-grey-1)] tabular-nums">
               {formatPaise(item.line_total_paise ?? item.quantity * item.offered_price_paise)}
             </div>
           </div>
@@ -102,50 +107,45 @@ function CartCard({ cart, highlight }: { cart: CartPayload; highlight?: boolean 
       </div>
       {cart.upsell_offered && (
         <div className="border-l-2 border-[var(--bb-orange)] pl-3 py-1 mb-3">
-          <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-orange)] mb-1">UPSELL INCLUDED</div>
+          <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] mb-1">UPSELL</div>
           {cart.upsell_rationale && (
-            <div className="font-[var(--font-sans)] text-[0.7rem] text-[var(--bb-grey-2)] leading-relaxed">{cart.upsell_rationale}</div>
+            <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-2)] leading-relaxed">{cart.upsell_rationale}</div>
           )}
         </div>
       )}
       {cart.discount_paise > 0 && (
-        <div className="flex items-center justify-between py-1 border-t border-[var(--bb-line-soft)]">
+        <div className="flex items-center justify-between py-1.5 border-t border-[var(--bb-line-soft)]">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Discount</span>
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-green-400">−{formatPaise(cart.discount_paise)}</span>
+          <span className="font-[var(--font-mono)] text-[0.7rem] text-green-400 tabular-nums">−{formatPaise(cart.discount_paise)}</span>
         </div>
       )}
-      <div className="flex items-center justify-between py-1 border-t border-[var(--bb-line-soft)]">
-        <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Negotiation round</span>
-        <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-2)]">{cart.negotiation_round}</span>
-      </div>
-      <div className="flex items-center justify-between pt-2 mt-1 border-t border-[var(--bb-line)]">
-        <span className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)]">FINAL</span>
-        <span className="font-[var(--font-mono)] text-[1.05rem] text-[var(--bb-white)]">{formatPaise(cart.total_paise)}</span>
+      <div className="flex items-center justify-between pt-2.5 mt-1 border-t border-[var(--bb-line)]">
+        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)]">Total</span>
+        <span className="font-[var(--font-mono)] text-[1.05rem] text-[var(--bb-white)] tabular-nums">{formatPaise(cart.total_paise)}</span>
       </div>
     </div>
   );
 }
 
-function PolicyCard({ decision, budgetPaise }: { decision: PolicyDecisionPayload; budgetPaise?: number | null }) {
+function PolicyCard({ decision }: { decision: PolicyDecisionPayload }) {
   const allowed = decision.verdict === "ALLOW";
   const hitl = decision.verdict === "NEEDS_HUMAN_APPROVAL";
   return (
-    <div className={`border p-4 ${allowed ? "border-green-400/30 bg-green-400/5" : hitl ? "border-amber-400/30 bg-amber-400/5" : "border-red-400/30 bg-red-400/5"}`}>
-      <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-4)] mb-2">POLICY DECISION</div>
-      <div className={`font-[var(--font-mono)] text-[0.85rem] tracking-[0.12em] mb-2 ${allowed ? "text-green-400" : hitl ? "text-amber-400" : "text-red-400"}`}>
-        {allowed ? "✓ ALLOW" : hitl ? "NEEDS HUMAN APPROVAL" : `✕ DENIED`}
+    <div className="border border-[var(--bb-line)] p-4">
+      <div className="flex items-center justify-between mb-2.5">
+        <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)]">Policy Decision</span>
+        <span className={`font-[var(--font-mono)] text-[0.62rem] tracking-[0.1em] ${allowed ? "text-green-400" : hitl ? "text-amber-400" : "text-red-400"}`}>
+          {allowed ? "✓ ALLOW" : hitl ? "HITL REQUIRED" : "✕ DENIED"}
+        </span>
       </div>
       {decision.reason_code && (
-        <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)] mb-1">Reason: {decision.reason_code}</div>
+        <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-1)] mb-1">{decision.reason_code}</div>
       )}
-      <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-2)] leading-relaxed mb-3">{decision.reasoning_summary}</div>
-      {!allowed && !hitl && budgetPaise != null && (
-        <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] mb-2">RAZORPAY: NOT ATTEMPTED</div>
-      )}
+      <div className="font-[var(--font-sans)] text-[0.74rem] text-[var(--bb-grey-2)] leading-relaxed mb-3">{decision.reasoning_summary}</div>
       {decision.policy_refs.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 border-t border-[var(--bb-line-soft)] pt-3">
+        <div className="flex flex-wrap gap-1.5">
           {decision.policy_refs.map((ref) => (
-            <span key={ref} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]">{ref}</span>
+            <span key={ref} className="font-[var(--font-mono)] text-[0.46rem] tracking-[0.06em] px-1.5 py-0.5 border border-[var(--bb-line-soft)] text-[var(--bb-grey-3)]">{ref}</span>
           ))}
         </div>
       )}
@@ -252,6 +252,7 @@ export default function ChatPage() {
   const [copied, setCopied] = useState(false);
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
   const [storeName, setStoreName] = useState<string | null>(null);
+  const [catalogEmpty, setCatalogEmpty] = useState<boolean | null>(null);
 
   const sessionMessageRef = useRef<string>("");
   const lastTraceIdRef = useRef<string | null>(null);
@@ -293,6 +294,9 @@ export default function ChatPage() {
     getStore()
       .then((s) => setStoreName(s.name))
       .catch(() => setStoreName(null));
+    getConsoleCatalog()
+      .then((items) => setCatalogEmpty(items.length === 0))
+      .catch(() => setCatalogEmpty(null));
     return () => {
       abortPollRef.current = true;
     };
@@ -387,20 +391,32 @@ export default function ChatPage() {
         lastTraceIdRef.current = result.trace_id;
         setDecision(result);
         setUpsellOn(opts.upsell);
-        if (opts.isFollowUp) {
+        // Always render the agent's reply — a first-message NO_MATCH must
+        // never disappear silently.
+        setMessages((prev) => [
+          ...prev,
+          { id: uid(), role: "seller", text: result.response_message, toolCalls: result.tool_calls },
+        ]);
+        if (result.action === "NO_MATCH") {
+          const noResults =
+            "Nothing in your catalog matched that request. Add products in the Catalog page, then ask again — the agent only sells what you actually stock.";
           setMessages((prev) => [
             ...prev,
-            { id: uid(), role: "seller", text: result.response_message, toolCalls: result.tool_calls },
+            { id: uid(), role: "system", text: noResults, status: "warning" },
           ]);
+          setPhase("idle");
+        } else {
+          setPhase("quote");
         }
-        setPhase(result.action === "NO_MATCH" ? "idle" : "quote");
-      } catch {
+      } catch (err) {
+        const detail =
+          err instanceof ApiError ? err.detail : "The Seller Agent is unavailable right now.";
         setMessages((prev) => [
           ...prev,
           {
             id: uid(),
             role: "system",
-            text: "The Seller Agent is unavailable. New AI interactions are temporarily unavailable; existing transactions remain visible.",
+            text: `Seller Agent request failed: ${detail}`,
             status: "error",
           },
         ]);
@@ -651,31 +667,49 @@ export default function ChatPage() {
         <div className="flex flex-col min-h-0">
           <div ref={listRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
             {messages.length === 0 && phase === "idle" && (
-              <div className="max-w-[480px] mx-auto mt-[8vh]">
+              <div className="max-w-[480px] mx-auto mt-[7vh]">
                 <div className="flex items-center gap-2 mb-4">
-                  <Sparkles size={16} className="text-[var(--bb-orange)]" />
-                  <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-orange)]">Seller Agent</span>
+                  <Sparkles size={15} className="text-[var(--bb-orange)]" />
+                  <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.18em] uppercase text-[var(--bb-orange)]">Seller Agent</span>
                 </div>
-                <div className="font-[var(--font-sans)] text-[1.15rem] text-[var(--bb-white)] mb-2 leading-snug">Describe what you need.</div>
-                <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-3)] leading-relaxed mb-6">
-                  I search your catalog, quote a policy-valid cart, and negotiate within your
-                  guardrails. Every step lands in the ledger.
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  {[
-                    "I need a coffee setup for my desk under ₹2,000",
-                    "A protective travel case for my headphones",
-                    "A workday gift box under ₹2,500",
-                  ].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => handleSend(s)}
-                      className="self-start text-left px-3.5 py-2 border border-[var(--bb-line-soft)] text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors cursor-pointer"
+                {catalogEmpty ? (
+                  <>
+                    <div className="font-[var(--font-sans)] text-[1.15rem] text-[var(--bb-white)] mb-2 leading-snug">Your catalog is empty.</div>
+                    <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-3)] leading-relaxed mb-5">
+                      The agent only sells what you actually stock. Add a few products first —
+                      then come back and describe what a buyer might ask for.
+                    </div>
+                    <Link
+                      href="/dashboard/catalog"
+                      className="inline-flex items-center gap-2 h-[34px] px-4 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
                     >
-                      <span className="font-[var(--font-mono)] text-[0.65rem]">{s}</span>
-                    </button>
-                  ))}
-                </div>
+                      Add products <ArrowRight size={12} />
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-[var(--font-sans)] text-[1.15rem] text-[var(--bb-white)] mb-2 leading-snug">Describe what you need.</div>
+                    <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-3)] leading-relaxed mb-6">
+                      I search your catalog, quote a policy-valid cart, and negotiate within your
+                      guardrails. Every step lands in the ledger.
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {[
+                        "I need a coffee setup for my desk under ₹2,000",
+                        "A protective travel case for my headphones",
+                        "A workday gift box under ₹2,500",
+                      ].map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => handleSend(s)}
+                          className="self-start text-left px-3.5 py-2 border border-[var(--bb-line-soft)] text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors cursor-pointer"
+                        >
+                          <span className="font-[var(--font-mono)] text-[0.65rem]">{s}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -690,8 +724,8 @@ export default function ChatPage() {
               if (msg.role === "user") {
                 return (
                   <div key={msg.id} className="flex justify-end">
-                    <div className="max-w-[70%] px-4 py-2.5 bg-[var(--bb-orange)]/[0.08] border-l-2 border-[var(--bb-orange)]">
-                      <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-white)] leading-relaxed">{msg.text}</div>
+                    <div className="max-w-[70%] px-3.5 py-2 bg-[var(--bb-panel)]">
+                      <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-1)] leading-relaxed">{msg.text}</div>
                     </div>
                   </div>
                 );
@@ -810,8 +844,8 @@ export default function ChatPage() {
 
             {phase === "quote" && decision && cart && (
               <>
-                <CartCard cart={cart} highlight={decision.action === "COUNTERED"} />
-                {decision.policy_decision && <PolicyCard decision={decision.policy_decision} budgetPaise={intent?.budget_ceiling_paise} />}
+                <CartCard cart={cart} />
+                {decision.policy_decision && <PolicyCard decision={decision.policy_decision} />}
 
                 {isDenied ? (
                   <div className="border border-red-400/30 bg-red-400/5 p-4">

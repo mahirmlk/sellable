@@ -168,16 +168,27 @@ export default function ReplayPage() {
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [txEvents, setTxEvents] = useState<LedgerEvent[]>([]);
   const [tx, setTx] = useState<ConsoleTransactionDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     getConsoleTransactionDetail(id)
       .then((data) => {
         setTx(data);
+        setLoadError(null);
+        setLoaded(true);
         if (data.events && data.events.length > 0) {
           setTxEvents(mapEvents(data.events));
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        setLoaded(true);
+        setLoadError(
+          err instanceof TypeError
+            ? "Backend unreachable — the replay could not be loaded."
+            : "The replay could not be loaded from the backend."
+        );
+      });
   }, [id]);
 
   const toggleStep = (key: string) => {
@@ -261,9 +272,14 @@ export default function ReplayPage() {
             REPLAY TIMELINE — {stages.length + (unassigned.length > 0 ? 1 : 0)} STAGES
           </div>
         </div>
-        {stages.length === 0 && (
+        {loadError && (
+          <div className="px-5 py-4 border-b border-amber-400/30 bg-amber-400/5">
+            <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{loadError}</span>
+          </div>
+        )}
+        {stages.length === 0 && !loadError && (
           <div className="px-5 py-12 text-center font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">
-            No ledger events recorded for this transaction.
+            {loaded ? "No ledger events recorded for this transaction." : "Loading replay…"}
           </div>
         )}
         {stages.map(({ stage, events }, i) => {
@@ -302,7 +318,7 @@ export default function ReplayPage() {
               </button>
               <div
                 className={`overflow-hidden transition-all duration-300 ease-[var(--ease-out)] ${
-                  isExpanded ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"
+                  isExpanded ? "max-h-[85vh] opacity-100" : "max-h-0 opacity-0"
                 }`}
               >
                 {events.map((event) => (
@@ -330,7 +346,7 @@ export default function ReplayPage() {
               <span className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)]">Additional ledger events</span>
               <span className="ml-auto font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">{unassigned.length} events</span>
             </button>
-            <div className={`overflow-hidden transition-all duration-300 ease-[var(--ease-out)] ${expandedSteps.has("unassigned") ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"}`}>
+            <div className={`overflow-hidden transition-all duration-300 ease-[var(--ease-out)] ${expandedSteps.has("unassigned") ? "max-h-[85vh] opacity-100" : "max-h-0 opacity-0"}`}>
               {unassigned.map((event) => (
                 <div key={event.eventId} className="px-5 pb-1">
                   <EventDetail event={event} />

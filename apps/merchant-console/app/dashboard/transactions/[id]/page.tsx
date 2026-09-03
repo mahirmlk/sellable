@@ -7,7 +7,7 @@ import { ArrowLeft, RotateCcw, RefreshCw } from "lucide-react";
 import { StatusBadge, PolicyBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatPaise, formatTimestamp } from "@/lib/formatters";
-import { getConsoleTransactionDetail, refundOrder, type ConsoleTransactionDetail, type LedgerEvent as ApiLedgerEvent } from "@/lib/api";
+import { getConsoleTransactionDetail, refundOrder, ApiError, type ConsoleTransactionDetail, type LedgerEvent as ApiLedgerEvent } from "@/lib/api";
 import { type LedgerEvent, type Transaction, type TransactionStatus } from "@/lib/types/domain";
 
 function mapTxDetail(tx: ConsoleTransactionDetail): Transaction {
@@ -92,16 +92,32 @@ export default function TransactionDetailPage() {
   const [tx, setTx] = useState<Transaction | null>(null);
   const [txEvents, setTxEvents] = useState<LedgerEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refunding, setRefunding] = useState(false);
   const [refundMsg, setRefundMsg] = useState<"success" | "error" | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
+    setNotFound(false);
     try {
       const data = await getConsoleTransactionDetail(id);
       setTx(mapTxDetail(data));
       setTxEvents(mapEvents(data.events));
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      setTx(null);
+      setTxEvents([]);
+      if (err instanceof ApiError && err.isNotFound) {
+        setNotFound(true);
+      } else {
+        setLoadError(
+          err instanceof TypeError
+            ? "Backend unreachable — the transaction could not be loaded."
+            : "The transaction could not be loaded from the backend."
+        );
+      }
+    } finally { setLoading(false); }
   }, [id]);
 
   useEffect(() => {
@@ -132,18 +148,33 @@ export default function TransactionDetailPage() {
     );
   }
 
-  if (!tx) {
+  if (notFound) {
     return (
       <div className="p-6">
         <Link href="/dashboard/transactions" className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors mb-6">
           <ArrowLeft size={14} /> BACK TO TRANSACTIONS
         </Link>
         <div className="border border-[var(--bb-line)] px-5 py-12 text-center font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-3)]">
-          Transaction not found.
+          Transaction not found — it may belong to another store.
         </div>
       </div>
     );
   }
+
+  if (loadError) {
+    return (
+      <div className="p-6">
+        <Link href="/dashboard/transactions" className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors mb-6">
+          <ArrowLeft size={14} /> BACK TO TRANSACTIONS
+        </Link>
+        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-4 flex items-start gap-2">
+          <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{loadError}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!tx) return null;
 
   return (
     <div className="p-6 space-y-6">

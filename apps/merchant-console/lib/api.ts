@@ -587,21 +587,6 @@ export async function simulatePaymentFailure(orderId: string): Promise<PaymentAt
   });
 }
 
-export async function runBuyerMission(body: {
-  buyer_agent_id: string;
-  message: string;
-  budget_ceiling_paise: number;
-  allowed_categories: string[];
-  purpose: string;
-  expires_at: string;
-  request_upsell: boolean;
-}): Promise<BuyerResultPayload> {
-  return apiFetch<BuyerResultPayload>("/agent/buyer/run", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
 export async function consoleSellerRespond(
   body: SellerRequestPayload
 ): Promise<SellerDecisionPayload> {
@@ -643,5 +628,21 @@ export async function consoleStartPayment(
 export async function consoleRetryPayment(orderId: string): Promise<PaymentAttemptPayload> {
   return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/payment/retry`, {
     method: "POST",
+  });
+}
+
+/** Run the reference AI buyer against the merchant's OWN store (merchant JWT). */
+export async function consoleRunBuyerMission(body: {
+  buyer_agent_id: string;
+  message: string;
+  budget_ceiling_paise: number;
+  allowed_categories: string[];
+  purpose: string;
+  expires_at: string;
+  request_upsell: boolean;
+}): Promise<BuyerResultPayload> {
+  return apiFetch<BuyerResultPayload>("/console/agent/buyer/run", {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }

@@ -71,14 +71,22 @@ function mapTx(tx: ConsoleTransaction): Transaction {
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await getConsoleTransactions();
       setTransactions(data.map(mapTx));
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      setLoadError(
+        err instanceof TypeError
+          ? "Backend unreachable — transactions could not be loaded."
+          : "Transactions could not be loaded from the backend."
+      );
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -108,6 +116,12 @@ export default function TransactionsPage() {
           </button>
         ))}
       </div>
+
+      {loadError && (
+        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-3 flex items-start gap-2">
+          <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{loadError}</span>
+        </div>
+      )}
 
       <div className="border border-[var(--bb-line)] overflow-hidden">
         <div className="hidden lg:grid grid-cols-[140px_100px_100px_100px_100px_100px_100px_120px_80px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">

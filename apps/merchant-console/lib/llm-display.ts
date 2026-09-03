@@ -7,6 +7,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   mock: "Mock",
   deterministic: "Mock",
   opencode: "OpenCode Zen",
+  "opencode-go": "OpenCode Go",
   openrouter: "OpenRouter",
   openai: "OpenAI",
   anthropic: "Anthropic",

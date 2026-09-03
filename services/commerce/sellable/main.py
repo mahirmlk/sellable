@@ -968,20 +968,51 @@ def console_insights(
     revenue = sum(o.amount_paise for o in paid)
 
     events = ledger.all_events(limit=1000, trace_ids=_merchant_trace_ids(core))
-    upsell_offers = sum(1 for e in events if e.action == "upsell.suggest")
+
+    # Ledger-derived growth metrics. The seller agent records "upsell.offered"
+    # (no "accepted" flag) and "negotiation.countered" (no outcome field), so
+    # outcomes are derived from what actually happened on the same trace.
+    order_items_by_trace: dict[str, set[str]] = {}
+    order_traces: set[str] = set()
+    for e in events:
+        if e.action == "order.created":
+            order_traces.add(e.trace_id)
+            skus = {
+                str(item.get("sku"))
+                for item in (e.output_json or {}).get("items", [])
+                if isinstance(item, dict) and item.get("sku")
+            }
+            order_items_by_trace.setdefault(e.trace_id, set()).update(skus)
+
+    upsell_offers = [e for e in events if e.action in ("upsell.offered", "upsell.suggest")]
     upsell_accepted = sum(
-        1 for e in events if e.action == "upsell.suggest" and e.output_json.get("accepted")
+        1
+        for e in upsell_offers
+        if str((e.output_json or {}).get("upsell_sku") or "")
+        in order_items_by_trace.get(e.trace_id, set())
     )
-    negotiations = sum(1 for e in events if "negotiat" in e.action)
-    negotiated_accepted = sum(
-        1 for e in events if "negotiat" in e.action and e.output_json.get("accepted")
-    )
+
+    negotiation_events = [e for e in events if "negotiat" in e.action]
+    negotiations = len(negotiation_events)
+    negotiation_accepted = sum(1 for e in negotiation_events if e.trace_id in order_traces)
+    rounds_by_trace: dict[str, int] = {}
+    for e in negotiation_events:
+        rounds_by_trace[e.trace_id] = rounds_by_trace.get(e.trace_id, 0) + 1
+    countered = sum(max(0, rounds - 1) for rounds in rounds_by_trace.values())
+    walked_away = negotiations - negotiation_accepted
+
+    accepted_upsell_traces = {
+        e.trace_id
+        for e in upsell_offers
+        if str((e.output_json or {}).get("upsell_sku") or "")
+        in order_items_by_trace.get(e.trace_id, set())
+    }
 
     avg_order = revenue // len(paid) if paid else 0
     upsell_rev = sum(
         o.amount_paise
         for o in paid
-        if any(e.action == "upsell.suggest" and e.output_json.get("accepted") for e in events if e.trace_id == o.trace_id)
+        if o.trace_id in accepted_upsell_traces
     )
 
     return ConsoleGrowthMetrics(
@@ -990,12 +1021,12 @@ def console_insights(
         upsell_revenue=upsell_rev,
         avg_order_value=avg_order,
         total_orders=len(orders),
-        upsell_offers=upsell_offers,
+        upsell_offers=len(upsell_offers),
         upsell_accepted=upsell_accepted,
         negotiations=negotiations,
-        negotiated_accepted=negotiated_accepted,
-        countered=negotiations - negotiated_accepted,
-        walked_away=0,
+        negotiated_accepted=negotiation_accepted,
+        countered=countered,
+        walked_away=walked_away,
     )
 
 
@@ -1239,6 +1270,25 @@ def console_onboarding(
         "role": "owner",
         "created_at": record.created_at.isoformat() if record else None,
     }
+
+
+@app.post("/console/agent/buyer/run", response_model=BuyerResult, tags=["console"])
+@limiter.limit("10/minute")
+def console_buyer_run(
+    request: Request,
+    mission: BuyerMission,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> BuyerResult:
+    """Run the reference AI buyer against the authenticated merchant's own store.
+
+    The buyer agent operates on a gateway bound to the merchant's core, so
+    discovery, quotes, and orders all resolve to the caller's catalog and
+    policy — never the demo store.
+    """
+    core = merchant_core(session)
+    gateway = AgentGateway(core, SellerAgent(core, llm=_seller_llm))
+    buyer = BuyerAgent(gateway, llm=_make_llm()[0])
+    return buyer.run(mission)
 
 
 @app.get("/console/catalog", response_model=list[Product], tags=["console"])
