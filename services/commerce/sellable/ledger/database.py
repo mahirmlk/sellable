@@ -43,13 +43,16 @@ class OrderRecord(Base):
     trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
     quote_id: Mapped[str] = mapped_column(String(128), nullable=False)
     buyer_agent_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
     requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Provider references for restart-proof webhook settlement
+    provider_link_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    provider_order_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
 
 class ConsentRecord(Base):
@@ -143,6 +146,10 @@ def _migrate(engine) -> None:
             connection.execute(
                 text("ALTER TABLE orders ADD COLUMN approved_at TIMESTAMPTZ NULL")
             )
+        if "provider_link_id" not in cols:
+            connection.execute(text("ALTER TABLE orders ADD COLUMN provider_link_id VARCHAR(256)"))
+        if "provider_order_id" not in cols:
+            connection.execute(text("ALTER TABLE orders ADD COLUMN provider_order_id VARCHAR(256)"))
         ledger_cols = {
             row[0]
             for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'ledger_events'"))

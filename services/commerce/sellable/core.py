@@ -283,10 +283,38 @@ class CommerceCore:
         return updated_order
 
     def get_order(self, order_id: str) -> Order:
-        try:
-            return self._orders[order_id]
-        except KeyError as error:
-            raise ValueError("Order does not exist") from error
+        # DB-first: webhook settlement (or another replica) may have advanced
+        # the order after this core hydrated. Foreign orders are invisible.
+        order = self.order_repo.get(order_id)
+        if order is None or order.merchant_id != self.merchant_scope:
+            raise ValueError("Order does not exist")
+        self._orders[order_id] = order
+        return order
+
+    def attach_provider_refs(
+        self, order_id: str, *, link_id: str, provider_order_id: str | None
+    ) -> Order:
+        """Persist the provider payment-link references on the order.
+
+        Webhook settlement must survive process restarts, so the provider
+        identifiers live in the database, not only in memory.
+        """
+        order = self.get_order(order_id)
+        updated = order.model_copy(
+            update={"provider_link_id": link_id, "provider_order_id": provider_order_id}
+        )
+        self._orders[order_id] = updated
+        self.order_repo.save(updated)
+        return updated
+
+    def find_order_by_provider(
+        self, *, link_id: str | None = None, provider_order_id: str | None = None
+    ) -> Order | None:
+        """Locate an order by persisted provider reference (webhook path)."""
+        order = self.order_repo.for_provider(link_id=link_id, provider_order_id=provider_order_id)
+        if order is not None:
+            self._orders.setdefault(order.order_id, order)
+        return order
 
     def get_order_by_idempotency_key(self, idempotency_key: str) -> Order | None:
         order_id = self._idempotency_keys.get(idempotency_key)
@@ -386,7 +414,9 @@ class CommerceCore:
         )
 
     def all_orders(self) -> list[Order]:
-        return list(self._orders.values())
+        # DB-first so externally-advanced state (webhook settlement by another
+        # process/replica) is always reflected.
+        return list(self.order_repo.all(merchant_id=self.merchant_scope))
 
     def get_policy(self) -> MerchantPolicy:
         return self.policy

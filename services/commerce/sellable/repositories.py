@@ -60,6 +60,8 @@ class OrderRepository:
                 existing.idempotency_key = order.idempotency_key
                 existing.requires_approval = order.requires_approval
                 existing.approved_at = order.approved_at
+                existing.provider_link_id = order.provider_link_id
+                existing.provider_order_id = order.provider_order_id
                 existing.created_at = order.created_at
             else:
                 record = OrderRecord(
@@ -73,6 +75,8 @@ class OrderRepository:
                     idempotency_key=order.idempotency_key,
                     requires_approval=order.requires_approval,
                     approved_at=order.approved_at,
+                    provider_link_id=order.provider_link_id,
+                    provider_order_id=order.provider_order_id,
                     created_at=order.created_at,
                 )
                 session.add(record)
@@ -94,6 +98,42 @@ class OrderRepository:
                 idempotency_key=record.idempotency_key,
                 requires_approval=record.requires_approval,
                 approved_at=record.approved_at,
+                provider_link_id=record.provider_link_id,
+                provider_order_id=record.provider_order_id,
+                created_at=record.created_at,
+            )
+
+    def for_provider(
+        self,
+        *,
+        link_id: str | None = None,
+        provider_order_id: str | None = None,
+    ) -> Order | None:
+        """Find an order by its persisted Razorpay reference (webhook path)."""
+        with Session(self._engine) as session:
+            query = select(OrderRecord)
+            if link_id is not None:
+                query = query.where(OrderRecord.provider_link_id == link_id)
+            elif provider_order_id is not None:
+                query = query.where(OrderRecord.provider_order_id == provider_order_id)
+            else:
+                return None
+            record = session.scalars(query.limit(1)).first()
+            if not record:
+                return None
+            return Order(
+                order_id=record.order_id,
+                trace_id=record.trace_id,
+                quote_id=record.quote_id,
+                buyer_agent_id=record.buyer_agent_id,
+                merchant_id=record.merchant_id,
+                amount_paise=record.amount_paise,
+                status=OrderStatus(record.status),
+                idempotency_key=record.idempotency_key,
+                requires_approval=record.requires_approval,
+                approved_at=record.approved_at,
+                provider_link_id=record.provider_link_id,
+                provider_order_id=record.provider_order_id,
                 created_at=record.created_at,
             )
 
@@ -115,6 +155,8 @@ class OrderRepository:
                     idempotency_key=r.idempotency_key,
                     requires_approval=r.requires_approval,
                     approved_at=r.approved_at,
+                    provider_link_id=r.provider_link_id,
+                    provider_order_id=r.provider_order_id,
                     created_at=r.created_at,
                 )
                 for r in records

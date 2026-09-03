@@ -153,7 +153,7 @@ commerce_core = registry.get(DEMO_MERCHANT_ID)
 seller_agent = SellerAgent(commerce_core, llm=_seller_llm)
 agent_gateway = AgentGateway(commerce_core, seller_agent)
 buyer_agent = BuyerAgent(agent_gateway, llm=_make_llm()[0])
-payment_service = PaymentService(commerce_core, RazorpayAdapter(settings))
+payment_service = PaymentService(commerce_core, RazorpayAdapter(settings), core_resolver=registry.get)
 refund_service = RefundService(commerce_core)
 
 

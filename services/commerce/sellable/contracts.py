@@ -266,6 +266,10 @@ class Order(StrictModel):
     requires_approval: bool = False
     approved_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
+    # Provider references — persisted so webhook settlement survives process
+    # restarts (the provider order id is what payment.captured references).
+    provider_link_id: str | None = Field(default=None, max_length=256)
+    provider_order_id: str | None = Field(default=None, max_length=256)
 
 
 class PolicyDecision(StrictModel):

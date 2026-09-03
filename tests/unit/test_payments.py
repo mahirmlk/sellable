@@ -171,32 +171,6 @@ def payment_link_paid_payload(
     }
 
 
-def payment_link_failed_payload(
-    reference_id: str = "ord_unknown",
-    payment_id: str = "pay_test_0001",
-) -> dict[str, object]:
-    return {
-        "event": "payment_link.failed",
-        "payload": {
-            "payment_link": {
-                "entity": {
-                    "id": "plink_test_0001",
-                    "reference_id": reference_id,
-                    "status": "failed",
-                }
-            },
-            "payment": {
-                "entity": {
-                    "id": payment_id,
-                    "amount": 69_900,
-                    "status": "failed",
-                    "error_description": "Payment declined in test mode",
-                }
-            },
-        },
-    }
-
-
 def test_verified_webhook_is_authoritative_and_idempotent(commerce_core: CommerceCore) -> None:
     order, consent = create_consented_order(commerce_core)
     payments = PaymentService(commerce_core, razorpay_adapter())
@@ -253,7 +227,24 @@ def test_verified_payment_failure_is_explicit(commerce_core: CommerceCore) -> No
     order, consent = create_consented_order(commerce_core)
     payments = PaymentService(commerce_core, razorpay_adapter())
     payments.start_payment(order_id=order.order_id, consent_id=consent.consent_id)
-    body, signature = signed_webhook(payment_link_failed_payload(reference_id=order.order_id))
+    # Customer-side failures arrive as payment.failed on the link's internal
+    # order (Razorpay's link lifecycle only offers paid/cancelled events).
+    body, signature = signed_webhook(
+        {
+            "event": "payment.failed",
+            "payload": {
+                "payment": {
+                    "entity": {
+                        "id": "pay_test_0001",
+                        "order_id": "order_razorpay_test_01",
+                        "amount": order.amount_paise,
+                        "status": "failed",
+                        "error_description": "Payment declined in test mode",
+                    }
+                }
+            },
+        }
+    )
 
     result = payments.handle_webhook(body, signature)
 

@@ -50,8 +50,10 @@ from sellable.core import CommerceCore
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
 from sellable.payments.service import PaymentService, UnknownProviderOrderError
+from sellable.payments.razorpay import RazorpayAdapter
 
 from test_payments import (
+    razorpay_adapter,
     payment_link_paid_payload,
     razorpay_adapter,
     signed_webhook,
@@ -572,3 +574,50 @@ def test_idempotency_key_reuse_with_different_cart_is_rejected(
     # The original order is untouched and no duplicate was created.
     assert commerce_core.get_order(first.order_id).amount_paise == 69_900
     assert len(commerce_core.all_orders()) == 1
+
+# ---------------------------------------------------------------------------
+# Restart-proof webhook settlement (spec §12 — audit trail after payment)
+# ---------------------------------------------------------------------------
+
+
+def test_webhook_settlement_survives_process_restart(commerce_core: CommerceCore) -> None:
+    """A Razorpay webhook must settle the order even when the process that
+    created the payment link is gone (deploy/restart) — provider refs are
+    persisted on the order row and the correct merchant core is rebuilt."""
+    cart = travel_case_cart()
+    intent = buyer_intent()
+    order = create_order(
+        commerce_core,
+        cart,
+        intent,
+        trace_id="trc_restart_proof",
+        idempotency_key="idem_restart_proof_0001",
+    )
+    consent = commerce_core.issue_consent(order.order_id)
+
+    service = PaymentService(commerce_core, razorpay_adapter())
+    attempt = service.start_payment(order_id=order.order_id, consent_id=consent.consent_id)
+    assert attempt.payment_url is not None
+
+    # Simulate a process restart: brand-new service instance with EMPTY
+    # in-memory maps, resolving cores through the registry-style resolver.
+    def resolver(merchant_id: str) -> CommerceCore:
+        assert merchant_id == commerce_core.policy.merchant_id
+        return commerce_core
+
+    restarted = PaymentService(commerce_core, razorpay_adapter(), core_resolver=resolver)
+
+    body, signature = signed_webhook(
+        payment_link_paid_payload(
+            reference_id=order.order_id,
+            payment_id="pay_restart_0001",
+        )
+    )
+    settled = restarted.handle_webhook(body, signature)
+    assert settled.status is PaymentStatus.CAPTURED
+    assert settled.provider_payment_id == "pay_restart_0001"
+    paid = commerce_core.get_order(order.order_id)
+    assert paid.status is OrderStatus.PAID
+    actions = ledger_actions(commerce_core, order.trace_id)
+    assert actions.count("order.paid") == 1
+    assert "webhook.reconciled" in actions
