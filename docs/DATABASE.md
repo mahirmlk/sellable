@@ -32,8 +32,9 @@ SUPABASE_SERVICE_ROLE_KEY=<service role key>
 The `config.py` module resolves relative SQLite paths against the project root.
 On startup, `initialise_database()` creates all tables if they don't exist and
 runs a lightweight migration that adds columns introduced after the initial
-schema (e.g. `orders.requires_approval`, `orders.approved_at`) without dropping
-existing data.
+schema (e.g. `orders.requires_approval`, `orders.provider_link_id`,
+`consents.merchant_id`, the `(merchant_id, idempotency_key)` uniqueness
+indexes) without dropping existing data — on both SQLite and Postgres.
 
 ```python
 # config.py
@@ -53,6 +54,7 @@ CREATE TABLE ledger_events (
     sequence          INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id          VARCHAR(64) UNIQUE NOT NULL,
     trace_id          VARCHAR(128) NOT NULL,
+    merchant_id       VARCHAR(64),  -- owning tenant; NULL only for legacy rows
     timestamp         DATETIME NOT NULL,
     actor             VARCHAR(64) NOT NULL,
     action            VARCHAR(128) NOT NULL,
@@ -66,23 +68,32 @@ CREATE TABLE ledger_events (
 );
 
 CREATE INDEX idx_ledger_trace ON ledger_events(trace_id);
+CREATE INDEX ix_ledger_events_merchant_id ON ledger_events(merchant_id);
 ```
 
 **Key fields:**
 - `sequence` — auto-incrementing row ID for ordering
 - `trace_id` — groups events belonging to one transaction (e.g., `trc_abc123`)
+- `merchant_id` — owning tenant; every writer sets it (agent events included),
+  and console reads always filter by it
 - `actor` — who performed the action: `buyer_agent`, `seller_agent`, `policy_engine`, `commerce_core`, `consent_service`, `human`, `razorpay`
-- `action` — event type: `catalog.search`, `quote.created`, `policy.checked`, `order.created`, `payment.captured`, `consent.issued`, `policy.updated`, etc.
+- `action` — event type: `catalog.search`, `quote.created`, `policy.checked`, `order.created`, `payment.attempted`, `webhook.reconciled`, `order.paid`, `refund.settled`, `consent.issued`, `policy.updated`, etc.
 - `inputs_json` / `output_json` — structured data for the event
 - `reasoning_summary` — human-readable explanation (the "explainable" in XAI)
 - `policy_refs_json` — which policy rules were consulted
-- `flags_json` — special markers: `webhook_verified`, `bounded_retry`, `no_duplicate_charge`
+- `flags_json` — special markers; `simulated` marks dev-webhook-simulation
+  money so replay never narrates it as verified provider money
 
 **Repository:** `sellable/ledger/service.py` → `LedgerRepository`
-- `append(event)` — write
-- `for_trace(trace_id)` — read all events for one transaction
-- `all_events(limit, offset)` — paginated read (newest first)
-- `count_events()` — total count
+- `append(event)` — write (insert-only; append-only is convention — no
+  update/delete method exists, but there is no DB-level immutability trigger)
+- `for_trace(trace_id, merchant_id=...)` — read all events for one transaction
+- `all_events(limit, offset, merchant_id=...)` — paginated read (newest first)
+- `events_after(sequence, limit, merchant_id=...)` — SSE cursor reads
+- `count_events(merchant_id=...)` — total count
+- `count_actions(trace_id, action)` — restart-proof budgets (retry counts)
+- `last_provider_ref(trace_id)` — latest settlement payment id
+- `claim_delivery(key)` — atomic webhook-delivery dedupe (see below)
 
 ---
 
@@ -92,15 +103,21 @@ Persisted order state. Created when a buyer accepts a quote and the policy engin
 
 ```sql
 CREATE TABLE orders (
-    order_id          VARCHAR(64) PRIMARY KEY,
-    trace_id          VARCHAR(128) NOT NULL,
-    quote_id          VARCHAR(128) NOT NULL,
-    buyer_agent_id    VARCHAR(128) NOT NULL,
-    merchant_id       VARCHAR(64) NOT NULL,
-    amount_paise      INTEGER NOT NULL,
-    status            VARCHAR(32) NOT NULL,
-    idempotency_key   VARCHAR(256) NOT NULL,
-    created_at        DATETIME NOT NULL
+    order_id             VARCHAR(64) PRIMARY KEY,
+    trace_id             VARCHAR(128) NOT NULL,
+    quote_id             VARCHAR(128) NOT NULL,
+    buyer_agent_id       VARCHAR(128) NOT NULL,
+    merchant_id          VARCHAR(64) NOT NULL,
+    amount_paise         INTEGER NOT NULL,
+    status               VARCHAR(32) NOT NULL,
+    idempotency_key      VARCHAR(256) NOT NULL,
+    requires_approval    BOOLEAN NOT NULL DEFAULT FALSE,
+    approved_at          DATETIME,
+    provider_link_id     VARCHAR(256),
+    provider_order_id    VARCHAR(256),
+    provider_payment_url VARCHAR(512),
+    created_at           DATETIME NOT NULL,
+    UNIQUE (merchant_id, idempotency_key)  -- uq_orders_merchant_idempotency
 );
 ```
 
@@ -109,21 +126,30 @@ CREATE TABLE orders (
 - `trace_id` — links to ledger events for this order
 - `quote_id` — links to the `CartMandate` that became this order
 - `status` — current state in the order state machine
-- `idempotency_key` — prevents duplicate order creation
+- `idempotency_key` — unique per merchant; the DB constraint backstops the
+  in-memory guard against concurrent duplicate creates across workers
+- `provider_link_id` / `provider_order_id` / `provider_payment_url` —
+  persisted Razorpay references so webhook settlement and attempt rebuilds
+  survive restarts
 
 **Order status state machine:**
 ```
-QUOTED → AWAITING_CONSENT → CONSENTED → PAYMENT_PENDING → PAID → FULFILLED
-                                ↓              ↓
-                             ABORTED      PAYMENT_FAILED → PAYMENT_PENDING (retry)
+AWAITING_CONSENT → CONSENTED → PAYMENT_PENDING → PAID → FULFILLED
+       ↓               ↓              ↓    ↓          ↓         ↓
+    ABORTED         ABORTED        ABORTED  PAYMENT_FAILED  REFUNDED  REFUNDED
+                                         (link cancelled first)  ↓
+                                      PAYMENT_FAILED → PAYMENT_PENDING (one bounded retry)
                                                       ↓
                                                    ABORTED
 ```
+(`QUOTED` was pruned — orders are created directly as `AWAITING_CONSENT`.)
 
 **Repository:** `sellable/repositories.py` → `OrderRepository`
 - `save(order)` — upsert (insert or update)
 - `get(order_id)` — read one
-- `all()` — read all (used by console API)
+- `all(merchant_id=...)` — tenant-scoped reads (used by console API)
+- `for_idempotency_key(merchant_id, key)` — DB-backed replay detection
+- `for_provider(link_id=..., provider_order_id=...)` — webhook resolution
 
 **Persistence points:**
 - `CommerceCore.create_order()` — saves new order
@@ -140,6 +166,7 @@ Single-use, transaction-bound payment authorizations. Created when a human appro
 ```sql
 CREATE TABLE consents (
     consent_id    VARCHAR(64) PRIMARY KEY,
+    merchant_id   VARCHAR(64),  -- owning tenant (backfilled from payee_id)
     order_id      VARCHAR(64) NOT NULL,
     amount_paise  INTEGER NOT NULL,
     payee_id      VARCHAR(64) NOT NULL,
@@ -148,21 +175,26 @@ CREATE TABLE consents (
     status        VARCHAR(32) NOT NULL,
     single_use    INTEGER NOT NULL DEFAULT 1
 );
+
+CREATE INDEX ix_consents_merchant_id ON consents(merchant_id);
 ```
 
 **Key fields:**
 - `consent_id` — primary key (e.g., `con_e5f6g7h8`)
+- `merchant_id` — owning tenant; hydration loads only the caller's merchant
 - `order_id` — bound to exactly one order
 - `amount_paise` — exact amount authorized (must match order)
 - `payee_id` — merchant ID (must match order's merchant)
-- `status` — `ISSUED`, `USED`, or `EXPIRED`
+- `status` — `ISSUED`, `USED`, `EXPIRED`, or `REVOKED`
 - `single_use` — always `1` (SQLite stores booleans as integers)
-- `expires_at` — consent expires after `lifetime_minutes` (default: 10)
+- `expires_at` — consent expires after `lifetime_minutes` (default: 10);
+  expired consents never block re-issue and their flip is persisted
 
 **Repository:** `sellable/repositories.py` → `ConsentRepository`
 - `save(consent)` — upsert
 - `get(consent_id)` — read one
-- `all()` — read all (loaded into `ConsentService._consents` on startup)
+- `all(merchant_id=...)` — tenant-scoped (loaded into the core's
+  `ConsentService` on hydration)
 
 **Persistence points:**
 - `CommerceCore.issue_consent()` — saves new consent
@@ -201,42 +233,112 @@ CREATE TABLE policy (
 ```
 
 **Persistence points:**
-- `PUT /console/policy` → `_save_policy_to_db()` — saves after every update
-- Startup → `_load_policy_from_db()` — loads into `CommerceCore.policy`
+- `PUT /console/policy` → `save_policy_for()` — saves after every update
+  (owner role only)
+- Startup → `MerchantRegistry` `load_policy_for()` — loads into each
+  merchant's cached `CommerceCore`
+
+---
+
+## Other tables
+
+### `refunds`
+
+One row per provider refund attempt; `(merchant_id, idempotency_key)` is
+unique so retried refund requests return the existing record instead of
+moving money twice.
+
+```sql
+CREATE TABLE refunds (
+    refund_id            VARCHAR(64) PRIMARY KEY,
+    merchant_id          VARCHAR(64) NOT NULL,
+    order_id             VARCHAR(64) NOT NULL,
+    amount_paise         INTEGER NOT NULL,
+    provider_payment_id  VARCHAR(128),
+    provider_refund_id   VARCHAR(128) UNIQUE,
+    reason               VARCHAR(500) NOT NULL,
+    status               VARCHAR(32) NOT NULL,  -- PENDING | PROCESSED | FAILED
+    idempotency_key      VARCHAR(256) NOT NULL,
+    created_at           DATETIME NOT NULL,
+    UNIQUE (merchant_id, idempotency_key)
+);
+```
+
+**Repository:** `sellable/repositories.py` → `RefundRepository`
+(`save`, `for_idempotency_key`, `for_order` — all merchant-scoped).
+
+### `webhook_deliveries`
+
+Restart-proof webhook dedupe. The delivery key
+`{event}:{provider_payment_id|link_id}:{amount}` is the primary key, so
+claiming it is atomic across processes and replicas; duplicates return the
+current attempt with no new ledger rows.
+
+```sql
+CREATE TABLE webhook_deliveries (
+    delivery_key VARCHAR(128) PRIMARY KEY,
+    received_at  DATETIME NOT NULL
+);
+```
+
+**Claim:** `LedgerRepository.claim_delivery(key)` → `True` exactly once.
+
+### `agent_nonces`
+
+Persistent HMAC nonce store for agent-request replay protection (the
+in-memory guard alone is wiped by restarts and is per-replica).
+
+```sql
+CREATE TABLE agent_nonces (
+    agent_id VARCHAR(128),
+    nonce    VARCHAR(128),
+    seen_at  INTEGER NOT NULL,  -- epoch seconds; rows older than the
+    PRIMARY KEY (agent_id, nonce)  -- timestamp window are pruned on claim
+);
+```
+
+**Claim:** `sellable/repositories.py` → `NonceRepository.claim()`.
+
+### `merchants` / `merchant_users` / `catalog_products`
+
+- `merchants(merchant_id PK, name, created_at)` — one row per store.
+- `merchant_users(id PK, merchant_id, auth_user_id UNIQUE, role, created_at)` —
+  explicit auth-user → merchant links (`role`: `owner` | `operator`); no
+  auto-linking, ever.
+- `catalog_products(id PK `{merchant_id}:{sku}`, merchant_id, sku, title,
+  description, price_paise, floor_paise, stock, category, attributes)` —
+  per-merchant persisted catalog.
+
+All application tables have RLS enabled with no `anon`/`authenticated`
+grants on hosted Postgres — only the backend (service role / direct
+connection) touches them.
 
 ---
 
 ## Startup Hydration
 
-On application startup, `CommerceCore` loads persisted state from the database:
+On application startup, each merchant's `CommerceCore` loads its own slice
+of persisted state from the database:
 
 ```python
-# core.py — CommerceCore.__init__
-def _hydrate(self) -> None:
-    try:
-        orders = self.order_repo.all()
-        self._orders = {o.order_id: o for o in orders}
-        self._idempotency_keys = {o.idempotency_key: o.order_id for o in orders}
-        consents = self.consent_repo.all()
-        for c in consents:
-            self.consent_service._consents[c.consent_id] = c
-    except Exception:
-        # Tables may not exist yet on first run
-        self._orders = {}
-        self._idempotency_keys = {}
+# core.py — CommerceCore.__init__ / _hydrate
+orders = self.order_repo.all(merchant_id=self.merchant_scope)
+self._orders = {o.order_id: o for o in orders}
+self._idempotency_keys = {o.idempotency_key: o.order_id for o in orders}
+consents = self.consent_repo.all(merchant_id=self.merchant_scope)
+for c in consents:
+    self.consent_service._consents[c.consent_id] = c
 ```
 
 ```python
 # main.py — startup sequence
-initialise_database()           # 1. Create tables if needed
-_db_policy = _load_policy_from_db()  # 2. Load saved policy
-commerce_core = CommerceCore.from_seed(
-    LedgerRepository(),
-    policy_override=_db_policy,  # 3. Use saved policy or seed
-)
+initialise_database()            # 1. Create tables + run migrations
+registry = MerchantRegistry()    # 2. Per-merchant core cache
+registry.ensure_demo_merchant()  # 3. Seed demo store, catalog, policy
+commerce_core = registry.get(DEMO_MERCHANT_ID)
 ```
 
-**Graceful fallback:** If tables don't exist (first run), `_hydrate()` catches the exception and starts with empty state. The policy loader returns `None` and the seed policy is used.
+**Graceful fallback:** If tables don't exist (first run), `_hydrate()` catches the exception and starts with empty state.
 
 ---
 
@@ -258,23 +360,29 @@ commerce_core = CommerceCore.from_seed(
 │         ▼                 ▼                  ▼           │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │              Repository Layer                     │   │
-│  │  OrderRepository  ConsentRepository  Policy DB   │   │
+│  │  Order/Consent/Refund/Nonce/CatalogRepository    │   │
 │  └──────────────────────┬───────────────────────────┘   │
 └─────────────────────────┼───────────────────────────────┘
-                          │
-                          ▼
+                           │
+                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│              SQLite Database                             │
+│              SQLite / Postgres Database                  │
 │  ┌──────────────┐ ┌────────┐ ┌─────────┐ ┌──────────┐  │
 │  │ledger_events │ │ orders │ │consents │ │  policy   │  │
 │  │  (append)    │ │(upsert)│ │(upsert) │ │ (upsert)  │  │
 │  └──────────────┘ └────────┘ └─────────┘ └──────────┘  │
+│  ┌────────┐ ┌──────────────────┐ ┌──────────────┐     │
+│  │refunds │ │webhook_deliveries│ │ agent_nonces │     │
+│  └────────┘ └──────────────────┘ └──────────────┘     │
+│  ┌───────────┐ ┌────────────────┐ ┌─────────────────┐ │
+│  │ merchants │ │ merchant_users │ │catalog_products │ │
+│  └───────────┘ └────────────────┘ └─────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Write path:** In-memory state is updated first, then persisted to SQLite. This ensures the API response is fast while data is durably stored.
+**Write path:** In-memory state is updated first, then persisted. This ensures the API response is fast while data is durably stored.
 
-**Read path:** Console API reads directly from in-memory state (fast). The `_hydrate()` call on startup ensures in-memory state matches the database.
+**Read path:** Order reads are DB-first (`get_order` re-reads the row, so webhook settlement by another process is always visible); `_hydrate()` on startup restores each core's merchant slice.
 
 ---
 
@@ -298,10 +406,9 @@ commerce_core = CommerceCore.from_seed(
 
 On first startup with a fresh database:
 
-1. `initialise_database()` creates all 4 tables
-2. `_load_policy_from_db()` returns `None` (no rows)
-3. `CommerceCore.from_seed()` uses seed policy from `infra/seed/merchant_policy.json`
-4. `_hydrate()` catches missing table exception, starts with empty `_orders`
+1. `initialise_database()` creates all tables
+2. `MerchantRegistry.ensure_demo_merchant()` seeds the demo store, catalog, and policy
+3. Each `CommerceCore._hydrate()` loads its merchant slice (empty on first run)
 
 The database file is created at `data/sellable.db` (relative to project root).
 
@@ -346,9 +453,9 @@ Each test gets a fresh database. The `engine` parameter ensures `OrderRepository
 
 | File | Purpose |
 |------|---------|
-| `sellable/ledger/database.py` | SQLAlchemy models, `make_engine()`, `initialise_database()` |
-| `sellable/ledger/service.py` | `LedgerRepository` — append-only event writes + queries |
-| `sellable/repositories.py` | `OrderRepository`, `ConsentRepository` — CRUD for orders/consents |
+| `sellable/ledger/database.py` | SQLAlchemy models, `make_engine()`, `initialise_database()`, migrations |
+| `sellable/ledger/service.py` | `LedgerRepository` — event writes + queries + delivery claims |
+| `sellable/repositories.py` | `OrderRepository`, `ConsentRepository`, `RefundRepository`, `NonceRepository`, `CatalogRepository`, `MerchantRepository` |
 | `sellable/core.py` | `CommerceCore` — hydration, persistence orchestration |
 | `sellable/config.py` | `Settings` — `DATABASE_URL` resolution |
-| `sellable/main.py` | `_load_policy_from_db()`, `_save_policy_to_db()` — policy persistence |
+| `sellable/registry.py` | `MerchantRegistry` — per-merchant cores, policy load/save |

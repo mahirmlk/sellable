@@ -13,9 +13,21 @@ SELLABLE keeps two authentication surfaces separate (`WORKFLOW.md` §55):
   (`X-Agent-Key` header) or an HMAC-SHA256 signed request with
   `Authorization: Bearer <key>`, `X-Agent-Id`, `X-Timestamp`, `X-Nonce`, and
   `X-Signature` headers. The signature binds `timestamp.nonce.agent_id.method.path.query.body-sha256`.
+  Nonces are claimed persistently, so replays fail across restarts and replicas.
+- **Mutating agent routes require signed requests outside dev/test:**
+  `/agent/orders.create`, `/agent/consents.request`, `/agent/buyer/run`,
+  `/orders/{id}/payment`, `/orders/{id}/payment/retry` accept a static
+  `X-Agent-Key` only when `SELLABLE_ENVIRONMENT` is `development` or `test`.
+  In production they require the HMAC-signed-request path. Quote/catalog
+  reads stay available with either method.
 - **Console/merchant endpoints** require a merchant session
   (`get_merchant_session`): a Supabase access token (`Authorization: Bearer`)
-  in production, or the demo `X-Agent-Key` in local demo mode.
+  in production, or the demo `X-Agent-Key` in local demo mode. Policy updates
+  (`PUT /console/policy`) and refunds additionally require the `owner` role.
+- **Trace correlation:** every agent route accepts an optional `X-Trace-Id`
+  header (`^trc_[0-9a-f]{32}$`, 422 on malformed values; overrides any body
+  `trace_id`). Quote → order → consent → payment issued with one header share
+  a single replayable trace.
 
 Public discovery endpoints (`/.well-known/agents.json`, `/llms.txt`,
 `/catalog.ai.json`, `/health`) require no authentication.
@@ -34,7 +46,8 @@ Returns service health status.
   "status": "ok",
   "environment": "development",
   "database": "connected",
-  "razorpay_configured": false
+  "razorpay_configured": false,
+  "cors_origins": ["https://sellable.shop", "http://localhost:3000"]
 }
 ```
 
@@ -105,11 +118,19 @@ Machine-readable merchant manifest for AI buyer discovery.
 **Response:**
 ```json
 {
-  "merchant_id": "mrc_demo_store",
   "name": "Sellable Demo Store",
-  "capabilities": ["catalog.search", "catalog.get", "quotes.create", "quotes.negotiate"],
-  "settlement_authority": "merchant_held",
-  "consent_model": "single_use_per_transaction"
+  "merchant_id": "mrc_demo_store",
+  "protocol_version": "0.1",
+  "capabilities": ["catalog.search", "catalog.get", "quote.create", "quote.negotiate", "consent.request", "orders.create", "orders.status"],
+  "discovery": {"catalog": "/catalog.ai.json", "instructions": "/llms.txt"},
+  "transaction_endpoints": {
+    "catalog_search": "/agent/catalog.search",
+    "catalog_get": "/agent/catalog.get",
+    "quote_create": "/agent/quotes.create",
+    "quote_negotiate": "/agent/quotes.negotiate",
+    "payment": "/orders/{order_id}/payment"
+  },
+  "payment": {"provider": "razorpay", "mode": "test", "settlement_authority": "signed_webhook"}
 }
 ```
 
@@ -215,15 +236,23 @@ Create an authoritative order (idempotent). A duplicate call with the same
 
 **Request:** `{"order_id": "ord_..."}`
 
-**Response:** `{"order_id", "status", "amount_paise", "payment_id", "trace_id"}`
+**Response:** `{"order_id", "status", "amount_paise", "payment_id", "trace_id"}` —
+`payment_id` is resolved from the settlement ledger (`null` until captured).
 
 ### `POST /agent/refunds.create`
 
-Issue a refund for a paid order. Requires a merchant session.
+Issue a **real provider refund** for a paid order. Calls the Razorpay refund
+API (test mode), persists the provider refund id, and settles the order.
+Requires a merchant session with the `owner` role (despite the `/agent/`
+prefix, buyer agents cannot self-refund).
 
-**Request:** `{"order_id": "ord_...", "reason": "merchant_initiated"}`
+**Request:** `{"order_id": "ord_...", "reason": "merchant_initiated", "amount_paise": null, "idempotency_key": null}`
+(omit `amount_paise` for a full refund; omit `idempotency_key` for a
+deterministic per-(order, amount) key — retries never double-refund).
 
-**Response:** Refund confirmation with `refund_status`, `amount_paise`, and `trace_id`.
+**Response:** Refund confirmation with `refund_id`, `provider_refund_id`,
+`refund_status` (`processed`), `amount_paise`, and `trace_id`. Partial
+refunds keep the order `PAID`; full refunds move it to `REFUNDED`.
 
 ---
 
@@ -241,9 +270,16 @@ Run the reference buyer agent through a full mission.
   "budget_ceiling_paise": 600000,
   "allowed_categories": ["accessories", "gifting", "snacks"],
   "purpose": "Desk setup",
-  "request_upsell": true
+  "request_upsell": true,
+  "requested_sku": null,
+  "quantity": 1,
+  "buyer_offer_paise": null
 }
 ```
+(`requested_sku`/`quantity`/`buyer_offer_paise` enable targeted quotes and
+first offers; the buyer flow ends at consent — verify settlement afterwards
+via order status. The buyer independently enforces mandate expiry, its own
+budget ceiling, and catalog grounding before returning `READY_FOR_CONSENT`.)
 
 **Response (`BuyerResult`):**
 ```json
@@ -290,7 +326,13 @@ Perform one bounded, idempotent retry after a verified payment failure.
 
 ### `POST /webhooks/razorpay`
 
-Receives Razorpay payment webhook. Verified via `X-Razorpay-Signature` header.
+Receives Razorpay payment webhook. Verified via `X-Razorpay-Signature` header
+(mandatory, fail-closed; 401 on missing/invalid signature). Handled events:
+`payment.captured`, `payment_link.paid`, `payment.failed`,
+`payment_link.cancelled`. Duplicate deliveries are idempotent via persisted
+delivery claims; unexpected-but-real transitions answer 409 with a
+`webhook.unexpected_state` ledger row — never a silent 500. Rate-limited
+(120/minute) instead of exempt.
 
 **Headers:** `X-Razorpay-Signature: <signature>`
 
@@ -298,21 +340,23 @@ Receives Razorpay payment webhook. Verified via `X-Razorpay-Signature` header.
 
 ### `POST /orders/{order_id}/refund`
 
-Issue a refund for a paid order. Requires a merchant session.
+Issue a **real provider refund** for a `PAID` (or `FULFILLED`) order. Requires
+a merchant session with the `owner` role.
 
-**Request:**
-```json
-{
-  "reason": "merchant_initiated"
-}
-```
+**Query params:** `reason` (default `merchant_initiated`, ≤500 chars),
+`amount_paise` (optional; omit for a full refund — partial refunds keep the
+order `PAID`), `idempotency_key` (optional; deterministic default per
+(order, amount)).
 
 **Response:**
 ```json
 {
+  "refund_id": "rfnd_...",
   "order_id": "...",
-  "refund_status": "initiated",
   "amount_paise": 69900,
+  "provider_payment_id": "pay_...",
+  "provider_refund_id": "rfnd_...",
+  "refund_status": "processed",
   "reason": "merchant_initiated",
   "trace_id": "trc_..."
 }
@@ -333,10 +377,12 @@ All console endpoints require a merchant session (Supabase JWT, or the demo
 | `/console/events` · `/activity` | GET | XAI Ledger events (`limit` clamped to 500) |
 | `/activity/stream` | GET | SSE live ledger stream |
 | `/console/approvals` · `/approvals` | GET | Orders held for human approval |
-| `/console/approvals/{id}/approve` · `/approvals/{id}/approve` | POST | Approve + issue consent |
-| `/console/approvals/{id}/reject` · `/approvals/{id}/reject` | POST | Reject (aborts the order) |
-| `/console/insights` · `/growth` | GET | Growth metrics |
-| `/console/policy` · `/console/policy` | GET/PUT | Read/update merchant policy (PUT re-validates) |
+| `/console/approvals/{id}/approve` · `/approvals/{id}/approve` | POST | Pre-validated approve + issue consent (unknown order → 404) |
+| `/console/approvals/{id}/reject` · `/approvals/{id}/reject` | POST | Reject (aborts; cancels a live payment link first when PAYMENT_PENDING) |
+| `/console/orders/{id}/fulfill` · `/orders/{id}/fulfill` | POST | Mark a paid order FULFILLED |
+| `/console/orders/{id}/simulate-capture` · `/simulate-failure` | POST | Dev-only verified-webhook simulation (disabled unless dev/test env, flagged `simulated` in the ledger) |
+| `/console/insights` · `/growth` | GET | Growth metrics (revenue counts PAID orders) |
+| `/console/policy` | GET/PUT | Read merchant policy / owner-only update (re-validates) |
 | `/catalog/products` | POST | Add a catalog product |
 | `/agents/status` | GET | Agent + payment-rail health |
 
