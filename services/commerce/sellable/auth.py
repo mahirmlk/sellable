@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -22,6 +23,9 @@ from dataclasses import dataclass
 from fastapi import Header, HTTPException, Request
 
 from sellable.config import settings
+
+
+logger = logging.getLogger("sellable.auth")
 
 
 @dataclass(frozen=True)
@@ -73,19 +77,30 @@ def _sha256(value: str) -> str:
 
 def _configured_hashes() -> set[str]:
     hashes = set(settings.agent_api_key_hashes)
-    # The built-in demo key is only valid outside production so a deployed
-    # environment cannot be accessed with the well-known test key.
-    if settings.environment != "production":
+    # The built-in demo key is only valid in known dev environments (see
+    # Settings.is_dev_environment) so a deployed environment — including one
+    # with a typo'd SELLABLE_ENVIRONMENT — cannot be accessed with the
+    # well-known test key.
+    if settings.is_dev_environment:
         hashes.add(_DEMO_KEY_HASH)
     return hashes
 
 
 def _resolve_static_key(x_agent_key: str) -> AgentApiKey:
     key_hash = _sha256(x_agent_key)
-    if key_hash not in _configured_hashes():
+    # Constant-time comparison against each configured hash — plain set
+    # membership on hex digests would leak a (small) timing signal.
+    matched = any(
+        hmac.compare_digest(key_hash, candidate)
+        for candidate in _configured_hashes()
+    )
+    if not matched:
         raise HTTPException(status_code=403, detail="Invalid agent API key")
     return AgentApiKey(
-        key_id=x_agent_key,
+        # Never carry the plaintext key in the request-scoped object (it
+        # would leak into any future logging of key_id); a hash prefix
+        # identifies the key like the HMAC path does.
+        key_id=f"static:{key_hash[:16]}",
         merchant_id=_DEMO_MERCHANT_ID,
         buyer_agent_id="buyer_demo_01",
         auth_method="api_key",
@@ -143,6 +158,12 @@ def _resolve_signed_request(
 
     if not _replay_guard.consume(agent_id, nonce):
         raise HTTPException(status_code=401, detail="Replayed request nonce")
+    # Persistent claim: the in-memory guard above stops same-process replays,
+    # but it is wiped by every restart/redeploy and is per-replica. The DB
+    # claim closes both holes; a DB outage degrades to memory-only (logged)
+    # rather than rejecting all signed traffic.
+    if not _claim_nonce_persistently(agent_id, nonce):
+        raise HTTPException(status_code=401, detail="Replayed request nonce")
 
     return AgentApiKey(
         key_id=f"hmac:{_sha256(bearer_key)[:16]}",
@@ -150,6 +171,32 @@ def _resolve_signed_request(
         buyer_agent_id=agent_id,
         auth_method="hmac",
     )
+
+
+_nonce_repo: object | None = None
+_nonce_repo_failed_at: float = 0.0
+
+
+def _claim_nonce_persistently(agent_id: str, nonce: str) -> bool:
+    """Claim (agent_id, nonce) in the database. True unless seen before."""
+    global _nonce_repo, _nonce_repo_failed_at
+    if _nonce_repo is None and time.time() - _nonce_repo_failed_at > 60:
+        try:
+            from sellable.repositories import NonceRepository
+
+            _nonce_repo = NonceRepository()
+        except Exception as error:
+            _nonce_repo_failed_at = time.time()
+            logger.warning("Nonce store unavailable; replay guard is memory-only: %s", error)
+    if _nonce_repo is None:
+        return True
+    try:
+        return _nonce_repo.claim(agent_id, nonce)
+    except Exception as error:
+        _nonce_repo = None
+        _nonce_repo_failed_at = time.time()
+        logger.warning("Nonce claim failed; replay guard is memory-only: %s", error)
+        return True
 
 
 def get_agent_api_key(
@@ -179,6 +226,39 @@ def get_agent_api_key(
         nonce=x_nonce,
         signature=x_signature,
     )
+
+
+def get_agent_api_key_signed(
+    request: Request,
+    x_agent_key: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+    x_agent_id: str | None = Header(default=None),
+    x_timestamp: str | None = Header(default=None),
+    x_nonce: str | None = Header(default=None),
+    x_signature: str | None = Header(default=None),
+) -> AgentApiKey:
+    """FastAPI dependency for money-adjacent agent writes.
+
+    A static bearer key alone has no freshness or replay binding, so outside
+    known dev environments every mutating agent route requires the
+    HMAC-signed-request path. Reads and quote-only routes keep the plain
+    dependency.
+    """
+    resolved = get_agent_api_key(
+        request,
+        x_agent_key=x_agent_key,
+        authorization=authorization,
+        x_agent_id=x_agent_id,
+        x_timestamp=x_timestamp,
+        x_nonce=x_nonce,
+        x_signature=x_signature,
+    )
+    if resolved.auth_method != "hmac" and not settings.is_dev_environment:
+        raise HTTPException(
+            status_code=401,
+            detail="Mutating agent routes require an HMAC-signed request",
+        )
+    return resolved
 
 
 def sign_request(

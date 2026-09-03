@@ -229,13 +229,21 @@ def test_reused_consent_is_rejected_and_start_payment_is_idempotent(
     assert second == first
     assert second.status is PaymentStatus.PAYMENT_PENDING
 
-    # The consent is single-use: a fresh service (no cached attempt) cannot
-    # consume it a second time.
+    # The consent is single-use: it was consumed exactly once...
     stored = commerce_core.consent_service._consents[consent.consent_id]
     assert stored.status is ConsentStatus.USED
+    # ...and a fresh service (no cached attempt, e.g. after a restart) must
+    # reconcile against the persisted PAYMENT_PENDING order and hand back the
+    # SAME payable link — not mint a second live link, and not burn anything.
     fresh = PaymentService(commerce_core, razorpay_adapter())
-    with pytest.raises(ConsentValidationError, match="not available"):
-        fresh.start_payment(order_id=order.order_id, consent_id=consent.consent_id)
+    replayed = fresh.start_payment(order_id=order.order_id, consent_id=consent.consent_id)
+    # Same live link (created_at legitimately differs — it is rebuilt now).
+    assert replayed.provider_order_id == first.provider_order_id
+    assert replayed.payment_url == first.payment_url
+    assert replayed.idempotency_key == first.idempotency_key
+    assert replayed.status is PaymentStatus.PAYMENT_PENDING
+    assert ledger_actions(commerce_core, order.trace_id).count("payment.attempted") == 1
+    assert commerce_core.consent_service._consents[consent.consent_id].status is ConsentStatus.USED
 
 
 def test_consent_bound_to_wrong_amount_is_rejected(commerce_core: CommerceCore) -> None:

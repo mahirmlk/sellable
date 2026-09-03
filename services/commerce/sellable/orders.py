@@ -9,11 +9,19 @@ class InvalidOrderTransitionError(ValueError):
     pass
 
 
+# NOTE: QUOTED was pruned — orders are created directly as AWAITING_CONSENT
+# and no QUOTED row was ever persisted, so the enum value is gone entirely.
 _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
-    OrderStatus.QUOTED: {OrderStatus.AWAITING_CONSENT, OrderStatus.ABORTED},
     OrderStatus.AWAITING_CONSENT: {OrderStatus.CONSENTED, OrderStatus.ABORTED},
     OrderStatus.CONSENTED: {OrderStatus.PAYMENT_PENDING, OrderStatus.ABORTED},
-    OrderStatus.PAYMENT_PENDING: {OrderStatus.PAID, OrderStatus.PAYMENT_FAILED},
+    # PAYMENT_PENDING → ABORTED requires cancelling the live provider link
+    # first (console reject does this); the edge alone never strands a
+    # payable link.
+    OrderStatus.PAYMENT_PENDING: {
+        OrderStatus.PAID,
+        OrderStatus.PAYMENT_FAILED,
+        OrderStatus.ABORTED,
+    },
     OrderStatus.PAYMENT_FAILED: {OrderStatus.PAYMENT_PENDING, OrderStatus.ABORTED},
     OrderStatus.PAID: {OrderStatus.FULFILLED, OrderStatus.REFUNDED},
     OrderStatus.FULFILLED: {OrderStatus.REFUNDED},

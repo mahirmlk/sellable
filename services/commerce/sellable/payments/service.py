@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from typing import Any, Callable
 
-from sellable.contracts import LedgerActor, LedgerEvent, Order, PaymentAttempt, PaymentStatus
+from sellable.contracts import (
+    LedgerActor,
+    LedgerEvent,
+    Order,
+    OrderStatus,
+    PaymentAttempt,
+    PaymentStatus,
+)
 from sellable.core import CommerceCore
+from sellable.orders import InvalidOrderTransitionError
 from sellable.payments.razorpay import (
     RazorpayAdapter,
     RazorpayRequestError,
@@ -23,6 +32,15 @@ class UnknownProviderOrderError(ValueError):
 
 class UnsupportedWebhookEventError(ValueError):
     pass
+
+
+class UnexpectedOrderStateError(ValueError):
+    """A verified webhook arrived for an order that cannot legally move.
+
+    Raised instead of letting the strict state machine raise an unhandled
+    500: the money event is real, so it gets a ledger row
+    (webhook.unexpected_state) and the endpoint answers 409.
+    """
 
 
 class PaymentService:
@@ -44,11 +62,17 @@ class PaymentService:
         self.commerce = commerce
         self.rail = rail
         self._core_resolver = core_resolver
+        # Guards start_payment / retry_payment check-and-set so concurrent
+        # calls cannot mint two live provider links for one order.
+        self._lock = threading.Lock()
         self._attempt_by_order_id: dict[str, PaymentAttempt] = {}
         self._local_order_by_provider_order_id: dict[str, str] = {}
         self._local_order_by_link_id: dict[str, str] = {}
-        self._processed_delivery_keys: set[str] = set()
-        self._retry_count_by_order_id: dict[str, int] = {}
+        # NOTE: delivery dedupe and retry budgets are persisted, not kept in
+        # memory: webhook deliveries live in the `webhook_deliveries` table
+        # (LedgerRepository.claim_delivery) and retries are counted from
+        # `retry.started` ledger events, so both survive restarts and work
+        # across replicas.
         self._core_by_order_id: dict[str, CommerceCore] = {}
 
     def _core_for(self, order_id: str) -> CommerceCore:
@@ -60,11 +84,12 @@ class PaymentService:
         event_name: str,
         payment: dict[str, Any],
         payload: dict[str, Any],
-    ) -> tuple[CommerceCore, Order]:
+    ) -> tuple[CommerceCore, Order, str | None]:
         """Resolve the local order (and its merchant core) from a webhook.
 
         Resolution order: in-memory maps → persisted provider references on
         the order row → the order id itself. Survives process restarts.
+        Also returns the link id for delivery-key construction.
         """
         link_entity = (payload.get("payload", {}).get("payment_link", {}) or {}).get("entity", {}) or {}
         link_id = str(link_entity.get("id") or "") or None
@@ -95,75 +120,126 @@ class PaymentService:
         if core is None:
             core = self._core_resolver(resolved.merchant_id) if self._core_resolver else self.commerce
             self._core_by_order_id[resolved.order_id] = core
-        return core, resolved
+        return core, resolved, link_id
+
+    def _rebuild_attempt(self, order: Order) -> PaymentAttempt:
+        """Rebuild the attempt from the persisted order row.
+
+        Value-equal to the original attempt (including the payment URL), so
+        post-restart retries and fresh-service replays hand back the same
+        payable link instead of minting a second one.
+        """
+        attempt = PaymentAttempt(
+            order_id=order.order_id,
+            provider_order_id=order.provider_link_id or order.order_id,
+            payment_url=order.provider_payment_url,
+            idempotency_key=order.idempotency_key,
+        )
+        self._attempt_by_order_id[order.order_id] = attempt
+        return attempt
 
     def start_payment(self, *, order_id: str, consent_id: str, commerce: CommerceCore | None = None) -> PaymentAttempt:
         core = commerce or self.commerce
-        existing = self._attempt_by_order_id.get(order_id)
-        if existing is not None:
-            return existing
-
         # Do not consume single-use consent merely to discover missing credentials.
         self.rail.validate_configuration()
-        consented_order = core.consume_consent(consent_id, order_id=order_id)
-        pending_order = core.mark_payment_pending(order_id)
-        self._core_by_order_id[order_id] = core
-        return self._create_provider_attempt(order_id, pending_order.trace_id, core)
+        with self._lock:
+            existing = self._attempt_by_order_id.get(order_id)
+            if existing is not None:
+                return existing
+            # Single-live-link invariant (reconcile-then-reuse): a persisted
+            # PAYMENT_PENDING order with provider refs already has a live
+            # link — after a restart, a crash between calls, or a concurrent
+            # double-start — so return it instead of minting a second one.
+            # DB-first read: another process may have advanced the order.
+            order = core.get_order(order_id)
+            if order.status is OrderStatus.PAYMENT_PENDING and order.provider_link_id:
+                if order.provider_link_id in self._local_order_by_link_id:
+                    self._local_order_by_link_id[order.provider_link_id] = order_id
+                return self._rebuild_attempt(order)
+            consented_order = core.consume_consent(consent_id, order_id=order_id)
+            pending_order = core.mark_payment_pending(order_id)
+            self._core_by_order_id[order_id] = core
+            return self._create_provider_attempt(order_id, pending_order.trace_id, core)
+
+    def cancel_provider_link(
+        self, order_id: str, *, commerce: CommerceCore | None = None
+    ) -> bool:
+        """Cancel the live provider link for an order, if one is recorded.
+
+        Returns True when a link was cancelled. Used before aborting a
+        PAYMENT_PENDING order so the aborted order can never be paid after.
+        """
+        core = commerce or self._core_for(order_id)
+        order = core.get_order(order_id)
+        if not order.provider_link_id:
+            return False
+        self.rail.cancel_payment_link(order.provider_link_id)
+        self._record(
+            core=core,
+            trace_id=order.trace_id,
+            action="payment.link_cancelled",
+            inputs={"order_id": order_id},
+            output={"provider_link_id": order.provider_link_id},
+            provider_ref=order.provider_link_id,
+            explanation="Cancelled the live provider payment link ahead of aborting the order.",
+        )
+        return True
 
     def retry_payment(self, *, order_id: str, commerce: CommerceCore | None = None) -> PaymentAttempt:
         """Perform at most one bounded, idempotent retry after a verified failure."""
         core = commerce or self._core_for(order_id)
         order = core.get_order(order_id)
-        from sellable.contracts import OrderStatus
 
         if order.status is not OrderStatus.PAYMENT_FAILED:
             raise ValueError(
                 f"Retry requires a PAYMENT_FAILED order; current status is {order.status}"
             )
-        retries = self._retry_count_by_order_id.get(order_id, 0)
-        if retries >= self.MAX_RETRIES:
-            core.mark_aborted(order_id, reason="Retry limit reached")
+        with self._lock:
+            # Restart-proof budget: count `retry.started` ledger events for
+            # this trace instead of trusting process memory. Checked under the
+            # lock so concurrent retries cannot both pass.
+            retries = core.ledger.count_actions(order.trace_id, "retry.started")
+            if retries >= self.MAX_RETRIES:
+                core.mark_aborted(order_id, reason="Retry limit reached")
+                self._record(
+                    core=core,
+                    trace_id=order.trace_id,
+                    action="retry.aborted",
+                    inputs={"order_id": order_id, "attempts": retries},
+                    output={"order_status": "ABORTED"},
+                    explanation=(
+                        "The bounded retry limit was reached; the order was aborted without "
+                        "creating a duplicate payment or order."
+                    ),
+                )
+                raise ValueError("Retry limit reached; the order has been aborted")
+            self._core_by_order_id[order_id] = core
             self._record(
                 core=core,
                 trace_id=order.trace_id,
-                action="retry.aborted",
-                inputs={"order_id": order_id, "attempts": retries},
-                output={"order_status": "ABORTED"},
+                action="retry.started",
+                inputs={"order_id": order_id, "attempt": retries + 1, "max_attempts": self.MAX_RETRIES},
+                output={"started": True},
                 explanation=(
-                    "The bounded retry limit was reached; the order was aborted without "
-                    "creating a duplicate payment or order."
+                    "One bounded retry was started for the same logical transaction and "
+                    "idempotency boundary."
                 ),
+                provider_ref=order.idempotency_key,
             )
-            raise ValueError("Retry limit reached; the order has been aborted")
-
-        self._retry_count_by_order_id[order_id] = retries + 1
-        self._core_by_order_id[order_id] = core
-        self._record(
-            core=core,
-            trace_id=order.trace_id,
-            action="retry.started",
-            inputs={"order_id": order_id, "attempt": retries + 1, "max_attempts": self.MAX_RETRIES},
-            output={"started": True},
-            explanation=(
-                "One bounded retry was started for the same logical transaction and "
-                "idempotency boundary."
-            ),
-            provider_ref=order.idempotency_key,
-        )
-        pending_order = core.mark_payment_pending(order_id)
-        try:
-            return self._create_provider_attempt(order_id, pending_order.trace_id, core)
-        except RazorpayRequestError as error:
-            core.mark_payment_failed(order_id, reason=str(error))
-            self._record(
-                core=core,
-                trace_id=order.trace_id,
-                action="retry.failed",
-                inputs={"order_id": order_id, "attempt": retries + 1},
-                output={"retryable": error.retryable},
-                explanation="The bounded retry also failed; no duplicate settlement was created.",
-            )
-            raise
+            pending_order = core.mark_payment_pending(order_id)
+            try:
+                return self._create_provider_attempt(order_id, pending_order.trace_id, core)
+            except RazorpayRequestError as error:
+                core.mark_payment_failed(order_id, reason=str(error))
+                self._record(
+                    core=core,
+                    trace_id=order.trace_id,
+                    action="retry.failed",
+                    inputs={"order_id": order_id, "attempt": retries + 1},
+                    output={"retryable": error.retryable},
+                    explanation="The bounded retry also failed; no duplicate settlement was created.",
+                )
+                raise
 
     def _create_provider_attempt(self, order_id: str, trace_id: str, core: CommerceCore) -> PaymentAttempt:
         pending_order = core.get_order(order_id)
@@ -209,7 +285,10 @@ class PaymentService:
             self._local_order_by_provider_order_id[provider_link.provider_order_id] = order_id
         # Persisted references: webhook settlement must survive restarts.
         core.attach_provider_refs(
-            order_id, link_id=provider_link.provider_link_id, provider_order_id=provider_link.provider_order_id
+            order_id,
+            link_id=provider_link.provider_link_id,
+            provider_order_id=provider_link.provider_order_id,
+            payment_url=provider_link.short_url,
         )
         self._record(
             core=core,
@@ -222,15 +301,39 @@ class PaymentService:
         )
         return attempt
 
-    def handle_webhook(self, body: bytes, signature: str | None) -> PaymentAttempt:
+    _SUPPORTED_WEBHOOK_EVENTS = frozenset(
+        {
+            "payment.captured",
+            "payment_link.paid",
+            "payment.failed",
+            "payment_link.cancelled",
+        }
+    )
+
+    def handle_webhook(
+        self, body: bytes, signature: str | None, *, extra_flags: list[str] | None = None
+    ) -> PaymentAttempt:
+        """Verify and reconcile a Razorpay webhook (dev simulation included).
+
+        ``extra_flags`` marks synthetic provenance (e.g. ``["simulated"]``) on
+        the resulting ledger events so demo money is never narrated as
+        verified provider money.
+        """
         self.rail.verify_webhook(body, signature)
         try:
             payload = json.loads(body)
-            event_name = payload["event"]
-            payment = payload["payload"]["payment"]["entity"]
-            provider_payment_id = payment["id"]
-        except (KeyError, TypeError, json.JSONDecodeError) as error:
+            event_name = payload.get("event")
+            payload_section = payload.get("payload") or {}
+            link_entity = (payload_section.get("payment_link") or {}).get("entity") or {}
+            # payment_link.cancelled carries ONLY a payment_link entity — there
+            # is no payment.entity (nothing was paid). Parse per event family
+            # instead of unconditionally requiring payment.entity.
+            payment = (payload_section.get("payment") or {}).get("entity") or {}
+        except (AttributeError, json.JSONDecodeError) as error:
             raise UnsupportedWebhookEventError("Webhook payload is not a supported Razorpay payment event") from error
+        if not isinstance(event_name, str) or event_name not in self._SUPPORTED_WEBHOOK_EVENTS:
+            raise UnsupportedWebhookEventError(f"Unsupported Razorpay event: {event_name}")
+        provider_payment_id = payment.get("id")
 
         # Resolution order: in-memory map → payload reference_id → persisted
         # order row (provider refs live in the DB), so settlement survives
@@ -238,7 +341,7 @@ class PaymentService:
         # customer-side failures arrive as payment.failed on the link's
         # internal order.
         try:
-            core, local_order = self._resolve_webhook_order(
+            core, local_order, link_id = self._resolve_webhook_order(
                 event_name=event_name, payment=payment, payload=payload
             )
         except UnknownProviderOrderError:
@@ -253,48 +356,137 @@ class PaymentService:
         if attempt is None:
             # Restarted since the attempt was created — rebuild the minimal
             # attempt from the persisted order so settlement can proceed.
-            attempt = PaymentAttempt(
-                order_id=local_order_id,
-                provider_order_id=local_order.provider_link_id or local_order_id,
-                idempotency_key=local_order.idempotency_key,
-            )
-            self._attempt_by_order_id[local_order_id] = attempt
-        delivery_key = f"{event_name}:{provider_payment_id}"
-        if delivery_key in self._processed_delivery_keys:
+            attempt = self._rebuild_attempt(local_order)
+        # Persisted delivery claim, atomic across processes and replicas:
+        # duplicates return the current attempt with no new rows. The amount
+        # is part of the key: a mismatched delivery must not burn the key for
+        # a later corrected event for the same payment, while identical
+        # redeliveries still collapse to one ledger row.
+        amount_token = payment.get("amount")
+        delivery_key = (
+            f"{event_name}:{provider_payment_id or link_id or local_order_id}"
+            f":{amount_token}"
+        )
+        if not core.ledger.claim_delivery(delivery_key):
+            # Duplicate delivery: answer from authoritative DB state, not from
+            # a blank rebuilt attempt — after a restart the in-memory attempt
+            # knows nothing about the settlement that already happened.
+            if local_order.status is OrderStatus.PAID:
+                attempt = attempt.model_copy(
+                    update={
+                        "status": PaymentStatus.CAPTURED,
+                        "provider_payment_id": (
+                            attempt.provider_payment_id
+                            or core.ledger.last_provider_ref(local_order.trace_id)
+                        ),
+                    }
+                )
+                self._attempt_by_order_id[local_order_id] = attempt
+            elif local_order.status is OrderStatus.PAYMENT_FAILED:
+                attempt = attempt.model_copy(update={"status": PaymentStatus.FAILED})
+                self._attempt_by_order_id[local_order_id] = attempt
             return attempt
+        flags = list(extra_flags) if extra_flags else []
+        provenance_note = (
+            " (Simulated provider event — dev only, not real provider money.)"
+            if "simulated" in flags
+            else ""
+        )
 
         if event_name in ("payment.captured", "payment_link.paid"):
-            captured_amount = payment.get("amount")
-            if captured_amount is not None and int(captured_amount) != local_order.amount_paise:
+            try:
+                raw_amount = payment.get("amount")
+                captured_amount = None if raw_amount is None else int(raw_amount)
+            except (TypeError, ValueError):
+                captured_amount = None
+            if (
+                provider_payment_id is None
+                or captured_amount is None
+                or captured_amount != local_order.amount_paise
+            ):
                 self._record(
                     core=core,
                     trace_id=local_order.trace_id,
                     action="webhook.amount_mismatch",
                     inputs={"event": event_name, "provider_payment_id": provider_payment_id},
                     output={
-                        "provider_amount_paise": captured_amount,
+                        "provider_amount_paise": payment.get("amount"),
                         "order_amount_paise": local_order.amount_paise,
                     },
                     provider_ref=provider_payment_id,
                     explanation=(
-                        "The captured amount does not match the local order amount; the order "
-                        "was not settled."
+                        "The captured amount does not match the local order amount (or is "
+                        "missing); the order was not settled." + provenance_note
                     ),
+                    flags=flags,
                 )
                 return attempt
-            # Cross-event duplicate: payment_link.paid and payment.captured can
-            # both announce the same settlement — the first one wins.
-            if attempt.status is PaymentStatus.CAPTURED:
+            if local_order.status is OrderStatus.PAID:
+                # Already settled: redelivery, or payment_link.paid racing
+                # payment.captured for the same settlement. A second DISTINCT
+                # capture is real money kept by the provider account — never
+                # drop it silently; flag it for refund/reconciliation.
+                if (
+                    provider_payment_id
+                    and attempt.provider_payment_id
+                    and attempt.provider_payment_id != provider_payment_id
+                ):
+                    self._record(
+                        core=core,
+                        trace_id=local_order.trace_id,
+                        action="webhook.duplicate_capture",
+                        inputs={
+                            "event": event_name,
+                            "order_id": local_order_id,
+                            "first_payment_id": attempt.provider_payment_id,
+                            "second_payment_id": provider_payment_id,
+                        },
+                        output={"order_status": "PAID"},
+                        provider_ref=provider_payment_id,
+                        explanation=(
+                            "A second distinct capture arrived for an already-settled order. "
+                            "The order stays PAID; the extra payment needs a refund or manual "
+                            "reconciliation." + provenance_note
+                        ),
+                        flags=flags,
+                    )
                 return attempt
-            core.mark_paid(local_order_id, provider_ref=provider_payment_id)
+            try:
+                core.mark_paid(local_order_id, provider_ref=provider_payment_id)
+            except InvalidOrderTransitionError as error:
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.unexpected_state",
+                    inputs={
+                        "event": event_name,
+                        "order_id": local_order_id,
+                        "order_status": local_order.status,
+                        "provider_payment_id": provider_payment_id,
+                    },
+                    output={"settled": False},
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        f"A verified {event_name} webhook arrived for an order in "
+                        f"{local_order.status}; the strict state machine refused settlement. "
+                        "Manual reconciliation required." + provenance_note
+                    ),
+                    flags=flags,
+                )
+                raise UnexpectedOrderStateError(
+                    f"Order {local_order_id} in {local_order.status} cannot settle {event_name}"
+                ) from error
             updated_attempt = attempt.model_copy(
                 update={
                     "provider_payment_id": provider_payment_id,
                     "status": PaymentStatus.CAPTURED,
                 }
             )
-            explanation = "Verified Razorpay payment webhook and settled the local order."
-        elif event_name in ("payment.failed", "payment_link.cancelled"):
+            explanation = (
+                "Verified Razorpay payment webhook and settled the local order."
+                + provenance_note
+            )
+        else:  # payment.failed / payment_link.cancelled
             reason = (
                 str(payment.get("error_description") or "")
                 or (
@@ -303,11 +495,34 @@ class PaymentService:
                     else "Razorpay reported a failed payment"
                 )
             )
-            if local_order.status is PaymentStatus.FAILED:
+            if local_order.status is OrderStatus.PAYMENT_FAILED:
                 return attempt  # already failed — idempotent
-            core.mark_payment_failed(
-                local_order_id, reason=reason, provider_ref=provider_payment_id
-            )
+            try:
+                core.mark_payment_failed(
+                    local_order_id, reason=reason, provider_ref=provider_payment_id
+                )
+            except InvalidOrderTransitionError as error:
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.unexpected_state",
+                    inputs={
+                        "event": event_name,
+                        "order_id": local_order_id,
+                        "order_status": local_order.status,
+                    },
+                    output={"recorded": False},
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        f"A verified {event_name} webhook arrived for an order in "
+                        f"{local_order.status}; the strict state machine refused the failure "
+                        "transition. Manual reconciliation required." + provenance_note
+                    ),
+                    flags=flags,
+                )
+                raise UnexpectedOrderStateError(
+                    f"Order {local_order_id} in {local_order.status} cannot record {event_name}"
+                ) from error
             updated_attempt = attempt.model_copy(
                 update={
                     "provider_payment_id": provider_payment_id,
@@ -315,12 +530,12 @@ class PaymentService:
                     "failure_reason": reason,
                 }
             )
-            explanation = "Verified Razorpay payment failure webhook and recorded the explicit failure state."
-        else:
-            raise UnsupportedWebhookEventError(f"Unsupported Razorpay event: {event_name}")
+            explanation = (
+                "Verified Razorpay payment failure webhook and recorded the explicit failure state."
+                + provenance_note
+            )
 
         self._attempt_by_order_id[local_order_id] = updated_attempt
-        self._processed_delivery_keys.add(delivery_key)
         self._record(
             core=core,
             trace_id=local_order.trace_id,
@@ -329,6 +544,7 @@ class PaymentService:
             output={"order_id": local_order_id, "status": updated_attempt.status},
             provider_ref=provider_payment_id,
             explanation=explanation,
+            flags=flags,
         )
         return updated_attempt
 
@@ -341,6 +557,7 @@ class PaymentService:
         output: dict[str, object],
         explanation: str,
         provider_ref: str | None = None,
+        flags: list[str] | None = None,
         core: CommerceCore | None = None,
     ) -> None:
         (core or self.commerce).ledger.append(
@@ -353,5 +570,6 @@ class PaymentService:
                 output=output,
                 reasoning_summary=explanation,
                 provider_ref=provider_ref,
+                flags=flags or [],
             )
         )

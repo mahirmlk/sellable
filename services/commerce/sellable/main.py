@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -17,7 +18,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from sellable.agents.buyer import BuyerAgent, BuyerResult
 from sellable.agents.seller import SellerAgent, SellerDecision, SellerRequest
-from sellable.auth import AgentApiKey, get_agent_api_key
+from sellable.auth import AgentApiKey, get_agent_api_key, get_agent_api_key_signed
 from sellable.config import settings
 from sellable.contracts import (
     BuyerMission,
@@ -41,7 +42,7 @@ from sellable.contracts import (
     Product,
     RefundCreateRequest,
 )
-from sellable.core import CommerceCore
+from sellable.core import CommerceCore, IdempotencyReuseError
 from sellable.gateway import AgentGateway
 from sellable.ledger.database import initialise_database
 from sellable.ledger.service import LedgerRepository
@@ -60,6 +61,7 @@ from sellable.payments.razorpay import (
 )
 from sellable.payments.service import (
     PaymentService,
+    UnexpectedOrderStateError,
     UnknownProviderOrderError,
     UnsupportedWebhookEventError,
 )
@@ -154,12 +156,51 @@ seller_agent = SellerAgent(commerce_core, llm=_seller_llm)
 agent_gateway = AgentGateway(commerce_core, seller_agent)
 buyer_agent = BuyerAgent(agent_gateway, llm=_make_llm()[0])
 payment_service = PaymentService(commerce_core, RazorpayAdapter(settings), core_resolver=registry.get)
-refund_service = RefundService(commerce_core)
+refund_service = RefundService(commerce_core, RazorpayAdapter(settings))
 
 
 def merchant_core(session: MerchantSession) -> CommerceCore:
     """Return the caller's own merchant core (scoped catalog, policy, orders)."""
     return registry.get(session.merchant_id)
+
+
+def require_owner(session: MerchantSession) -> None:
+    """Owner-only actions: policy changes and money-out (refunds).
+
+    Approvals, rejections, and fulfillment stay member-level — they are the
+    day-to-day operational queue. Every membership row defaults to owner;
+    operators are read-only for config and refunds.
+    """
+    if session.role != "owner":
+        raise HTTPException(
+            status_code=403, detail="This action requires the merchant owner role"
+        )
+
+
+_TRACE_ID_PATTERN = re.compile(r"^trc_[0-9a-f]{32}$")
+
+
+def resolve_trace_id(
+    x_trace_id: str | None, *, body_trace_id: str | None = None
+) -> str:
+    """One stable trace id per client transaction flow.
+
+    Precedence: ``X-Trace-Id`` header > body ``trace_id`` > fresh server id.
+    A malformed header is rejected (422, same pattern as
+    ``OrderCreateRequest.trace_id``) so flows never silently fork into
+    uncorrelatable fragments. Quote → order → consent → payment issued with
+    the same header then share one replayable trace.
+    """
+    from uuid import uuid4
+
+    candidate = x_trace_id or body_trace_id
+    if candidate is None:
+        return f"trc_{uuid4().hex}"
+    if not _TRACE_ID_PATTERN.match(candidate):
+        raise HTTPException(
+            status_code=422, detail="X-Trace-Id must match ^trc_[0-9a-f]{32}$"
+        )
+    return candidate
 
 
 def get_seller_agent() -> SellerAgent:
@@ -214,9 +255,10 @@ def seller_respond(
     body: SellerRequest,
     agent: SellerAgent = Depends(get_seller_agent),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
 ) -> SellerDecision:
     """Never creates an order, issues consent, or executes a payment."""
-    return agent.respond(body)
+    return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
 
 
 @app.get("/.well-known/agents.json", tags=["agent-gateway"])
@@ -269,8 +311,9 @@ def agent_quote_create(
     body: SellerRequest,
     gateway: AgentGateway = Depends(get_agent_gateway),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
 ) -> SellerDecision:
-    return gateway.create_quote(body)
+    return gateway.create_quote(body, trace_id=resolve_trace_id(x_trace_id))
 
 
 @app.post("/agent/quotes.negotiate", response_model=SellerDecision, tags=["agent-gateway"])
@@ -280,8 +323,9 @@ def agent_quote_negotiate(
     body: SellerRequest,
     gateway: AgentGateway = Depends(get_agent_gateway),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
 ) -> SellerDecision:
-    return gateway.create_quote(body)
+    return gateway.create_quote(body, trace_id=resolve_trace_id(x_trace_id))
 
 
 @app.post("/agent/buyer/run", response_model=BuyerResult, tags=["buyer-agent"])
@@ -290,9 +334,12 @@ def buyer_run(
     request: Request,
     mission: BuyerMission,
     agent: BuyerAgent = Depends(get_buyer_agent),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    # The reference buyer creates real orders + consents: signed-only
+    # outside dev/test, like every mutating agent route.
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
 ) -> BuyerResult:
-    return agent.run(mission)
+    return agent.run(mission, trace_id=resolve_trace_id(x_trace_id))
 
 
 @app.post("/agent/consents.request", tags=["agent-gateway"])
@@ -301,7 +348,7 @@ def agent_consents_request(
     request: Request,
     body: ConsentRequest,
     commerce: CommerceCore = Depends(get_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
 ) -> dict:
     try:
         consent = commerce.issue_consent(body.order_id)
@@ -326,25 +373,29 @@ def agent_order_create(
     body: OrderCreateRequest,
     gateway: AgentGateway = Depends(get_agent_gateway),
     commerce: CommerceCore = Depends(get_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
 ) -> dict:
-    from uuid import uuid4
-
     from agents.seller.agent import SellerRequest
 
-    existing_order = commerce.get_order_by_idempotency_key(body.idempotency_key)
-    if existing_order is not None:
+    # One stable trace per client flow (X-Trace-Id header > body trace_id).
+    # Fast-path replay only when the caller repeats the same trace: the same
+    # key with a different cart/message must go through the core guard below,
+    # which raises IdempotencyReuseError instead of returning another
+    # transaction's order.
+    trace_id = resolve_trace_id(x_trace_id, body_trace_id=body.trace_id)
+    pre_existing = commerce.get_order_by_idempotency_key(body.idempotency_key)
+    if pre_existing is not None and pre_existing.trace_id == trace_id:
         return {
-            "order_id": existing_order.order_id,
-            "trace_id": existing_order.trace_id,
-            "status": existing_order.status,
-            "amount_paise": existing_order.amount_paise,
-            "quote_id": existing_order.quote_id,
-            "idempotency_key": existing_order.idempotency_key,
+            "order_id": pre_existing.order_id,
+            "trace_id": pre_existing.trace_id,
+            "status": pre_existing.status,
+            "amount_paise": pre_existing.amount_paise,
+            "quote_id": pre_existing.quote_id,
+            "idempotency_key": pre_existing.idempotency_key,
             "replayed": True,
         }
 
-    trace_id = body.trace_id or f"trc_{uuid4().hex}"
     decision = gateway.create_quote(
         SellerRequest(
             message=body.message,
@@ -364,12 +415,28 @@ def agent_order_create(
             status_code=409,
             detail=f"Order creation blocked by policy: {decision.policy_decision.reason_code if decision.policy_decision else 'NO_MATCH'}",
         )
-    order = commerce.create_order(
-        cart=decision.cart,
-        intent=body.intent,
-        trace_id=trace_id,
-        idempotency_key=body.idempotency_key,
-    )
+    try:
+        order = commerce.create_order(
+            cart=decision.cart,
+            intent=body.intent,
+            trace_id=trace_id,
+            idempotency_key=body.idempotency_key,
+        )
+    except IdempotencyReuseError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        # Policy denial or a lost create_order race — never a 500.
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if pre_existing is not None and pre_existing.order_id == order.order_id:
+        return {
+            "order_id": order.order_id,
+            "trace_id": order.trace_id,
+            "status": order.status,
+            "amount_paise": order.amount_paise,
+            "quote_id": order.quote_id,
+            "idempotency_key": order.idempotency_key,
+            "replayed": True,
+        }
     return {
         "order_id": order.order_id,
         "trace_id": order.trace_id,
@@ -397,7 +464,7 @@ def agent_order_status(
         "order_id": order.order_id,
         "status": order.status,
         "amount_paise": order.amount_paise,
-        "payment_id": None,
+        "payment_id": commerce.ledger.last_provider_ref(order.trace_id, action="order.paid"),
         "trace_id": order.trace_id,
     }
 
@@ -410,11 +477,22 @@ def agent_refunds_create(
     refunds: RefundService = Depends(get_refund_service),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    require_owner(session)
     core = merchant_core(session)
     try:
         return refunds.initiate_refund(
-            order_id=body.order_id, reason=body.reason, commerce=core
+            order_id=body.order_id,
+            reason=body.reason,
+            amount_paise=body.amount_paise,
+            idempotency_key=body.idempotency_key,
+            commerce=core,
         )
+    except RazorpayConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RazorpayRequestError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except UnexpectedOrderStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -431,7 +509,7 @@ def start_payment(
     order_id: str,
     body: PaymentStartRequest,
     payments: PaymentService = Depends(get_payment_service),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
 ) -> PaymentAttempt:
     try:
         return payments.start_payment(order_id=order_id, consent_id=body.consent_id)
@@ -454,7 +532,7 @@ def retry_payment(
     request: Request,
     order_id: str,
     payments: PaymentService = Depends(get_payment_service),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
 ) -> PaymentAttempt:
     try:
         return payments.retry_payment(order_id=order_id)
@@ -472,7 +550,10 @@ def retry_payment(
     tags=["payments"],
     summary="Verify and reconcile a Razorpay payment webhook.",
 )
-@limiter.exempt
+# Not exempt: the one unauthenticated HMAC-verifying endpoint still gets a
+# generous per-IP bucket against floods and signature-probing. Genuine
+# provider retries sit far below 120/minute.
+@limiter.limit("120/minute")
 async def razorpay_webhook(
     request: Request,
     x_razorpay_signature: str | None = Header(default=None),
@@ -485,6 +566,10 @@ async def razorpay_webhook(
         raise HTTPException(status_code=401, detail=str(error)) from error
     except RazorpayConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    except UnexpectedOrderStateError as error:
+        # Verified money event for an order that cannot legally move — needs
+        # manual reconciliation, not a retry storm.
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except (UnknownProviderOrderError, UnsupportedWebhookEventError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -499,18 +584,34 @@ def refund_order(
     request: Request,
     order_id: str,
     reason: str = "merchant_initiated",
+    amount_paise: int | None = None,
+    idempotency_key: str | None = None,
     refunds: RefundService = Depends(get_refund_service),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
     if len(reason) > 500:
         raise HTTPException(status_code=400, detail="Reason must be 500 characters or fewer")
+    require_owner(session)
     core = merchant_core(session)
     try:
         # A merchant-scoped core only knows its own orders, so foreign
         # order ids fail with a 404-equivalent ownership error.
-        return refunds.initiate_refund(order_id=order_id, reason=reason, commerce=core)
+        # Full amount by default; partial refunds keep the order PAID.
+        return refunds.initiate_refund(
+            order_id=order_id,
+            reason=reason,
+            amount_paise=amount_paise,
+            idempotency_key=idempotency_key,
+            commerce=core,
+        )
+    except RazorpayConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RazorpayRequestError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except UnexpectedOrderStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except ValueError as error:
-          raise HTTPException(status_code=400, detail=str(error)) from error
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 # ---------------------------------------------------------------------------
@@ -536,15 +637,31 @@ def _signed_webhook(payload: dict[str, object]) -> tuple[bytes, str]:
     return body, signature
 
 
-def _simulate_provider_event(payments: PaymentService, order_id: str, event: str) -> PaymentAttempt:
+def _simulate_provider_event(
+    payments: PaymentService, core: CommerceCore, order_id: str, event: str
+) -> PaymentAttempt:
     from uuid import uuid4
 
-    if settings.environment == "production":
+    if not settings.is_dev_environment:
         raise HTTPException(status_code=403, detail="Webhook simulation is disabled in production")
+    # Merchant-scoped resolution: a foreign order_id is invisible (404),
+    # exactly like every other console endpoint — never the global demo core.
+    try:
+        order = core.get_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
     attempt = payments._attempt_by_order_id.get(order_id)
     if attempt is None:
-        raise HTTPException(status_code=409, detail="No payment attempt exists for this order")
-    order = commerce_core.get_order(order_id)
+        # Restart-safe: rebuild from the persisted provider refs instead of
+        # failing just because process memory was lost.
+        if order.provider_link_id is None:
+            raise HTTPException(status_code=409, detail="No payment attempt exists for this order")
+        attempt = PaymentAttempt(
+            order_id=order_id,
+            provider_order_id=order.provider_link_id,
+            idempotency_key=order.idempotency_key,
+        )
+        payments._attempt_by_order_id[order_id] = attempt
     payment_entity = {
         "id": f"pay_sim_{uuid4().hex[:12]}",
         "order_id": attempt.provider_order_id,
@@ -556,7 +673,10 @@ def _simulate_provider_event(payments: PaymentService, order_id: str, event: str
     payload = {"event": event, "payload": {"payment": {"entity": payment_entity}}}
     body, signature = _signed_webhook(payload)
     try:
-        return payments.handle_webhook(body, signature)
+        # Flagged as simulated so the ledger narrates demo money honestly.
+        return payments.handle_webhook(body, signature, extra_flags=["simulated"])
+    except UnexpectedOrderStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except (UnknownProviderOrderError, UnsupportedWebhookEventError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -572,9 +692,9 @@ def console_simulate_capture(
     request: Request,
     order_id: str,
     payments: PaymentService = Depends(get_payment_service),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> PaymentAttempt:
-    return _simulate_provider_event(payments, order_id, "payment.captured")
+    return _simulate_provider_event(payments, merchant_core(session), order_id, "payment.captured")
 
 
 @app.post(
@@ -588,9 +708,9 @@ def console_simulate_failure(
     request: Request,
     order_id: str,
     payments: PaymentService = Depends(get_payment_service),
-    _merchant: MerchantSession = Depends(get_merchant_session),
+    session: MerchantSession = Depends(get_merchant_session),
 ) -> PaymentAttempt:
-    return _simulate_provider_event(payments, order_id, "payment.failed")
+    return _simulate_provider_event(payments, merchant_core(session), order_id, "payment.failed")
 
 
 # ---------------------------------------------------------------------------
@@ -661,7 +781,7 @@ def _summarize_order(
         consent_status = "CONSUMED"
     elif consent_issued:
         consent_status = "ISSUED"
-    elif status in ("AWAITING_CONSENT", "QUOTED"):
+    elif status in ("AWAITING_CONSENT",):
         consent_status = "NOT_ISSUED"
     else:
         consent_status = "ISSUED" if consent_issued else None
@@ -689,8 +809,9 @@ def _summarize_order(
 def _enrich_transaction(
     order: "ConsoleTransactionItem | object",
     ledger: LedgerRepository,
+    merchant_id: str | None = None,
 ) -> dict[str, object]:
-    events = ledger.for_trace(getattr(order, "trace_id"))
+    events = ledger.for_trace(getattr(order, "trace_id"), merchant_id=merchant_id)
     return _summarize_order(order, list(events))
 
 
@@ -718,7 +839,7 @@ def console_transactions(
             idempotency_key=o.idempotency_key,
             created_at=o.created_at,
         )
-        enriched.append(ConsoleTransactionItem.model_validate({**base.model_dump(), **_enrich_transaction(o, ledger)}))
+        enriched.append(ConsoleTransactionItem.model_validate({**base.model_dump(), **_enrich_transaction(o, ledger, session.merchant_id)}))
     return enriched
 
 
@@ -737,7 +858,7 @@ def console_transaction_detail(
         order = core.get_order(order_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    events = ledger.for_trace(order.trace_id)
+    events = ledger.for_trace(order.trace_id, merchant_id=session.merchant_id)
     base = ConsoleTransactionDetail(
         order_id=order.order_id,
         trace_id=order.trace_id,
@@ -749,7 +870,7 @@ def console_transaction_detail(
         idempotency_key=order.idempotency_key,
         created_at=order.created_at,
     )
-    enriched = _enrich_transaction(order, ledger)
+    enriched = _enrich_transaction(order, ledger, session.merchant_id)
     return ConsoleTransactionDetail.model_validate(
         {
             **base.model_dump(),
@@ -876,9 +997,8 @@ def console_approvals(
     for order in orders:
         if order.requires_approval and order.status in (
             OrderStatus.AWAITING_CONSENT,
-            OrderStatus.QUOTED,
         ):
-            events = ledger.for_trace(order.trace_id)
+            events = ledger.for_trace(order.trace_id, merchant_id=session.merchant_id)
             policy_event = None
             for e in events:
                 if e.action == "policy.checked":
@@ -910,6 +1030,26 @@ def console_approve_order(
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
     core = merchant_core(session)
+    # Validate issuability BEFORE the approval side effect: approve_order
+    # writes DB + ledger, so a subsequent issue_consent failure must not
+    # leave an "approved" order behind a 400 response.
+    try:
+        order = core.get_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if order.status is not OrderStatus.AWAITING_CONSENT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only orders awaiting consent can be approved; current status is {order.status}",
+        )
+    if not order.requires_approval:
+        raise HTTPException(
+            status_code=400, detail="Order does not require merchant approval"
+        )
+    if core.consent_service.active_for_order(order.order_id) is not None:
+        raise HTTPException(
+            status_code=400, detail="A consent is already active for this order"
+        )
     try:
         core.approve_order(order_id)
         consent = core.issue_consent(order_id)
@@ -925,12 +1065,50 @@ def console_reject_order(
     request: Request,
     order_id: str,
     commerce: CommerceCore = Depends(get_commerce),
+    payments: PaymentService = Depends(get_payment_service),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
     core = merchant_core(session)
     try:
+        order = core.get_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if order.status is OrderStatus.PAYMENT_PENDING and order.provider_link_id:
+        # A live provider link exists: cancel it first so the aborted order
+        # can never be paid afterwards. Fail closed — no abort while the
+        # link may still be payable.
+        try:
+            payments.cancel_provider_link(order_id, commerce=core)
+        except (RazorpayConfigurationError, RazorpayRequestError) as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not cancel the live payment link: {error}",
+            ) from error
+    try:
         core.mark_aborted(order_id, reason="Order rejected by merchant via console.")
         return {"status": "rejected", "order_id": order_id}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/console/orders/{order_id}/fulfill", tags=["console"])
+@app.post("/orders/{order_id}/fulfill", tags=["console"])
+@limiter.limit("30/minute")
+def console_fulfill_order(
+    request: Request,
+    order_id: str,
+    commerce: CommerceCore = Depends(get_commerce),
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """Mark a paid order fulfilled (PAID → FULFILLED + ledger event)."""
+    core = merchant_core(session)
+    try:
+        core.get_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    try:
+        order = core.mark_fulfilled(order_id)
+        return {"status": order.status, "order_id": order_id}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -1044,6 +1222,7 @@ def console_update_policy(
     ledger: LedgerRepository = Depends(get_ledger),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> ConsolePolicySettings:
+    require_owner(session)
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -1091,7 +1270,7 @@ def transaction_events(
         order = core.get_order(order_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    events = ledger.for_trace(order.trace_id)
+    events = ledger.for_trace(order.trace_id, merchant_id=session.merchant_id)
     return {
         "order_id": order_id,
         "trace_id": order.trace_id,
@@ -1264,6 +1443,7 @@ def console_buyer_run(
     request: Request,
     mission: BuyerMission,
     session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
 ) -> BuyerResult:
     """Run the reference AI buyer against the authenticated merchant's own store.
 
@@ -1274,7 +1454,7 @@ def console_buyer_run(
     core = merchant_core(session)
     gateway = AgentGateway(core, SellerAgent(core, llm=_seller_llm))
     buyer = BuyerAgent(gateway, llm=_make_llm()[0])
-    return buyer.run(mission)
+    return buyer.run(mission, trace_id=resolve_trace_id(x_trace_id))
 
 
 @app.get("/console/catalog", response_model=list[Product], tags=["console"])
@@ -1320,11 +1500,12 @@ def console_seller_respond(
     request: Request,
     body: SellerRequest,
     session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
 ) -> SellerDecision:
     """Conversational checkout against the merchant's own catalog and policy."""
     core = merchant_core(session)
     agent = SellerAgent(core, llm=_seller_llm)
-    return agent.respond(body)
+    return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
 
 
 @app.post("/console/orders", tags=["console"])
@@ -1333,23 +1514,24 @@ def console_order_create(
     request: Request,
     body: OrderCreateRequest,
     session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
 ) -> dict:
-    from uuid import uuid4
-
     core = merchant_core(session)
-    existing_order = core.get_order_by_idempotency_key(body.idempotency_key)
-    if existing_order is not None:
+    # One stable trace per client flow; fast-path replay only when the
+    # caller repeats the same trace (see /agent/orders.create).
+    trace_id = resolve_trace_id(x_trace_id, body_trace_id=body.trace_id)
+    pre_existing = core.get_order_by_idempotency_key(body.idempotency_key)
+    if pre_existing is not None and pre_existing.trace_id == trace_id:
         return {
-            "order_id": existing_order.order_id,
-            "trace_id": existing_order.trace_id,
-            "status": existing_order.status,
-            "amount_paise": existing_order.amount_paise,
-            "quote_id": existing_order.quote_id,
-            "idempotency_key": existing_order.idempotency_key,
+            "order_id": pre_existing.order_id,
+            "trace_id": pre_existing.trace_id,
+            "status": pre_existing.status,
+            "amount_paise": pre_existing.amount_paise,
+            "quote_id": pre_existing.quote_id,
+            "idempotency_key": pre_existing.idempotency_key,
             "replayed": True,
         }
 
-    trace_id = body.trace_id or f"trc_{uuid4().hex}"
     decision = SellerAgent(core, llm=_seller_llm).respond(
         SellerRequest(
             message=body.message,
@@ -1372,12 +1554,28 @@ def console_order_create(
                 f"{decision.policy_decision.reason_code if decision.policy_decision else 'NO_MATCH'}"
             ),
         )
-    order = core.create_order(
-        cart=decision.cart,
-        intent=body.intent,
-        trace_id=trace_id,
-        idempotency_key=body.idempotency_key,
-    )
+    try:
+        order = core.create_order(
+            cart=decision.cart,
+            intent=body.intent,
+            trace_id=trace_id,
+            idempotency_key=body.idempotency_key,
+        )
+    except IdempotencyReuseError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        # Policy denial or a lost create_order race — never a 500.
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if pre_existing is not None and pre_existing.order_id == order.order_id:
+        return {
+            "order_id": order.order_id,
+            "trace_id": order.trace_id,
+            "status": order.status,
+            "amount_paise": order.amount_paise,
+            "quote_id": order.quote_id,
+            "idempotency_key": order.idempotency_key,
+            "replayed": True,
+        }
     return {
         "order_id": order.order_id,
         "trace_id": order.trace_id,

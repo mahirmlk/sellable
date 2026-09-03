@@ -88,7 +88,11 @@ def test_duplicate_consent_is_rejected(commerce_core: CommerceCore) -> None:
     consent = commerce_core.issue_consent(order.order_id)
     commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
 
-    with pytest.raises(ValueError, match="not available"):
+    # The order already advanced to CONSENTED, so the transition guard fires
+    # BEFORE the consent is touched — the duplicate use is still rejected,
+    # with the more actionable reason, and the (already USED) consent state
+    # remains the second line of defense for cross-order reuse.
+    with pytest.raises(ValueError, match="Cannot transition"):
         commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
 
 

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from datetime import datetime, timezone
+
 from sqlalchemy import Engine, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from sellable.contracts import LedgerEvent
-from sellable.ledger.database import LedgerEventRecord, make_engine
+from sellable.ledger.database import LedgerEventRecord, WebhookDeliveryRecord, make_engine
 
 
 class LedgerRepository:
@@ -36,13 +39,23 @@ class LedgerRepository:
             session.commit()
         return event
 
-    def for_trace(self, trace_id: str) -> Sequence[LedgerEventRecord]:
+    def for_trace(
+        self, trace_id: str, *, merchant_id: str | None = None
+    ) -> Sequence[LedgerEventRecord]:
+        """Ledger events for one trace, optionally tenant-scoped.
+
+        Console callers must pass their merchant id: trace ids are
+        client-influenced (regex-pinned but not unguessable across tenants),
+        so the repository itself enforces the boundary instead of trusting
+        every caller to pre-check order ownership.
+        """
         with Session(self._engine) as session:
-            return session.scalars(
-                select(LedgerEventRecord)
-                .where(LedgerEventRecord.trace_id == trace_id)
-                .order_by(LedgerEventRecord.sequence)
-            ).all()
+            query = select(LedgerEventRecord).where(
+                LedgerEventRecord.trace_id == trace_id
+            )
+            if merchant_id is not None:
+                query = query.where(LedgerEventRecord.merchant_id == merchant_id)
+            return session.scalars(query.order_by(LedgerEventRecord.sequence)).all()
 
     def all_events(
         self, limit: int = 200, offset: int = 0, merchant_id: str | None = None
@@ -64,6 +77,59 @@ class LedgerRepository:
     def max_sequence(self) -> int:
         with Session(self._engine) as session:
             return session.scalar(select(func.max(LedgerEventRecord.sequence))) or 0
+
+    def last_provider_ref(self, trace_id: str, *, action: str = "order.paid") -> str | None:
+        """Latest provider ref recorded for one trace/action pair.
+
+        Lets post-restart duplicate deliveries answer with the real settled
+        payment id instead of a blank rebuilt attempt.
+        """
+        with Session(self._engine) as session:
+            query = (
+                select(LedgerEventRecord.provider_ref)
+                .where(LedgerEventRecord.trace_id == trace_id)
+                .where(LedgerEventRecord.action == action)
+                .where(LedgerEventRecord.provider_ref.is_not(None))
+                .where(LedgerEventRecord.provider_ref != "")
+                .order_by(LedgerEventRecord.sequence.desc())
+                .limit(1)
+            )
+            return session.scalar(query)
+
+    def count_actions(self, trace_id: str, action: str) -> int:
+        """Count ledger events for one trace/action pair.
+
+        Used for restart-proof budgets (e.g. bounded payment retries): the
+        ledger, not process memory, is the source of truth.
+        """
+        with Session(self._engine) as session:
+            query = (
+                select(func.count(LedgerEventRecord.sequence))
+                .where(LedgerEventRecord.trace_id == trace_id)
+                .where(LedgerEventRecord.action == action)
+            )
+            return session.scalar(query) or 0
+
+    def claim_delivery(self, delivery_key: str) -> bool:
+        """Atomically claim a webhook delivery key.
+
+        Returns True exactly once per key, across processes and replicas
+        (the primary key enforces it). Duplicate deliveries return False and
+        must not write new ledger rows.
+        """
+        with Session(self._engine) as session:
+            session.add(
+                WebhookDeliveryRecord(
+                    delivery_key=delivery_key,
+                    received_at=datetime.now(timezone.utc),
+                )
+            )
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                return False
+            return True
 
     def events_after(
         self, sequence: int, limit: int = 200, merchant_id: str | None = None

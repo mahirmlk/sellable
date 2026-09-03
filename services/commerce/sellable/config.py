@@ -83,6 +83,13 @@ def _parse_cors_origins(raw: str | None) -> tuple[str, ...]:
             origin = origin[1:-1].strip()
         if not origin:
             continue
+        # A wildcard with credentialed CORS is either rejected by browsers or
+        # over-permissive depending on the Starlette version — never allow an
+        # operator to configure it by accident.
+        if origin in ("*", "null"):
+            raise ValueError(
+                "CORS_ORIGINS must list explicit origins; '*'/'null' is not allowed"
+            )
         if origin.startswith(("http://", "https://")):
             origin = origin.rstrip("/")
         if origin not in origins:
@@ -118,6 +125,17 @@ class Settings:
     # Agent authentication (store only hashes/secrets server-side)
     agent_api_key_hashes: tuple[str, ...] = ()
     agent_hmac_secret: str | None = None
+
+    @property
+    def is_dev_environment(self) -> bool:
+        """Allowlist for demo conveniences (demo key, webhook simulation,
+        static-key agent writes).
+
+        A denylist (``!= "production"``) is fail-open: a typo like "prod" or
+        "staging" would silently enable demo access. Only the two known
+        non-production values qualify.
+        """
+        return self.environment in ("development", "test")
 
     # CORS
     cors_origins: tuple[str, ...] = (

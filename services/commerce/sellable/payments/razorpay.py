@@ -44,6 +44,14 @@ class ProviderPaymentLink(StrictModel):
     provider_order_id: str | None = None
 
 
+class ProviderRefund(StrictModel):
+    provider_refund_id: str
+    provider_payment_id: str
+    amount_paise: int
+    currency: str
+    status: str
+
+
 class RazorpayAdapter:
     provider_name = "razorpay"
     _base_url = "https://api.razorpay.com/v1"
@@ -93,6 +101,53 @@ class RazorpayAdapter:
             status=response["status"],
             provider_order_id=response.get("order_id"),
         )
+
+    def refund(
+        self, payment_id: str, amount_paise: int, *, notes: dict[str, str] | None = None
+    ) -> ProviderRefund:
+        """Refund a captured payment through Razorpay (test mode only).
+
+        Partial refunds pass a smaller amount; the provider returns the
+        refund id and its status. Transport/provider failures raise
+        RazorpayRequestError so callers never mark money moved on a guess.
+        """
+        self.validate_configuration()
+        if amount_paise <= 0:
+            raise RazorpayRequestError("Refund amount must be positive", retryable=False)
+        payload: dict[str, Any] = {"amount": amount_paise}
+        if notes:
+            payload["notes"] = notes
+        try:
+            response = self._sdk_client.payment.refund(payment_id, payload)
+        except BadRequestError as error:
+            raise RazorpayRequestError(
+                f"Razorpay rejected the refund: {error}", retryable=False
+            ) from error
+        except (GatewayError, ServerError) as error:
+            raise RazorpayRequestError(
+                f"Razorpay could not complete the refund: {error}", retryable=True
+            ) from error
+        return ProviderRefund(
+            provider_refund_id=response["id"],
+            provider_payment_id=payment_id,
+            amount_paise=response.get("amount", amount_paise),
+            currency=response.get("currency", "INR"),
+            status=response.get("status", "processed"),
+        )
+
+    def cancel_payment_link(self, link_id: str) -> None:
+        """Cancel a live payment link so it can no longer be paid."""
+        self.validate_configuration()
+        try:
+            self._sdk_client.payment_link.cancel(link_id)
+        except BadRequestError as error:
+            raise RazorpayRequestError(
+                f"Razorpay rejected the link cancellation: {error}", retryable=False
+            ) from error
+        except (GatewayError, ServerError) as error:
+            raise RazorpayRequestError(
+                f"Razorpay could not cancel the link: {error}", retryable=True
+            ) from error
 
     def verify_webhook(self, body: bytes, signature: str | None) -> None:
         self._ensure_webhook_configuration()

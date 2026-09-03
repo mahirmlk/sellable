@@ -125,6 +125,17 @@ def _verify_hs256(token: str) -> dict[str, object]:
         raise HTTPException(status_code=401, detail="Token missing or past its expiry")
     if payload.get("role") != "authenticated":
         raise HTTPException(status_code=401, detail="Token is not an authenticated user session")
+    # Audience/issuer binding, mirroring the ES256 path. Only enforced when
+    # the project URL is configured — a secret-only legacy setup cannot know
+    # the expected issuer, which is logged so the gap stays visible.
+    if settings.supabase_url:
+        expected_iss = f"{settings.supabase_url}/auth/v1"
+        if payload.get("iss") != expected_iss:
+            raise HTTPException(status_code=401, detail="Token issuer mismatch")
+        if payload.get("aud") != "authenticated":
+            raise HTTPException(status_code=401, detail="Token audience mismatch")
+    else:
+        logger.warning("HS256 verified without iss/aud binding (SUPABASE_URL unset)")
     return payload
 
 
@@ -245,7 +256,7 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str, str | None]:
 
 
 def _dev_session(x_agent_key: str | None) -> MerchantSession:
-    if settings.environment == "production":
+    if not settings.is_dev_environment:
         raise HTTPException(status_code=401, detail="Merchant authentication is not configured")
     if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH}:
         return MerchantSession(merchant_id=_DEMO_MERCHANT_ID, auth_user_id=None, role="owner")
@@ -271,7 +282,7 @@ def get_authenticated_user(
     """
     if not settings.supabase_is_configured:
         # Dev-only: the demo key identifies the local developer.
-        if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH} and settings.environment != "production":
+        if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH} and settings.is_dev_environment:
             return AuthenticatedUser(auth_user_id="dev_local_user")
         raise HTTPException(status_code=401, detail="Authentication is not configured")
 

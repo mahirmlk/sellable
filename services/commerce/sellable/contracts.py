@@ -33,7 +33,6 @@ class PolicyVerdict(StrEnum):
 
 
 class OrderStatus(StrEnum):
-    QUOTED = "QUOTED"
     AWAITING_CONSENT = "AWAITING_CONSENT"
     CONSENTED = "CONSENTED"
     PAYMENT_PENDING = "PAYMENT_PENDING"
@@ -167,6 +166,9 @@ class CartMandate(StrictModel):
 
 class Consent(StrictModel):
     consent_id: str = Field(default_factory=lambda: new_id("con"))
+    # Owning merchant. Optional only for legacy rows; core-issued consents
+    # always set it (it equals payee_id) so hydration can scope per tenant.
+    merchant_id: str | None = Field(default=None, max_length=64)
     order_id: str
     amount_paise: PositivePaise
     payee_id: str
@@ -230,9 +232,33 @@ class OrderStatusRequest(StrictModel):
     order_id: str = Field(min_length=1, max_length=128)
 
 
+class RefundStatus(StrEnum):
+    PENDING = "PENDING"
+    PROCESSED = "PROCESSED"
+    FAILED = "FAILED"
+
+
 class RefundCreateRequest(StrictModel):
     order_id: str = Field(min_length=1, max_length=128)
     reason: str = Field(default="merchant_initiated", min_length=1, max_length=500)
+    # Partial refunds keep the order PAID; a full refund settles it REFUNDED.
+    amount_paise: int | None = Field(default=None, gt=0)
+    # Client-supplied idempotency; when absent the server derives a
+    # deterministic key per (order, amount) so retries never double-refund.
+    idempotency_key: str | None = Field(default=None, min_length=16, max_length=256)
+
+
+class Refund(StrictModel):
+    refund_id: str = Field(default_factory=lambda: new_id("rfnd"))
+    merchant_id: str
+    order_id: str
+    amount_paise: PositivePaise
+    provider_payment_id: str | None = Field(default=None, max_length=128)
+    provider_refund_id: str | None = Field(default=None, max_length=128)
+    reason: str = Field(min_length=1, max_length=500)
+    status: RefundStatus = RefundStatus.PENDING
+    idempotency_key: str = Field(min_length=16, max_length=256)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class CatalogSearchRequest(StrictModel):
@@ -252,6 +278,12 @@ class BuyerMission(StrictModel):
     purpose: str = Field(min_length=1, max_length=280)
     expires_at: datetime
     request_upsell: bool = True
+    # Targeted purchasing: without these the buyer can only send a free-text
+    # message and never name a SKU, set a quantity, or make a first offer —
+    # which made the A2A negotiation loop structurally impossible.
+    requested_sku: str | None = Field(default=None, max_length=64)
+    quantity: int = Field(default=1, ge=1, le=100)
+    buyer_offer_paise: int | None = Field(default=None, gt=0)
 
 
 class Order(StrictModel):
@@ -268,8 +300,11 @@ class Order(StrictModel):
     created_at: datetime = Field(default_factory=utc_now)
     # Provider references — persisted so webhook settlement survives process
     # restarts (the provider order id is what payment.captured references).
+    # The payment URL is persisted too so a rebuilt attempt (after a restart
+    # or from a fresh service) still hands the buyer a payable link.
     provider_link_id: str | None = Field(default=None, max_length=256)
     provider_order_id: str | None = Field(default=None, max_length=256)
+    provider_payment_url: str | None = Field(default=None, max_length=512)
 
 
 class PolicyDecision(StrictModel):

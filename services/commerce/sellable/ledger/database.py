@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, create_engine
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, UniqueConstraint, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from sellable.config import Settings, settings
@@ -47,18 +47,28 @@ class OrderRecord(Base):
     amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    __table_args__ = (
+        # Cross-worker backstop for the in-memory idempotency guard in
+        # CommerceCore.create_order: the same merchant can never insert two
+        # orders under one key, even from concurrent processes.
+        UniqueConstraint("merchant_id", "idempotency_key", name="uq_orders_merchant_idempotency"),
+    )
     requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Provider references for restart-proof webhook settlement
     provider_link_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     provider_order_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    provider_payment_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
 class ConsentRecord(Base):
     __tablename__ = "consents"
 
     consent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Owning merchant. Nullable only for legacy rows (backfilled from
+    # payee_id, which always equals the merchant for core-issued consents).
+    merchant_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     order_id: Mapped[str] = mapped_column(String(64), nullable=False)
     amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     payee_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -66,6 +76,64 @@ class ConsentRecord(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     single_use: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class WebhookDeliveryRecord(Base):
+    """Restart-proof record of processed webhook deliveries.
+
+    The delivery key ``{event}:{provider_payment_id}`` is the primary key, so
+    claiming a key is atomic across processes and replicas: concurrent or
+    redelivered webhooks cannot both pass. Replaces the old in-memory
+    ``_processed_delivery_keys`` set, which was lost on every restart.
+    """
+
+    __tablename__ = "webhook_deliveries"
+
+    delivery_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RefundRecord(Base):
+    """One provider refund attempt per row; (merchant, idempotency_key) is
+    unique so retried refund requests return the existing record instead of
+    moving money twice."""
+
+    __tablename__ = "refunds"
+
+    refund_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider_refund_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True
+    )
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "merchant_id", "idempotency_key", name="uq_refunds_merchant_idempotency"
+        ),
+    )
+
+
+class AgentNonceRecord(Base):
+    """Seen HMAC nonces for agent-request replay protection.
+
+    The primary key makes claiming atomic across processes and replicas
+    (unlike the old in-memory set, which was lost on every restart).
+    ``seen_at`` is epoch seconds (integer, timezone-free by construction);
+    rows older than the timestamp window are pruned on each claim.
+    """
+
+    __tablename__ = "agent_nonces"
+
+    agent_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    nonce: Mapped[str] = mapped_column(String(128), primary_key=True)
+    seen_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class PolicyRecord(Base):
@@ -119,12 +187,60 @@ def make_engine(config: Settings = settings):
     return create_engine(config.database_url, connect_args=connect_args, pool_pre_ping=True)
 
 
+def _migrate_sqlite(engine) -> None:
+    """Bring long-lived SQLite dev databases up to the current models."""
+    import logging
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+
+    log = logging.getLogger("sellable.migrate")
+    with engine.begin() as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            )
+        }
+        if "consents" in tables:
+            cols = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(consents)"))
+            }
+            if "merchant_id" not in cols:
+                connection.execute(text("ALTER TABLE consents ADD COLUMN merchant_id VARCHAR(64)"))
+                connection.execute(
+                    text("UPDATE consents SET merchant_id = payee_id WHERE merchant_id IS NULL")
+                )
+        if "orders" in tables:
+            order_cols = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(orders)"))
+            }
+            if "provider_payment_url" not in order_cols:
+                connection.execute(
+                    text("ALTER TABLE orders ADD COLUMN provider_payment_url VARCHAR(512)")
+                )
+            # Tolerant: pre-existing duplicate keys keep the old behavior
+            # (core guard) instead of crashing startup.
+            try:
+                connection.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_merchant_idempotency "
+                        "ON orders (merchant_id, idempotency_key)"
+                    )
+                )
+            except OperationalError as error:
+                log.warning("Skipping orders idempotency unique index: %s", error)
+
+
 def _migrate(engine) -> None:
     """Add columns introduced after the initial schema without dropping data."""
+    import logging
+
     from sqlalchemy import text
 
     if engine.dialect.name == "sqlite":
-        return  # SQLite dev databases are always created fresh from the models
+        _migrate_sqlite(engine)
+        return
 
     # Use a raw connection without prepared statements for PgBouncer compatibility
     with engine.begin() as connection:
@@ -150,6 +266,25 @@ def _migrate(engine) -> None:
             connection.execute(text("ALTER TABLE orders ADD COLUMN provider_link_id VARCHAR(256)"))
         if "provider_order_id" not in cols:
             connection.execute(text("ALTER TABLE orders ADD COLUMN provider_order_id VARCHAR(256)"))
+        if "provider_payment_url" not in cols:
+            connection.execute(text("ALTER TABLE orders ADD COLUMN provider_payment_url VARCHAR(512)"))
+        tables = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT table_name FROM information_schema.tables WHERE table_name IN ('consents', 'orders')")
+            )
+        }
+        if "consents" in tables:
+            consent_cols = {
+                row[0]
+                for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'consents'"))
+            }
+            if "merchant_id" not in consent_cols:
+                connection.execute(text("ALTER TABLE consents ADD COLUMN merchant_id VARCHAR(64)"))
+                connection.execute(
+                    text("UPDATE consents SET merchant_id = payee_id WHERE merchant_id IS NULL")
+                )
+                connection.execute(text("CREATE INDEX ix_consents_merchant_id ON consents (merchant_id)"))
         ledger_cols = {
             row[0]
             for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'ledger_events'"))
@@ -167,6 +302,20 @@ def _migrate(engine) -> None:
             connection.execute(text(
                 "UPDATE ledger_events SET merchant_id = 'mrc_demo_store' WHERE merchant_id IS NULL"
             ))
+
+    # Separate transaction: pre-existing duplicate keys must not roll back
+    # the column migrations above — worst case the core in-memory guard
+    # remains the only protection and a warning is logged.
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_merchant_idempotency "
+                "ON orders (merchant_id, idempotency_key)"
+            ))
+    except Exception as error:  # noqa: BLE001 — startup must survive legacy data
+        logging.getLogger("sellable.migrate").warning(
+            "Skipping orders idempotency unique index: %s", error
+        )
 
 
 def initialise_database(config: Settings = settings) -> None:

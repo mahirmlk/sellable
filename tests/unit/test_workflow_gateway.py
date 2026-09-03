@@ -76,6 +76,22 @@ def test_hmac_signed_request_is_authenticated_and_replay_is_rejected(
         "settings",
         Settings(agent_hmac_secret=secret, agent_api_key_hashes=()),
     )
+    # Isolate the persistent nonce store: without this, the fixed test nonce
+    # would be claimed in whatever database the ambient settings point at
+    # (including a shared Supabase project), coupling test runs together.
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from sellable.ledger.database import Base
+    from sellable.repositories import NonceRepository
+
+    nonce_engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(nonce_engine)
+    monkeypatch.setattr(auth_module, "_nonce_repo", NonceRepository(nonce_engine))
     try:
         with TestClient(app) as client:
             body = json.dumps({"query": "coffee", "categories": []}, separators=(",", ":")).encode(
@@ -195,7 +211,8 @@ def test_dashboard_aliases_match_workflow_spec(
         assert client.get("/growth", headers=H).status_code == 200
         # privileged action requires merchant session; missing key -> 401
         assert client.post("/approvals/does-not-exist/approve").status_code == 401
-        assert client.post("/approvals/does-not-exist/approve", headers=H).status_code == 400
+        # Unknown order -> 404 (ownership-checked up front, like detail/reject/fulfill)
+        assert client.post("/approvals/does-not-exist/approve", headers=H).status_code == 404
 
 
 def test_refund_requires_paid_order(commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch) -> None:

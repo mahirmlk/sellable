@@ -2,20 +2,43 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from sellable.contracts import Consent, ConsentStatus, Order, OrderStatus, Product
+from sellable.contracts import (
+    Consent,
+    ConsentStatus,
+    Order,
+    OrderStatus,
+    Product,
+    Refund,
+    RefundStatus,
+)
 from sellable.ledger.database import (
+    AgentNonceRecord,
     CatalogProductRecord,
     ConsentRecord,
     MerchantRecord,
     OrderRecord,
+    RefundRecord,
     make_engine,
 )
+
+
+def _as_aware_utc(value: datetime) -> datetime:
+    """SQLite returns naive datetimes; Postgres returns aware ones.
+
+    Normalize at the repository boundary so business code can always compare
+    against ``utc_now()`` without naive/aware TypeErrors.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 class MerchantRepository:
@@ -62,6 +85,7 @@ class OrderRepository:
                 existing.approved_at = order.approved_at
                 existing.provider_link_id = order.provider_link_id
                 existing.provider_order_id = order.provider_order_id
+                existing.provider_payment_url = order.provider_payment_url
                 existing.created_at = order.created_at
             else:
                 record = OrderRecord(
@@ -77,6 +101,7 @@ class OrderRepository:
                     approved_at=order.approved_at,
                     provider_link_id=order.provider_link_id,
                     provider_order_id=order.provider_order_id,
+                    provider_payment_url=order.provider_payment_url,
                     created_at=order.created_at,
                 )
                 session.add(record)
@@ -98,9 +123,42 @@ class OrderRepository:
                 idempotency_key=record.idempotency_key,
                 requires_approval=record.requires_approval,
                 approved_at=record.approved_at,
-                provider_link_id=record.provider_link_id,
-                provider_order_id=record.provider_order_id,
-                created_at=record.created_at,
+                    provider_link_id=record.provider_link_id,
+                    provider_order_id=record.provider_order_id,
+                    provider_payment_url=record.provider_payment_url,
+                    created_at=record.created_at,
+            )
+
+    def for_idempotency_key(self, merchant_id: str, idempotency_key: str) -> Order | None:
+        """Find an order by its (merchant, idempotency_key) pair.
+
+        DB-backed counterpart of the in-memory idempotency map, so replay
+        detection and race resolution work across processes and restarts.
+        """
+        with Session(self._engine) as session:
+            query = (
+                select(OrderRecord)
+                .where(OrderRecord.merchant_id == merchant_id)
+                .where(OrderRecord.idempotency_key == idempotency_key)
+            )
+            record = session.scalars(query.limit(1)).first()
+            if not record:
+                return None
+            return Order(
+                order_id=record.order_id,
+                trace_id=record.trace_id,
+                quote_id=record.quote_id,
+                buyer_agent_id=record.buyer_agent_id,
+                merchant_id=record.merchant_id,
+                amount_paise=record.amount_paise,
+                status=OrderStatus(record.status),
+                idempotency_key=record.idempotency_key,
+                requires_approval=record.requires_approval,
+                approved_at=record.approved_at,
+                    provider_link_id=record.provider_link_id,
+                    provider_order_id=record.provider_order_id,
+                    provider_payment_url=record.provider_payment_url,
+                    created_at=record.created_at,
             )
 
     def for_provider(
@@ -132,9 +190,10 @@ class OrderRepository:
                 idempotency_key=record.idempotency_key,
                 requires_approval=record.requires_approval,
                 approved_at=record.approved_at,
-                provider_link_id=record.provider_link_id,
-                provider_order_id=record.provider_order_id,
-                created_at=record.created_at,
+                    provider_link_id=record.provider_link_id,
+                    provider_order_id=record.provider_order_id,
+                    provider_payment_url=record.provider_payment_url,
+                    created_at=record.created_at,
             )
 
     def all(self, merchant_id: str | None = None) -> list[Order]:
@@ -161,6 +220,102 @@ class OrderRepository:
                 )
                 for r in records
             ]
+
+
+class RefundRepository:
+    """Persists provider refund attempts; idempotency-keyed per merchant."""
+
+    def __init__(self, engine: object | None = None) -> None:
+        self._engine = engine or make_engine()
+
+    @staticmethod
+    def _to_refund(record: RefundRecord) -> Refund:
+        return Refund(
+            refund_id=record.refund_id,
+            merchant_id=record.merchant_id,
+            order_id=record.order_id,
+            amount_paise=record.amount_paise,
+            provider_payment_id=record.provider_payment_id,
+            provider_refund_id=record.provider_refund_id,
+            reason=record.reason,
+            status=RefundStatus(record.status),
+            idempotency_key=record.idempotency_key,
+            created_at=_as_aware_utc(record.created_at),
+        )
+
+    def save(self, refund: Refund) -> None:
+        with Session(self._engine) as session:
+            existing = session.get(RefundRecord, refund.refund_id)
+            if existing:
+                existing.provider_payment_id = refund.provider_payment_id
+                existing.provider_refund_id = refund.provider_refund_id
+                existing.status = refund.status.value
+            else:
+                session.add(
+                    RefundRecord(
+                        refund_id=refund.refund_id,
+                        merchant_id=refund.merchant_id,
+                        order_id=refund.order_id,
+                        amount_paise=refund.amount_paise,
+                        provider_payment_id=refund.provider_payment_id,
+                        provider_refund_id=refund.provider_refund_id,
+                        reason=refund.reason,
+                        status=refund.status.value,
+                        idempotency_key=refund.idempotency_key,
+                        created_at=refund.created_at,
+                    )
+                )
+            session.commit()
+
+    def for_idempotency_key(self, merchant_id: str, idempotency_key: str) -> Refund | None:
+        with Session(self._engine) as session:
+            query = (
+                select(RefundRecord)
+                .where(RefundRecord.merchant_id == merchant_id)
+                .where(RefundRecord.idempotency_key == idempotency_key)
+            )
+            record = session.scalars(query.limit(1)).first()
+            return self._to_refund(record) if record else None
+
+    def for_order(self, merchant_id: str, order_id: str) -> list[Refund]:
+        with Session(self._engine) as session:
+            query = (
+                select(RefundRecord)
+                .where(RefundRecord.merchant_id == merchant_id)
+                .where(RefundRecord.order_id == order_id)
+                .order_by(RefundRecord.created_at)
+            )
+            return [self._to_refund(r) for r in session.scalars(query).all()]
+
+
+class NonceRepository:
+    """Persistent HMAC nonce store for agent-request replay protection."""
+
+    def __init__(self, engine: object | None = None) -> None:
+        self._engine = engine or make_engine()
+
+    def claim(self, agent_id: str, nonce: str, *, ttl_seconds: int = 600) -> bool:
+        """Return True exactly once per (agent, nonce) pair.
+
+        Stale rows (older than the timestamp window) are pruned on each
+        claim so the table stays tiny.
+        """
+        now = int(time.time())
+        with Session(self._engine) as session:
+            session.execute(
+                delete(AgentNonceRecord).where(
+                    AgentNonceRecord.seen_at < now - ttl_seconds
+                )
+            )
+            session.add(
+                AgentNonceRecord(agent_id=agent_id, nonce=nonce, seen_at=now)
+            )
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                return False
+            return True
 
 
 class CatalogRepository:
@@ -251,6 +406,7 @@ class ConsentRepository:
         with Session(self._engine) as session:
             existing = session.get(ConsentRecord, consent.consent_id)
             if existing:
+                existing.merchant_id = consent.merchant_id
                 existing.order_id = consent.order_id
                 existing.amount_paise = consent.amount_paise
                 existing.payee_id = consent.payee_id
@@ -261,6 +417,7 @@ class ConsentRepository:
             else:
                 record = ConsentRecord(
                     consent_id=consent.consent_id,
+                    merchant_id=consent.merchant_id,
                     order_id=consent.order_id,
                     amount_paise=consent.amount_paise,
                     payee_id=consent.payee_id,
@@ -279,26 +436,40 @@ class ConsentRepository:
                 return None
             return Consent(
                 consent_id=record.consent_id,
+                merchant_id=record.merchant_id,
                 order_id=record.order_id,
                 amount_paise=record.amount_paise,
                 payee_id=record.payee_id,
                 purpose=record.purpose,
-                expires_at=record.expires_at,
+                expires_at=_as_aware_utc(record.expires_at),
                 status=ConsentStatus(record.status),
                 single_use=bool(record.single_use),
             )
 
-    def all(self) -> list[Consent]:
+    def all(self, merchant_id: str | None = None) -> list[Consent]:
         with Session(self._engine) as session:
-            records = session.scalars(select(ConsentRecord)).all()
+            query = select(ConsentRecord)
+            if merchant_id is not None:
+                # Legacy rows have merchant_id NULL; they remain visible only
+                # to the tenant named by their payee_id (which always equals
+                # the issuing merchant for core-issued consents).
+                query = query.where(
+                    (ConsentRecord.merchant_id == merchant_id)
+                    | (
+                        ConsentRecord.merchant_id.is_(None)
+                        & (ConsentRecord.payee_id == merchant_id)
+                    )
+                )
+            records = session.scalars(query).all()
             return [
                 Consent(
                     consent_id=r.consent_id,
+                    merchant_id=r.merchant_id,
                     order_id=r.order_id,
                     amount_paise=r.amount_paise,
                     payee_id=r.payee_id,
                     purpose=r.purpose,
-                    expires_at=r.expires_at,
+                    expires_at=_as_aware_utc(r.expires_at),
                     status=ConsentStatus(r.status),
                     single_use=bool(r.single_use),
                 )
