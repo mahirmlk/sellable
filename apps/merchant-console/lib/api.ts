@@ -3,6 +3,12 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ||
   (process.env.NODE_ENV === "production" ? "https://api.sellable.shop" : "http://localhost:8000");
+
+// The backend origin the console talks to — OPEN links and copied URLs must
+// point here, never at the console's own domain or a hardcoded host.
+export function apiBaseUrl(): string {
+  return API_BASE;
+}
 // In demo mode (no Supabase configured) the console authenticates with the
 // public demo key. With Supabase configured, merchant auth uses the JWT.
 const isDemoMode = () => !process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -364,6 +370,15 @@ async function extractErrorDetail(
   try {
     const body = (await res.json()) as { detail?: unknown };
     if (typeof body?.detail === "string") return { detail: body.detail, code: null };
+    // FastAPI RequestValidationError shape: [{loc, msg, type}, ...].
+    // Summarize instead of dumping a JSON blob into the UI banner.
+    if (Array.isArray(body?.detail)) {
+      const first = body.detail[0] as { loc?: unknown; msg?: unknown } | undefined;
+      const where = Array.isArray(first?.loc) ? first.loc.slice(1).join(".") : "";
+      const what = typeof first?.msg === "string" ? first.msg : "Invalid request";
+      const extra = body.detail.length > 1 ? ` (+${body.detail.length - 1} more)` : "";
+      return { detail: where ? `${what} (${where})${extra}` : `${what}${extra}`, code: null };
+    }
     if (body?.detail !== undefined && body.detail !== null) {
       const obj = body.detail as { code?: unknown; message?: unknown };
       if (typeof obj === "object" && typeof obj.message === "string") {

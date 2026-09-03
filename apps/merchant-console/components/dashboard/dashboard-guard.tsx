@@ -9,7 +9,12 @@ const DEMO_COOKIE = "sellable_demo_auth";
 
 function hasDemoCookie(): boolean {
   if (typeof document === "undefined") return false;
-  return document.cookie.split("; ").some((c) => c === `${DEMO_COOKIE}=1` || c.startsWith(`${DEMO_COOKIE}=1`));
+  // Exact match on the parsed value — a prefix test would also accept
+  // sellable_demo_auth=10, =11, ... if such a cookie ever existed.
+  return document.cookie.split("; ").some((c) => {
+    const [name, ...rest] = c.split("=");
+    return name === DEMO_COOKIE && rest.join("=") === "1";
+  });
 }
 
 export function DashboardGuard() {

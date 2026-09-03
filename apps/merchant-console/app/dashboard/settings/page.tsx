@@ -47,6 +47,7 @@ export default function SettingsPage() {
   const [policyError, setPolicyError] = useState<StatusError | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<"success" | "error" | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const { data: status, loading: statusLoading, error: statusError, reload: reloadStatus } = useSystemStatus();
 
   const fetchPolicy = useCallback(async () => {
@@ -91,6 +92,46 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     if (!policy || Object.keys(editing).length === 0) return;
+    // Client-side guardrails mirror the backend contract (PositivePaise,
+    // 0-100 discount, non-negative counts) so a cleared field fails fast
+    // here instead of surfacing a generic 422 from the API.
+    const merged = { ...policy, ...editing };
+    const positivePaise: Array<keyof ConsolePolicySettings> = [
+      "max_order_value_paise",
+      "max_single_item_value_paise",
+      "human_approval_threshold_paise",
+    ];
+    for (const key of positivePaise) {
+      const v = merged[key];
+      if (typeof v !== "number" || !Number.isInteger(v) || v <= 0) {
+        setSaveMsg(null);
+        setValidationError(`${String(key)} must be a positive whole paise amount.`);
+        return;
+      }
+    }
+    if (
+      typeof merged.max_discount_percent !== "number" ||
+      merged.max_discount_percent < 0 ||
+      merged.max_discount_percent > 100
+    ) {
+      setSaveMsg(null);
+      setValidationError("max_discount_percent must be between 0 and 100.");
+      return;
+    }
+    for (const key of ["max_negotiation_rounds", "max_upsells_per_session"] as const) {
+      const v = merged[key];
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
+        setSaveMsg(null);
+        setValidationError(`${key} must be a whole number of 0 or more.`);
+        return;
+      }
+    }
+    if (merged.human_approval_threshold_paise > merged.max_order_value_paise) {
+      setSaveMsg(null);
+      setValidationError("The approval threshold cannot exceed the max order value.");
+      return;
+    }
+    setValidationError(null);
     setSaving(true);
     setSaveMsg(null);
     try {
@@ -151,6 +192,12 @@ export default function SettingsPage() {
         <div className="border border-red-400/30 bg-red-400/5 px-5 py-3 flex items-center gap-2">
           <AlertCircle size={14} className="text-red-400" />
           <span className="font-[var(--font-mono)] text-[0.65rem] text-red-400">Failed to update policy. Please try again.</span>
+        </div>
+      )}
+      {validationError && (
+        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-3 flex items-center gap-2">
+          <AlertCircle size={14} className="text-amber-400" />
+          <span className="font-[var(--font-mono)] text-[0.65rem] text-amber-400">{validationError}</span>
         </div>
       )}
 
@@ -286,7 +333,7 @@ export default function SettingsPage() {
           </div>
           {status?.payment_rail.webhook_last_verified_at && (
             <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)]">
-              Payment API configured · Webhook configured · Last webhook verified {new Date(status.payment_rail.webhook_last_verified_at).toISOString()}
+              Payment API configured · Webhook configured · Last webhook verified {new Date(status.payment_rail.webhook_last_verified_at).toLocaleString("en-IN", { hour12: false })}
             </div>
           )}
           <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] font-[var(--font-sans)] text-[0.7rem] text-[var(--bb-grey-3)] leading-relaxed">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRight,
   Loader2,
@@ -28,6 +28,12 @@ function passwordStrength(pw: string) {
 
 export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Honor the middleware-preserved ?next= deep link — restricted to
+  // /dashboard paths so a crafted value cannot become an open redirect.
+  const nextParam = searchParams.get("next");
+  const dest =
+    nextParam && nextParam.startsWith("/dashboard") ? nextParam : "/dashboard";
   const [mode, setMode] = useState<Mode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -50,7 +56,7 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
 
   const enterDemo = () => {
     setDemoCookie();
-    router.push("/dashboard");
+    router.push(dest);
     router.refresh();
   };
 
@@ -89,7 +95,7 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
         if (data.session) {
           setSuccess("Account created. Redirecting...");
           setTimeout(() => {
-            router.push("/dashboard");
+            router.push(dest);
             router.refresh();
           }, 600);
         } else {
@@ -101,7 +107,7 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
           setError(error.message);
           return;
         }
-        router.push("/dashboard");
+        router.push(dest);
         router.refresh();
       }
     } catch {
@@ -198,13 +204,12 @@ export function AuthForm({ initialMode = "login" }: { initialMode?: Mode }) {
                 Password
               </label>
               {!isSignup && (
-                <a
-                  href="#"
-                  onClick={(e) => e.preventDefault()}
-                  className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)] hover:text-[var(--bb-orange)] transition-colors"
+                <span
+                  title="Password recovery is not enabled on this Supabase project — contact the store owner to reset access."
+                  className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)] cursor-help"
                 >
                   Forgot?
-                </a>
+                </span>
               )}
             </div>
             <div className="relative group">

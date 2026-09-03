@@ -50,7 +50,8 @@ function mapEvents(events: ApiLedgerEvent[]): LedgerEvent[] {
     output: e.output,
     reasoningSummary: e.reasoning_summary ?? undefined,
     policyRefs: e.policy_refs,
-    providerRefs: e.provider_ref ? { provider_ref: e.provider_ref } : undefined,
+    outcome_effect: e.outcome_effect ?? null,
+    provider_ref: e.provider_ref ?? null,
     flags: e.flags,
   }));
 }
@@ -103,18 +104,13 @@ function EventDetail({ event }: { event: LedgerEvent }) {
           </div>
         </div>
       )}
-      {event.providerRefs && Object.keys(event.providerRefs).length > 0 && (
+      {event.provider_ref && (
         <div>
-          <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Provider references</div>
+          <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Provider reference</div>
           <div className="flex flex-wrap gap-1.5">
-            {Object.entries(event.providerRefs).map(([key, val]) => (
-              <span
-                key={key}
-                className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]"
-              >
-                {key}: {val}
-              </span>
-            ))}
+            <span className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]">
+              provider_ref: {event.provider_ref}
+            </span>
           </div>
         </div>
       )}
@@ -203,7 +199,8 @@ export default function ReplayPage() {
   const status = tx?.status || "";
   const isDenied = status === "ABORTED" || status === "DENIED" || txEvents.some((e) => e.action === "policy.checked" && e.output?.verdict === "DENY");
   const isFailed = status === "PAYMENT_FAILED" || status === "ABORTED";
-  const isPaid = status === "PAID" || status === "FULFILLED" || status === "REFUNDED";
+  const isRefunded = status === "REFUNDED";
+  const isPaid = (status === "PAID" || status === "FULFILLED") && !isRefunded;
 
   const stages: { stage: ReplayStage; events: LedgerEvent[] }[] = replayStages
     .map((stage) => ({ stage, events: txEvents.filter((e) => stage.match(e.action)) }))
@@ -265,6 +262,18 @@ export default function ReplayPage() {
         </div>
       )}
 
+      {isRefunded && (
+        <div className="border border-purple-400/30 bg-purple-400/5 p-5 flex items-start gap-3">
+          <ShieldCheck size={18} className="text-purple-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-purple-400 mb-1">REFUNDED TRANSACTION</div>
+            <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-2)] leading-relaxed">
+              The order was captured and later refunded through the provider rail. The refund event below carries the provider refund reference.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Timeline */}
       <div className="border border-[var(--bb-line)] overflow-hidden stagger-child">
         <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
@@ -318,7 +327,7 @@ export default function ReplayPage() {
               </button>
               <div
                 className={`overflow-hidden transition-all duration-300 ease-[var(--ease-out)] ${
-                  isExpanded ? "max-h-[85vh] opacity-100" : "max-h-0 opacity-0"
+                  isExpanded ? "max-h-[85vh] overflow-y-auto opacity-100" : "max-h-0 opacity-0"
                 }`}
               >
                 {events.map((event) => (
@@ -346,7 +355,7 @@ export default function ReplayPage() {
               <span className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)]">Additional ledger events</span>
               <span className="ml-auto font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">{unassigned.length} events</span>
             </button>
-            <div className={`overflow-hidden transition-all duration-300 ease-[var(--ease-out)] ${expandedSteps.has("unassigned") ? "max-h-[85vh] opacity-100" : "max-h-0 opacity-0"}`}>
+            <div className={`overflow-hidden transition-all duration-300 ease-[var(--ease-out)] ${expandedSteps.has("unassigned") ? "max-h-[85vh] overflow-y-auto opacity-100" : "max-h-0 opacity-0"}`}>
               {unassigned.map((event) => (
                 <div key={event.eventId} className="px-5 pb-1">
                   <EventDetail event={event} />

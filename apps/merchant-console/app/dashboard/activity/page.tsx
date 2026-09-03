@@ -12,9 +12,10 @@ const actorFilters: { label: string; value: ActorType | "all" }[] = [
   { label: "Buyer Agent", value: "buyer_agent" },
   { label: "Seller Agent", value: "seller_agent" },
   { label: "Policy Engine", value: "policy_engine" },
+  { label: "Consent Service", value: "consent_service" },
   { label: "Human", value: "human" },
   { label: "Razorpay", value: "razorpay" },
-  { label: "System", value: "system" },
+  { label: "Commerce Core", value: "commerce_core" },
 ];
 
 const eventTypeFilters = [
@@ -40,7 +41,8 @@ function mapEvent(e: { event_id: string; trace_id: string; timestamp: string; ac
     output: e.output,
     reasoningSummary: e.reasoning_summary ?? undefined,
     policyRefs: e.policy_refs,
-    providerRefs: e.provider_ref ? { provider_ref: e.provider_ref } : undefined,
+    outcome_effect: e.outcome_effect ?? null,
+    provider_ref: e.provider_ref ?? null,
     flags: e.flags,
   };
 }
@@ -226,6 +228,9 @@ export default function ActivityPage() {
                   ))}
                   {event.flags.map((flag) => (
                     <span key={flag} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 bg-[var(--bb-orange-wash-2)] text-[var(--bb-orange)]">{flag}</span>
+                  ))}
+                  {event.outcome_effect && Object.entries(event.outcome_effect).map(([key, val]) => (
+                    <span key={key} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-green-400/40 text-green-400">{key}: {String(val)}</span>
                   ))}
                 </div>
               </div>

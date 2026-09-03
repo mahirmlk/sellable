@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { RefreshCw, Plus, X, AlertCircle, Check } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
@@ -39,18 +39,26 @@ export default function CatalogPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [createdSku, setCreatedSku] = useState<string | null>(null);
 
-  const fetchData = useCallback(async () => {
+  // Generation guard: a slow earlier search must never overwrite a newer one.
+  const requestGen = useRef(0);
+  const fetchData = useCallback(async (query: string) => {
+    const gen = ++requestGen.current;
     setLoading(true);
     try {
-      const data = await getConsoleCatalog(searchQuery);
-      setCatalog(data);
-    } catch {} finally { setLoading(false); }
-  }, [searchQuery]);
+      const data = await getConsoleCatalog(query);
+      if (requestGen.current === gen) setCatalog(data);
+    } catch {
+      // keep the last good list; a banner would flicker on every keystroke
+    } finally {
+      if (requestGen.current === gen) setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const t = window.setTimeout(() => void fetchData(), 0);
+    // Debounced search: one request per pause in typing, not per keystroke.
+    const t = window.setTimeout(() => void fetchData(searchQuery), searchQuery ? 250 : 0);
     return () => window.clearTimeout(t);
-  }, [fetchData]);
+  }, [searchQuery, fetchData]);
 
   useEffect(() => {
     getConsolePolicy()
@@ -83,6 +91,10 @@ export default function CatalogPage() {
       setFormError("Floor price cannot exceed the list price — the agent would counter every offer.");
       return;
     }
+    if (!/^\d+$/.test(form.stock.trim()) || !Number.isInteger(stock) || stock < 0) {
+      setFormError("Stock must be a whole number of 0 or more.");
+      return;
+    }
 
     setSaving(true);
     try {
@@ -102,7 +114,7 @@ export default function CatalogPage() {
       setTimeout(() => setCreatedSku(null), 4000);
       setForm(EMPTY_FORM);
       setShowForm(false);
-      fetchData();
+      fetchData("");
     } catch (err) {
       setFormError(
         err instanceof ApiError
@@ -125,7 +137,7 @@ export default function CatalogPage() {
           <button onClick={() => setShowForm((v) => !v)} className="inline-flex items-center gap-2 h-[32px] px-3.5 bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer">
             {showForm ? <X size={12} /> : <Plus size={12} />} {showForm ? "CANCEL" : "ADD PRODUCT"}
           </button>
-          <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
+          <button onClick={() => fetchData(searchQuery)} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
           </button>
         </div>
@@ -233,6 +245,23 @@ export default function CatalogPage() {
               <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">{p.category}</div>
             </Link>
           ))}
+          {/* Mobile cards: the table rows above are desktop-only. */}
+          {catalog.length > 0 && (
+            <div className="lg:hidden divide-y divide-[var(--bb-line-soft)]">
+              {catalog.map((p) => (
+                <Link key={p.id} href={`/dashboard/catalog/${p.sku}`} className="block px-5 py-3.5 space-y-1.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{p.sku}</span>
+                    <span className="font-[var(--font-mono)] text-[0.75rem] text-[var(--bb-white)]">{formatPaise(p.price_paise)}</span>
+                  </div>
+                  <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)] leading-snug">{p.title}</div>
+                  <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">
+                    FLOOR {formatPaise(p.floor_paise)} · STOCK {p.stock} · {p.category}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { AuthForm } from "@/components/auth/auth-form";
 
 export const metadata: Metadata = {
@@ -128,7 +129,9 @@ export default function SignupPage() {
         {/* Right: form */}
         <div className="flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-[var(--bb-black)]">
           <div className="w-full max-w-[440px]">
-            <AuthForm initialMode="signup" />
+            <Suspense>
+              <AuthForm initialMode="signup" />
+            </Suspense>
           </div>
         </div>
       </div>

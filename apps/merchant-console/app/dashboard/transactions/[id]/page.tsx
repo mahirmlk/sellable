@@ -6,29 +6,34 @@ import { useEffect, useState, useCallback } from "react";
 import { ArrowLeft, RotateCcw, RefreshCw } from "lucide-react";
 import { StatusBadge, PolicyBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
-import { formatPaise, formatTimestamp } from "@/lib/formatters";
+import { formatPaise, formatTimestamp, formatDateTime } from "@/lib/formatters";
 import { getConsoleTransactionDetail, refundOrder, ApiError, type ConsoleTransactionDetail, type LedgerEvent as ApiLedgerEvent } from "@/lib/api";
 import { type LedgerEvent, type Transaction, type TransactionStatus } from "@/lib/types/domain";
 
 function mapTxDetail(tx: ConsoleTransactionDetail): Transaction {
+  // 1:1 with backend OrderStatus — approval need comes from
+  // requires_approval, never from rewriting the status.
   const statusMap: Record<string, TransactionStatus> = {
-    AWAITING_CONSENT: "NEEDS_HUMAN_APPROVAL",
-    CONSENTED: "AWAITING_CONSENT",
+    AWAITING_CONSENT: "AWAITING_CONSENT",
+    CONSENTED: "CONSENTED",
     PAYMENT_PENDING: "PAYMENT_PENDING",
     PAID: "PAID",
     PAYMENT_FAILED: "PAYMENT_FAILED",
-    ABORTED: "DENIED",
+    ABORTED: "ABORTED",
     REFUNDED: "REFUNDED",
-    QUOTED: "QUOTED",
-    FULFILLED: "PAID",
+    FULFILLED: "FULFILLED",
   };
   const channel = tx.channel === "human_chat" ? "human_chat" : "agent_to_agent";
+  // Preserve the backend's NOT_ISSUED state instead of collapsing it into
+  // NONE, so "no consent yet" stays distinguishable from "no consent".
   const consentStatus =
     tx.consent_status === "CONSUMED"
       ? "CONSENTED"
       : tx.consent_status === "ISSUED"
         ? "ISSUED"
-        : "NONE";
+        : tx.consent_status === "NOT_ISSUED"
+          ? "NOT_ISSUED"
+          : "NONE";
   return {
     id: tx.order_id,
     traceId: tx.trace_id,
@@ -60,10 +65,13 @@ function mapTxDetail(tx: ConsoleTransactionDetail): Transaction {
           verifiedByWebhook: tx.payment_status === "CAPTURED",
         }
       : undefined,
+    // The backend returns no titles — show the SKU honestly, with the
+    // unit price × quantity = line total breakdown instead of mislabeling
+    // the line total as a unit price.
     items: tx.items?.map((item) => ({
       sku: item.sku,
-      title: item.sku,
-      pricePaise: item.line_total_paise,
+      unitPaise: item.offered_price_paise,
+      linePaise: item.line_total_paise,
       qty: item.quantity,
     })),
     updatedAt: tx.created_at,
@@ -81,7 +89,8 @@ function mapEvents(events: ApiLedgerEvent[]): LedgerEvent[] {
     output: e.output,
     reasoningSummary: e.reasoning_summary ?? undefined,
     policyRefs: e.policy_refs,
-    providerRefs: e.provider_ref ? { provider_ref: e.provider_ref } : undefined,
+    outcome_effect: e.outcome_effect ?? null,
+    provider_ref: e.provider_ref ?? null,
     flags: e.flags,
   }));
 }
@@ -132,7 +141,7 @@ export default function TransactionDetailPage() {
     try {
       await refundOrder(tx.id, "Merchant-initiated refund from transaction detail");
       setRefundMsg("success");
-      fetchData();
+      await fetchData();
     } catch {
       setRefundMsg("error");
     } finally {
@@ -204,7 +213,7 @@ export default function TransactionDetailPage() {
             <Link href={`/dashboard/transactions/${tx.id}/replay`} className="inline-flex items-center gap-2 h-[36px] px-4 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all">
               <RotateCcw size={12} /> VIEW REPLAY
             </Link>
-            {tx.status === "PAID" && (
+            {(tx.status === "PAID" || tx.status === "FULFILLED") && (
               <button
                 onClick={handleRefund}
                 disabled={refunding}
@@ -236,12 +245,12 @@ export default function TransactionDetailPage() {
                 <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">PURCHASE SUMMARY</div>
               </div>
               {tx.items.map((item, i) => (
-                <div key={item.sku} className={`px-5 py-3 flex items-center justify-between ${i < tx.items!.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
+                <div key={`${item.sku}-${i}`} className={`px-5 py-3 flex items-center justify-between ${i < tx.items!.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
                   <div>
-                    <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-white)]">{item.title}</div>
-                    <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)]">{item.sku} · Qty {item.qty}</div>
+                    <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-white)]">{item.sku}</div>
+                    <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)]">UNIT {formatPaise(item.unitPaise)} · QTY {item.qty}</div>
                   </div>
-                  <MoneyValue paise={item.pricePaise} />
+                  <MoneyValue paise={item.linePaise} />
                 </div>
               ))}
               <div className="px-5 py-3 border-t border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between">
@@ -251,7 +260,11 @@ export default function TransactionDetailPage() {
             </div>
           )}
 
-          {txEvents.length > 0 && (
+          {txEvents.length === 0 ? (
+            <div className="border border-[var(--bb-line)] px-5 py-8 text-center font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">
+              No ledger events recorded for this transaction yet.
+            </div>
+          ) : (
             <div className="border border-[var(--bb-line)] overflow-hidden">
               <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
                 <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">EVENT TIMELINE — {txEvents.length} EVENTS</div>
@@ -337,7 +350,7 @@ export default function TransactionDetailPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Expires</span>
-                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)]">{formatTimestamp(tx.consent.expiresAt)}</span>
+                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)]">{tx.consent.expiresAt ? formatDateTime(tx.consent.expiresAt) : "—"}</span>
                 </div>
               </div>
             </div>

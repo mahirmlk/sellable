@@ -10,16 +10,17 @@ import { getConsoleTransactions, type ConsoleTransaction } from "@/lib/api";
 import { type Transaction, type TransactionStatus } from "@/lib/types/domain";
 
 function mapTx(tx: ConsoleTransaction): Transaction {
+  // 1:1 with backend OrderStatus — approval need comes from
+  // requires_approval, never from rewriting the status.
   const statusMap: Record<string, TransactionStatus> = {
-    AWAITING_CONSENT: "NEEDS_HUMAN_APPROVAL",
-    CONSENTED: "AWAITING_CONSENT",
+    AWAITING_CONSENT: "AWAITING_CONSENT",
+    CONSENTED: "CONSENTED",
     PAYMENT_PENDING: "PAYMENT_PENDING",
     PAID: "PAID",
     PAYMENT_FAILED: "PAYMENT_FAILED",
-    ABORTED: "DENIED",
+    ABORTED: "ABORTED",
     REFUNDED: "REFUNDED",
-    QUOTED: "QUOTED",
-    FULFILLED: "PAID",
+    FULFILLED: "FULFILLED",
   };
   const channel = tx.channel === "human_chat" ? "human_chat" : "agent_to_agent";
   const consentStatus =
@@ -60,8 +61,8 @@ function mapTx(tx: ConsoleTransaction): Transaction {
       : undefined,
     items: tx.items?.map((item) => ({
       sku: item.sku,
-      title: item.sku,
-      pricePaise: item.line_total_paise,
+      unitPaise: item.offered_price_paise,
+      linePaise: item.line_total_paise,
       qty: item.quantity,
     })),
     updatedAt: tx.created_at,
@@ -95,7 +96,7 @@ export default function TransactionsPage() {
   }, [fetchData]);
 
   const filtered = statusFilter === "all" ? transactions : transactions.filter((tx) => tx.status === statusFilter);
-  const statuses = ["all", "PAID", "AWAITING_CONSENT", "NEEDS_HUMAN_APPROVAL", "PAYMENT_PENDING", "PAYMENT_FAILED", "DENIED", "REFUNDED"];
+  const statuses = ["all", "PAID", "FULFILLED", "PAYMENT_PENDING", "PAYMENT_FAILED", "AWAITING_CONSENT", "CONSENTED", "ABORTED", "REFUNDED"];
 
   return (
     <div className="p-6 space-y-6">

@@ -5,31 +5,41 @@ import { useEffect, useState, useCallback } from "react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { StatusBadge } from "@/components/dashboard/status-badge";
 import { useSystemStatus } from "@/components/dashboard/use-system-status";
-import { formatPaise, formatTimeAgo } from "@/lib/formatters";
+import { formatPaise, formatPaiseDecimal, formatTimeAgo } from "@/lib/formatters";
 import { getConsoleTransactions, getConsoleApprovals, getConsoleEvents, getConsoleInsights, type ConsoleTransaction, type LedgerEvent, type ConsoleGrowthMetrics } from "@/lib/api";
 import { IconRefresh, IconWarning, IconApprovals } from "@/components/dashboard/icons";
 import { type Transaction, type TransactionStatus } from "@/lib/types/domain";
 
 function mapTx(tx: ConsoleTransaction): Transaction {
+  // 1:1 with backend OrderStatus — approval need comes from
+  // requires_approval, never from rewriting the status.
   const statusMap: Record<string, TransactionStatus> = {
-    AWAITING_CONSENT: "NEEDS_HUMAN_APPROVAL",
-    CONSENTED: "AWAITING_CONSENT",
+    AWAITING_CONSENT: "AWAITING_CONSENT",
+    CONSENTED: "CONSENTED",
     PAYMENT_PENDING: "PAYMENT_PENDING",
     PAID: "PAID",
     PAYMENT_FAILED: "PAYMENT_FAILED",
-    ABORTED: "DENIED",
+    ABORTED: "ABORTED",
     REFUNDED: "REFUNDED",
-    QUOTED: "QUOTED",
-    FULFILLED: "PAID",
+    FULFILLED: "FULFILLED",
   };
+  // Carry the backend enrichment through like the Transactions page does —
+  // hardcoding channel/policy here showed different data in the two views.
+  const channel = tx.channel === "human_chat" ? "human_chat" : "agent_to_agent";
   return {
     id: tx.order_id,
     traceId: tx.trace_id,
     status: statusMap[tx.status] || tx.status as TransactionStatus,
     amountPaise: tx.amount_paise,
-    buyer: { id: tx.buyer_agent_id, type: "agent" },
-    channel: "agent_to_agent",
-    policy: { verdict: "ALLOW", policyRefs: [] },
+    buyer: { id: tx.buyer_agent_id, type: channel === "human_chat" ? "human" : "agent" },
+    channel,
+    policy: {
+      verdict: (tx.policy_verdict as Transaction["policy"]["verdict"]) || "ALLOW",
+      reasonCode: tx.policy_reason ?? undefined,
+      policyRefs: tx.policy_refs || [],
+      explanation: tx.policy_explanation ?? undefined,
+    },
+    buyerBudgetPaise: tx.buyer_budget_paise ?? undefined,
     updatedAt: tx.created_at,
   };
 }
@@ -49,13 +59,15 @@ function SectionLabel({ index, title, children }: { index: string; title: string
 export default function OverviewPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [approvals, setApprovals] = useState<Array<{ orderId: string; buyerId: string; amountPaise: number; reason: string; requestedAt: string; status: string }>>([]);
-  const [recentEvents, setRecentEvents] = useState<Array<{ time: string; label: string; type: "info" | "success" | "error" | "warning" }>>([]);
+  const [recentEvents, setRecentEvents] = useState<Array<{ id: string; time: string; label: string; type: "info" | "success" | "error" | "warning" }>>([]);
   const [growth, setGrowth] = useState<ConsoleGrowthMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { data: agentsStatus, error: statusError, reload: reloadStatus } = useSystemStatus();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const [txData, approvalData, eventData, growthData] = await Promise.allSettled([
         getConsoleTransactions(),
@@ -64,6 +76,14 @@ export default function OverviewPage() {
         getConsoleInsights(),
       ]);
 
+      if (
+        txData.status === "rejected" &&
+        approvalData.status === "rejected" &&
+        eventData.status === "rejected" &&
+        growthData.status === "rejected"
+      ) {
+        setLoadError("The backend could not be reached — showing the last loaded state.");
+      }
       if (txData.status === "fulfilled") setTransactions(txData.value.map(mapTx));
       if (approvalData.status === "fulfilled") {
         setApprovals(approvalData.value.map((a) => ({
@@ -83,7 +103,7 @@ export default function OverviewPage() {
           if (e.action.includes("captured") || e.action.includes("paid") || e.action.includes("allowed")) type = "success";
           else if (e.action.includes("failed") || e.action.includes("aborted")) type = "error";
           else if (e.action.includes("rejected") || e.action.includes("denied")) type = "warning";
-          return { time, label: `${e.actor} — ${e.action}`, type };
+          return { id: e.event_id, time, label: `${e.actor} — ${e.action}`, type };
         }));
       }
       if (growthData.status === "fulfilled") setGrowth(growthData.value);
@@ -109,19 +129,25 @@ export default function OverviewPage() {
         </button>
       </div>
 
+      {loadError && (
+        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-3 font-[var(--font-mono)] text-[0.62rem] text-amber-400">
+          {loadError}
+        </div>
+      )}
+
       {/* Metrics — feature revenue card + compact grid */}
       <div className="grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr] grid-rows-[auto_auto] gap-4">
         <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] p-5 relative overflow-hidden">
           <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-[var(--bb-orange)]" />
           <div className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-4">REVENUE · ALL CHANNELS</div>
           <div className="font-[var(--font-mono)] text-[2.4rem] leading-none text-[var(--bb-white)] tabular-nums tracking-tight">
-            ₹{growth ? Math.round(growth.revenue / 100).toLocaleString("en-IN") : "0"}
+            {growth ? formatPaiseDecimal(growth.revenue) : "₹0.00"}
           </div>
           <div className="mt-4 flex items-center gap-4 font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase">
             <span className="text-[var(--bb-grey-4)]">{growth?.total_orders ?? transactions.length} ORDERS</span>
             <span className="text-[var(--bb-grey-4)]">·</span>
             <span className="text-[var(--bb-orange)]">
-              {growth && growth.total_orders > 0 ? Math.round((growth.agent_assisted_revenue / growth.revenue) * 100) : 0}% AGENT-DRIVEN
+              {growth && growth.total_orders > 0 && growth.revenue > 0 ? Math.round((growth.agent_assisted_revenue / growth.revenue) * 100) : 0}% AGENT-DRIVEN
             </span>
           </div>
         </div>
@@ -130,8 +156,8 @@ export default function OverviewPage() {
           <MetricCard label="Pending Approvals" value={pendingApprovals.length} highlight />
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-2 gap-4 lg:col-span-1">
-          <MetricCard label="Agent-Assisted" value={growth ? Math.round(growth.agent_assisted_revenue / 100) : 0} prefix="₹" highlight />
-          <MetricCard label="Upsell Revenue" value={growth ? Math.round(growth.upsell_revenue / 100) : 0} prefix="₹" />
+          <MetricCard label="Agent-Assisted" value={growth ? growth.agent_assisted_revenue / 100 : 0} prefix="₹" highlight decimals={2} />
+          <MetricCard label="Upsell Revenue" value={growth ? growth.upsell_revenue / 100 : 0} prefix="₹" decimals={2} />
         </div>
       </div>
 
@@ -147,7 +173,7 @@ export default function OverviewPage() {
                 {loading ? "Loading events..." : "No events yet. Run a buyer agent or start a chat checkout."}
               </div>
             ) : recentEvents.map((event, i) => (
-              <Link key={i} href="/dashboard/activity" className={`px-5 py-[11px] flex items-center gap-4 hover:bg-[var(--bb-panel)] transition-colors group ${i < recentEvents.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
+              <Link key={event.id} href="/dashboard/activity" className={`px-5 py-[11px] flex items-center gap-4 hover:bg-[var(--bb-panel)] transition-colors group ${i < recentEvents.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
                 <span className="font-[var(--font-mono)] text-[0.58rem] text-[var(--bb-grey-4)] w-[58px] flex-shrink-0 tabular-nums">{event.time}</span>
                 <span className={`w-[5px] h-[5px] rotate-45 flex-shrink-0 ${event.type === "success" ? "bg-green-400" : event.type === "error" ? "bg-red-400" : event.type === "warning" ? "bg-yellow-400" : "bg-[var(--bb-grey-3)]"}`} />
                 <span className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-2)] group-hover:text-[var(--bb-white)] transition-colors">{event.label}</span>

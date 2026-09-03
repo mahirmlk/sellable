@@ -23,6 +23,9 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Per-order busy flags: double-clicking approve/reject must not fire the
+  // request twice (the second call 400s after the first one lands).
+  const [busyOrders, setBusyOrders] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -44,33 +47,38 @@ export default function ApprovalsPage() {
     return () => window.clearTimeout(t);
   }, [fetchData]);
 
-  const handleApprove = async (orderId: string) => {
+  const runAction = async (orderId: string, kind: "approve" | "reject") => {
+    if (busyOrders.has(orderId)) return;
+    setBusyOrders((prev) => new Set(prev).add(orderId));
     setActionError(null);
     try {
-      await approveConsoleOrder(orderId);
-      setApprovals((prev) => prev.map((a) => a.orderId === orderId ? { ...a, status: "APPROVED" } : a));
-    } catch (err) {
-      setActionError(
-        err instanceof TypeError
-          ? "Backend unreachable — the approval was not recorded. Try again."
-          : "The backend rejected the approval. Refresh and try again."
+      if (kind === "approve") await approveConsoleOrder(orderId);
+      else await rejectConsoleOrder(orderId);
+      setApprovals((prev) =>
+        prev.map((a) =>
+          a.orderId === orderId
+            ? { ...a, status: kind === "approve" ? "APPROVED" : "REJECTED" }
+            : a
+        )
       );
+    } catch (err) {
+      const unreachable = err instanceof TypeError;
+      setActionError(
+        unreachable
+          ? `Backend unreachable — the ${kind === "approve" ? "approval" : "rejection"} was not recorded. Try again.`
+          : `The backend rejected the ${kind === "approve" ? "approval" : "rejection"} request. Refresh and try again.`
+      );
+    } finally {
+      setBusyOrders((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
     }
   };
 
-  const handleReject = async (orderId: string) => {
-    setActionError(null);
-    try {
-      await rejectConsoleOrder(orderId);
-      setApprovals((prev) => prev.map((a) => a.orderId === orderId ? { ...a, status: "REJECTED" } : a));
-    } catch (err) {
-      setActionError(
-        err instanceof TypeError
-          ? "Backend unreachable — the rejection was not recorded. Try again."
-          : "The backend rejected the rejection request. Refresh and try again."
-      );
-    }
-  };
+  const handleApprove = (orderId: string) => void runAction(orderId, "approve");
+  const handleReject = (orderId: string) => void runAction(orderId, "reject");
 
   const pending = approvals.filter((a) => a.status === "PENDING");
   const reviewed = approvals.filter((a) => a.status !== "PENDING");
@@ -137,11 +145,11 @@ export default function ApprovalsPage() {
                   <Link href={`/dashboard/transactions/${approval.orderId}`} className="inline-flex items-center gap-1.5 h-[36px] px-4 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all">
                     VIEW CART <ArrowRight size={11} />
                   </Link>
-                  <button onClick={() => handleReject(approval.orderId)} className="inline-flex items-center gap-1.5 h-[36px] px-4 border border-red-400/30 bg-red-400/5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-red-400 hover:bg-red-400/10 transition-all cursor-pointer">
-                    <XCircle size={12} /> REJECT
+                  <button onClick={() => handleReject(approval.orderId)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-[36px] px-4 border border-red-400/30 bg-red-400/5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-red-400 hover:bg-red-400/10 transition-all cursor-pointer disabled:opacity-50">
+                    <XCircle size={12} /> {busyOrders.has(approval.orderId) ? "WORKING…" : "REJECT"}
                   </button>
-                  <button onClick={() => handleApprove(approval.orderId)} className="inline-flex items-center gap-1.5 h-[36px] px-4 border border-green-400/30 bg-green-400/5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-green-400 hover:bg-green-400/10 transition-all cursor-pointer">
-                    <CheckCircle size={12} /> APPROVE
+                  <button onClick={() => handleApprove(approval.orderId)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-[36px] px-4 border border-green-400/30 bg-green-400/5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-green-400 hover:bg-green-400/10 transition-all cursor-pointer disabled:opacity-50">
+                    <CheckCircle size={12} /> {busyOrders.has(approval.orderId) ? "WORKING…" : "APPROVE"}
                   </button>
                 </div>
               </div>
@@ -153,7 +161,8 @@ export default function ApprovalsPage() {
       {reviewed.length > 0 && (
         <div className="border border-[var(--bb-line)] overflow-hidden">
           <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">REVIEWED</div>
+            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">REVIEWED THIS SESSION</div>
+            <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)] mt-0.5">THE BACKEND KEEPS NO REVIEW HISTORY — THIS LIST RESETS ON RELOAD</div>
           </div>
           {reviewed.map((a, i) => (
             <div key={a.orderId} className={`px-5 py-3 flex items-center justify-between ${i < reviewed.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { RefreshCw, TrendingDown } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { formatPaise } from "@/lib/formatters";
@@ -20,9 +20,14 @@ async function computeSavedDeals(txs: ConsoleTransaction[]): Promise<SavedDealRo
   const bySku = new Map<string, SavedDealRow>();
   for (const d of details) {
     if (!d) continue;
-    const converted = d.status === "PAID" || d.status === "FULFILLED" || d.status === "QUOTED" || d.status === "AWAITING_CONSENT" || d.status === "CONSENTED";
+    // Converted = money actually captured (or refunded after capture).
+    // Unpaid quotes must never inflate this — the backend counts revenue
+    // from PAID only.
+    const converted = d.status === "PAID" || d.status === "FULFILLED" || d.status === "REFUNDED";
     for (const e of d.events || []) {
-      if (e.action === "negotiation.countered") {
+      // Substring match, same as the backend insights counter: any
+      // negotiation.* variant counts, not just one literal action.
+      if (e.action.includes("negotiat")) {
         const sku = (e.inputs as Record<string, unknown>)?.sku as string | undefined;
         if (!sku) continue;
         const row = bySku.get(sku) || { sku, requests: 0, converted: 0, walkedAway: 0, floorPaise: null, pricePaise: null };
@@ -59,22 +64,39 @@ export default function GrowthPage() {
   const [loading, setLoading] = useState(true);
   const [savedDeals, setSavedDeals] = useState<SavedDealRow[]>([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const requestGen = useRef(0);
 
   const fetchData = useCallback(async () => {
+    const gen = ++requestGen.current;
+    const alive = () => requestGen.current === gen;
     setLoading(true);
     setInsightsLoading(true);
+    setLoadError(null);
     try {
       const [growthData, txData] = await Promise.allSettled([getConsoleInsights(), getConsoleTransactions()]);
+      if (!alive()) return;
       if (growthData.status === "fulfilled") setGrowth(growthData.value);
       if (txData.status === "fulfilled") {
         computeSavedDeals(txData.value)
-          .then(setSavedDeals)
-          .catch(() => setSavedDeals([]))
-          .finally(() => setInsightsLoading(false));
+          .then((rows) => { if (alive()) setSavedDeals(rows); })
+          .catch(() => { if (alive()) setSavedDeals([]); })
+          .finally(() => { if (alive()) setInsightsLoading(false); });
       } else {
         setInsightsLoading(false);
       }
-    } catch {} finally { setLoading(false); }
+      if (growthData.status === "rejected" && txData.status === "rejected") {
+        setLoadError("Growth data could not be loaded from the backend.");
+      }
+    } catch {
+      if (alive()) setLoadError("Growth data could not be loaded from the backend.");
+    } finally {
+      if (alive()) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => { requestGen.current += 1; };
   }, []);
 
   useEffect(() => {
@@ -98,11 +120,17 @@ export default function GrowthPage() {
         </button>
       </div>
 
+      {loadError && (
+        <div className="border border-red-400/30 bg-red-400/5 px-5 py-3 font-[var(--font-mono)] text-[0.62rem] text-red-400">
+          {loadError}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-child">
-        <MetricCard label="Revenue" value={growth ? Math.round(growth.revenue / 100) : 0} prefix="₹" />
-        <MetricCard label="Agent-Assisted Revenue" value={growth ? Math.round(growth.agent_assisted_revenue / 100) : 0} prefix="₹" highlight />
-        <MetricCard label="Upsell Revenue" value={growth ? Math.round(growth.upsell_revenue / 100) : 0} prefix="₹" />
-        <MetricCard label="Avg Order Value" value={growth ? Math.round(growth.avg_order_value / 100) : 0} prefix="₹" />
+        <MetricCard label="Revenue" value={growth ? growth.revenue / 100 : 0} prefix="₹" decimals={2} />
+        <MetricCard label="Agent-Assisted Revenue" value={growth ? growth.agent_assisted_revenue / 100 : 0} prefix="₹" highlight decimals={2} />
+        <MetricCard label="Upsell Revenue" value={growth ? growth.upsell_revenue / 100 : 0} prefix="₹" decimals={2} />
+        <MetricCard label="Avg Order Value" value={growth ? growth.avg_order_value / 100 : 0} prefix="₹" decimals={2} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

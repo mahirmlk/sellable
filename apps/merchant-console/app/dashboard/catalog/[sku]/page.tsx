@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, RefreshCw, Package, ShieldAlert, ArrowRight, CheckCircle2 } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
-import { getConsoleCatalogItem, getConsolePolicy, type Product, type ConsolePolicySettings } from "@/lib/api";
+import { getConsoleCatalogItem, getConsolePolicy, ApiError, type Product, type ConsolePolicySettings } from "@/lib/api";
 
 function DetailRow({ label, value, accent }: { label: string; value: React.ReactNode; accent?: boolean }) {
   return (
@@ -23,20 +23,25 @@ export default function ProductDetailPage() {
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setNotFound(false);
+    setLoadError(null);
     try {
       const [p, pl] = await Promise.allSettled([getConsoleCatalogItem(sku), getConsolePolicy()]);
       if (p.status === "fulfilled") {
         setProduct(p.value);
-      } else {
+      } else if (p.reason instanceof ApiError && p.reason.isNotFound) {
+        // Genuinely absent SKU — distinct from a backend outage below.
         setNotFound(true);
+      } else {
+        setLoadError("The product could not be loaded from the backend. Try again.");
       }
       if (pl.status === "fulfilled") setPolicy(pl.value);
     } catch {
-      setNotFound(true);
+      setLoadError("The product could not be loaded from the backend. Try again.");
     } finally {
       setLoading(false);
     }
@@ -51,6 +56,19 @@ export default function ProductDetailPage() {
     return (
       <div className="p-6">
         <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">Loading product…</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="p-6">
+        <Link href="/dashboard/catalog" className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors mb-6">
+          <ArrowLeft size={14} /> BACK TO CATALOG
+        </Link>
+        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-12 text-center font-[var(--font-mono)] text-[0.65rem] text-amber-400">
+          {loadError}
+        </div>
       </div>
     );
   }

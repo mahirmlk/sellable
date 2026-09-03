@@ -16,7 +16,7 @@ import {
   ShieldAlert,
   ExternalLink,
 } from "lucide-react";
-import { formatPaise, formatTimestamp } from "@/lib/formatters";
+import { formatPaise, formatTimestamp, formatDateTime } from "@/lib/formatters";
 import {
   ApiError,
   getConsoleCatalog,
@@ -177,7 +177,7 @@ function ConsentCard({ consent }: { consent: ConsentInfo }) {
         </div>
         <div className="flex items-center justify-between">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Expires</span>
-          <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-white)]">{formatTimestamp(consent.expires_at)}</span>
+          <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-white)]">{formatDateTime(consent.expires_at)}</span>
         </div>
       </div>
     </div>
@@ -254,6 +254,8 @@ export default function ChatPage() {
   const lastTraceIdRef = useRef<string | null>(null);
   const offerRef = useRef<number | null>(null);
   const abortPollRef = useRef<boolean>(false);
+  const pollTimerRef = useRef<number | null>(null);
+  const pollTimeoutRef = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const sessionKeyRef = useRef<string>("");
   const phaseRef = useRef<ChatPhase>("idle");
@@ -262,8 +264,22 @@ export default function ChatPage() {
     phaseRef.current = phase;
   }, [phase]);
 
-  const resetSession = useCallback(() => {
+  const stopPolling = useCallback(() => {
+    // Synchronously kill any in-flight poll: the flag alone is not enough
+    // because a new poll resets it while the old interval is still alive.
     abortPollRef.current = true;
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    if (pollTimeoutRef.current !== null) {
+      window.clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  }, []);
+
+  const resetSession = useCallback(() => {
+    stopPolling();
     setMessages([]);
     setDecision(null);
     setIntent(null);
@@ -277,8 +293,9 @@ export default function ChatPage() {
     setBusy(false);
     sessionMessageRef.current = "";
     lastTraceIdRef.current = null;
+    offerRef.current = null;
     sessionKeyRef.current = uid("session");
-  }, []);
+  }, [stopPolling]);
 
   useEffect(() => {
     getConsolePolicy()
@@ -314,12 +331,11 @@ export default function ChatPage() {
     [budgetPaise, categories]
   );
 
-  const stopPolling = useCallback(() => {
-    abortPollRef.current = true;
-  }, []);
-
   const pollOrder = useCallback(
     (orderId: string) => {
+      // Never run two polls at once: a late webhook for a previous order
+      // must not flip a newer session into receipt/failed.
+      stopPolling();
       abortPollRef.current = false;
       const timer = window.setInterval(async () => {
         if (abortPollRef.current) {
@@ -362,9 +378,15 @@ export default function ChatPage() {
           // transient network errors are tolerated while polling
         }
       }, 2500);
-      window.setTimeout(() => window.clearInterval(timer), 5 * 60 * 1000);
+      pollTimerRef.current = timer;
+      // The watchdog must be tracked too: an untracked timeout can fire
+      // after a newer poll started (timer ids get reused) and kill it.
+      pollTimeoutRef.current = window.setTimeout(() => {
+        window.clearInterval(timer);
+        if (pollTimerRef.current === timer) pollTimerRef.current = null;
+      }, 5 * 60 * 1000);
     },
-    []
+    [stopPolling]
   );
 
   const runRespond = useCallback(
@@ -425,6 +447,10 @@ export default function ChatPage() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || busy) return;
+      // A new message starts a new session: stop the previous order's poll
+      // and drop its cached offer so neither leaks into the new flow.
+      stopPolling();
+      offerRef.current = null;
       sessionKeyRef.current = uid("session");
       setMessages((prev) => [...prev, { id: uid(), role: "user", text: trimmed }]);
       setInput("");
@@ -436,7 +462,7 @@ export default function ChatPage() {
       setOrderStatus(null);
       await runRespond(trimmed, { upsell: upsellOn, isFollowUp: false });
     },
-    [busy, runRespond, upsellOn]
+    [busy, runRespond, upsellOn, stopPolling]
   );
 
   const handleUpsellToggle = useCallback(async () => {
@@ -521,13 +547,15 @@ export default function ChatPage() {
       // The backend returns a hosted Razorpay Payment Link — the browser never
       // holds payment credentials and can never mark the order PAID itself.
       if (attempt.payment_url) {
-        window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
+        const opened = window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
         setMessages((prev) => [
           ...prev,
           {
             id: uid(),
             role: "system",
-            text: "Razorpay test-mode payment link opened in a new tab. Complete the test payment there — this order stays PAYMENT_PENDING until the signed webhook settles it.",
+            text: opened
+              ? "Razorpay test-mode payment link opened in a new tab. Complete the test payment there — this order stays PAYMENT_PENDING until the signed webhook settles it."
+              : "Popup blocked: the payment link could not open automatically. Use REOPEN PAYMENT LINK below to complete the test payment.",
             status: "info",
           },
         ]);
@@ -563,13 +591,15 @@ export default function ChatPage() {
       const attempt = await consoleRetryPayment(order.order_id);
       setPayment(attempt);
       if (attempt.payment_url) {
-        window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
+        const opened = window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
         setMessages((prev) => [
           ...prev,
           {
             id: uid(),
             role: "system",
-            text: "A single bounded retry was started — a fresh payment link is open in a new tab. The order is again awaiting a verified provider event.",
+            text: opened
+              ? "A single bounded retry was started — a fresh payment link is open in a new tab. The order is again awaiting a verified provider event."
+              : "Popup blocked: the retry payment link could not open automatically. Use REOPEN PAYMENT LINK below to complete the test payment.",
             status: "info",
           },
         ]);
@@ -600,8 +630,10 @@ export default function ChatPage() {
         const attempt = kind === "capture" ? await simulatePaymentCapture(order.order_id) : await simulatePaymentFailure(order.order_id);
         setPayment(attempt);
         if (kind === "capture") {
+          setOrderStatus("PAID");
           setPhase("receipt");
         } else {
+          setOrderStatus("PAYMENT_FAILED");
           setPhase("failed");
         }
         stopPolling();
