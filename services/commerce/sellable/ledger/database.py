@@ -21,6 +21,9 @@ class LedgerEventRecord(Base):
     sequence: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     event_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     trace_id: Mapped[str] = mapped_column(String(128), index=True, nullable=False)
+    # Owning merchant — written by the commerce core so console activity can
+    # be scoped in SQL. Nullable only for legacy rows (backfilled from orders).
+    merchant_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     actor: Mapped[str] = mapped_column(String(64), nullable=False)
     action: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -140,6 +143,23 @@ def _migrate(engine) -> None:
             connection.execute(
                 text("ALTER TABLE orders ADD COLUMN approved_at TIMESTAMPTZ NULL")
             )
+        ledger_cols = {
+            row[0]
+            for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'ledger_events'"))
+        }
+        if "merchant_id" not in ledger_cols:
+            connection.execute(text("ALTER TABLE ledger_events ADD COLUMN merchant_id VARCHAR(64)"))
+            connection.execute(text("CREATE INDEX ix_ledger_events_merchant_id ON ledger_events (merchant_id)"))
+            # Backfill from the owning order where one exists; legacy system
+            # traces (policy/catalog updates) belong to the demo store.
+            connection.execute(text(
+                "UPDATE ledger_events SET merchant_id = ("
+                " SELECT o.merchant_id FROM orders o WHERE o.trace_id = ledger_events.trace_id)"
+                " WHERE merchant_id IS NULL"
+            ))
+            connection.execute(text(
+                "UPDATE ledger_events SET merchant_id = 'mrc_demo_store' WHERE merchant_id IS NULL"
+            ))
 
 
 def initialise_database(config: Settings = settings) -> None:

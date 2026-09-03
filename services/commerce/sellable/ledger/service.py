@@ -17,6 +17,7 @@ class LedgerRepository:
 
     def append(self, event: LedgerEvent) -> LedgerEvent:
         record = LedgerEventRecord(
+            merchant_id=event.merchant_id,
             event_id=event.event_id,
             trace_id=event.trace_id,
             timestamp=event.timestamp,
@@ -44,24 +45,20 @@ class LedgerRepository:
             ).all()
 
     def all_events(
-        self, limit: int = 200, offset: int = 0, trace_ids: Sequence[str] | None = None
+        self, limit: int = 200, offset: int = 0, merchant_id: str | None = None
     ) -> Sequence[LedgerEventRecord]:
         with Session(self._engine) as session:
             query = select(LedgerEventRecord)
-            if trace_ids is not None:
-                if not trace_ids:
-                    return []
-                query = query.where(LedgerEventRecord.trace_id.in_(list(trace_ids)))
+            if merchant_id is not None:
+                query = query.where(LedgerEventRecord.merchant_id == merchant_id)
             query = query.order_by(LedgerEventRecord.sequence.desc()).offset(offset).limit(limit)
             return session.scalars(query).all()
 
-    def count_events(self, trace_ids: Sequence[str] | None = None) -> int:
+    def count_events(self, merchant_id: str | None = None) -> int:
         with Session(self._engine) as session:
             query = select(func.count(LedgerEventRecord.sequence))
-            if trace_ids is not None:
-                if not trace_ids:
-                    return 0
-                query = query.where(LedgerEventRecord.trace_id.in_(list(trace_ids)))
+            if merchant_id is not None:
+                query = query.where(LedgerEventRecord.merchant_id == merchant_id)
             return session.scalar(query) or 0
 
     def max_sequence(self) -> int:
@@ -69,12 +66,10 @@ class LedgerRepository:
             return session.scalar(select(func.max(LedgerEventRecord.sequence))) or 0
 
     def events_after(
-        self, sequence: int, limit: int = 200, trace_ids: Sequence[str] | None = None
+        self, sequence: int, limit: int = 200, merchant_id: str | None = None
     ) -> Sequence[LedgerEventRecord]:
         with Session(self._engine) as session:
             query = select(LedgerEventRecord).where(LedgerEventRecord.sequence > sequence)
-            if trace_ids is not None:
-                if not trace_ids:
-                    return []
-                query = query.where(LedgerEventRecord.trace_id.in_(list(trace_ids)))
+            if merchant_id is not None:
+                query = query.where(LedgerEventRecord.merchant_id == merchant_id)
             return session.scalars(query.order_by(LedgerEventRecord.sequence).limit(limit)).all()

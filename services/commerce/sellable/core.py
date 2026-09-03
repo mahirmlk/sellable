@@ -373,6 +373,7 @@ class CommerceCore:
         self.ledger.append(
             LedgerEvent(
                 trace_id=trace_id,
+                merchant_id=self.merchant_scope,
                 actor=actor,
                 action=action,
                 inputs=inputs,

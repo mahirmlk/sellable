@@ -124,17 +124,6 @@ app.add_exception_handler(
 # ---------------------------------------------------------------------------
 
 
-def _merchant_trace_ids(core: CommerceCore) -> set[str]:
-    """Trace ids that belong to this merchant (orders + per-merchant system traces)."""
-    traces = {o.trace_id for o in core.all_orders()}
-    traces.add(f"policy_update:{core.policy.merchant_id}")
-    traces.add(f"catalog_update:{core.policy.merchant_id}")
-    if core.policy.merchant_id == DEMO_MERCHANT_ID:
-        # Legacy system traces recorded before per-merchant scoping.
-        traces.update({"policy_update", "catalog_update"})
-    return traces
-
-
 def _make_llm() -> tuple[object | None, str | None]:
     """Return a real LLM adapter when a non-mock provider is configured.
 
@@ -797,16 +786,13 @@ async def activity_stream(
     import asyncio
     import json
 
-    core = merchant_core(session)
-    merchant_traces = _merchant_trace_ids(core)
-
     async def event_generator():
         last_sequence = ledger.max_sequence()
         while True:
             if await request.is_disconnected():
                 break
             try:
-                events = ledger.events_after(last_sequence, limit=100, trace_ids=merchant_traces)
+                events = ledger.events_after(last_sequence, limit=100, merchant_id=session.merchant_id)
                 for record in events:
                     yield "data: " + json.dumps(
                         {
@@ -847,10 +833,8 @@ def console_events(
 ) -> dict:
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
-    core = merchant_core(session)
-    merchant_traces = _merchant_trace_ids(core)
-    events = ledger.all_events(limit=limit, offset=offset, trace_ids=merchant_traces)
-    total = ledger.count_events(trace_ids=merchant_traces)
+    events = ledger.all_events(limit=limit, offset=offset, merchant_id=session.merchant_id)
+    total = ledger.count_events(merchant_id=session.merchant_id)
     return {
         "events": [
             {
@@ -967,7 +951,7 @@ def console_insights(
     paid = [o for o in orders if o.status == OrderStatus.PAID]
     revenue = sum(o.amount_paise for o in paid)
 
-    events = ledger.all_events(limit=1000, trace_ids=_merchant_trace_ids(core))
+    events = ledger.all_events(limit=1000, merchant_id=session.merchant_id)
 
     # Ledger-derived growth metrics. The seller agent records "upsell.offered"
     # (no "accepted" flag) and "negotiation.countered" (no outcome field), so

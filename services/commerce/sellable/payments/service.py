@@ -260,6 +260,7 @@ class PaymentService:
         (core or self.commerce).ledger.append(
             LedgerEvent(
                 trace_id=trace_id,
+                merchant_id=(core or self.commerce).merchant_scope,
                 actor=LedgerActor.RAZORPAY,
                 action=action,
                 inputs=inputs,
