@@ -62,12 +62,9 @@ export function StatStrip() {
   return (
     <ScrollReveal>
       <section
-        className="technical-section border-t border-[var(--bb-line)] relative overflow-hidden"
+        className="technical-section border-t border-[var(--bb-line)] relative"
         aria-label="Platform facts"
       >
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-          <div className="absolute inset-0 opacity-[0.04]" style={{ background: "linear-gradient(90deg, transparent 8%, rgba(255,105,0,0.14) 46%, transparent 82%)" }} />
-        </div>
         <div className="page-frame relative">
           <div className="grid grid-cols-2 lg:grid-cols-4">
             {FACTS.map((fact, i) => (
@@ -81,7 +78,7 @@ export function StatStrip() {
                   <span className="font-[var(--font-mono)] text-[0.52rem] text-[var(--bb-grey-4)] tabular-nums">
                     {fact.index}
                   </span>
-                  <span className="w-[5px] h-[5px] bg-[var(--bb-orange)]" />
+                  <span className="w-[5px] h-[5px] bg-[var(--bb-grey-2)]" />
                 </div>
                 <div className="font-[var(--font-mono)] text-[1.6rem] leading-none text-[var(--bb-white)] tabular-nums tracking-tight">
                   {fact.display ? (
@@ -93,7 +90,7 @@ export function StatStrip() {
                       {fact.suffix}
                     </>
                   ) : railState === "live" ? (
-                    <span className="text-emerald-400">LIVE</span>
+                    <span className="text-[var(--bb-white)]">LIVE</span>
                   ) : railState === "checking" ? (
                     <span className="text-[var(--bb-grey-3)]">···</span>
                   ) : (

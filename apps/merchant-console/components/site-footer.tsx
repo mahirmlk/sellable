@@ -76,19 +76,19 @@ export function SiteFooter() {
         <div className="flex flex-wrap items-center justify-between gap-3 pt-6 pb-2 border-b border-[var(--bb-line)]/60">
           <div className="flex flex-wrap items-center gap-3">
             <span className="inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-grey-2)]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Ledger</span>
-              <span className="font-[var(--font-mono)] text-[0.6rem] text-emerald-400">recording</span>
+              <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-1)]">recording</span>
             </span>
             <span className="inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] animate-pulse shadow-[0_0_8px_rgba(255,105,0,0.6)]" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-white)]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Policy</span>
-              <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-orange)]">deterministic</span>
+              <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-white)]">deterministic</span>
             </span>
             <span className="hidden md:inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-grey-2)]" />
               <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Payments</span>
-              <span className="font-[var(--font-mono)] text-[0.6rem] text-sky-400">Razorpay test</span>
+              <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-1)]">Razorpay test</span>
             </span>
           </div>
           <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">

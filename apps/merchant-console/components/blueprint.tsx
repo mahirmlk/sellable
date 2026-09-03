@@ -1,30 +1,53 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { CornerBrackets } from "./ui/corner-brackets";
 
+// Static card — all motion lives INSIDE the box: packets travel the wires,
+// nodes breathe, the consent line pulses. Translate + opacity only.
+function Packet({
+  cx,
+  cy,
+  dx,
+  dy,
+  duration,
+  delay,
+  r = 2.5,
+}: {
+  cx: number;
+  cy: number;
+  dx: number;
+  dy: number;
+  duration: number;
+  delay: number;
+  r?: number;
+}) {
+  const style = {
+    "--pdx": `${dx}px`,
+    "--pdy": `${dy}px`,
+    animationDuration: `${duration}s`,
+    animationDelay: `${delay}s`,
+  } as CSSProperties;
+  return (
+    <circle cx={cx} cy={cy} r={r} fill="var(--bb-orange)" className="packet" style={style} />
+  );
+}
+
+// Static architecture diagram — no SMIL, no scan lines, no pulses.
+// Pure SVG + borders so it costs zero compositing after first paint.
 export function Blueprint() {
   return (
-    <div className="blueprint rounded-[var(--radius-md)] group" aria-hidden="true">
+    <div className="blueprint rounded-[var(--radius-md)]" aria-hidden="true">
       <CornerBrackets />
 
-      {/* Video-type drifting gradient behind blueprint */}
-      <div className="absolute inset-0 overflow-hidden rounded-[var(--radius-md)] pointer-events-none">
-        <div className="hero-video-grad opacity-60" />
-        <div className="hero-video-grid opacity-[0.12]" />
-      </div>
-      {/* Scan line effect — two staggered */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--bb-orange)] to-transparent opacity-20 animate-[scan-line_4s_linear_infinite]" />
-        <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-transparent via-[var(--bb-orange)]/70 to-transparent opacity-10 animate-[scan-line_4s_linear_infinite]" style={{ animationDelay: "1.9s" }} />
-      </div>
-      {/* Corner live dot pulse */}
+      {/* Corner status */}
       <div className="absolute top-4 right-4 flex items-center gap-1.5 pointer-events-none">
-        <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] shadow-[0_0_8px_rgba(255,105,0,0.8)] animate-[pulse_1.6s_ease-in-out_infinite]" />
-        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] text-[var(--bb-orange)]">LIVE</span>
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] live-dot" />
+        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] text-[var(--bb-grey-1)]">LIVE</span>
       </div>
 
       {/* Isolation boundary */}
-      <div className="absolute inset-[40px] isolation-boundary rounded-[2px]">
+      <div className="absolute inset-[40px] rounded-[2px] border border-dashed border-[var(--bb-grey-3)]">
         {/* Inner content area */}
         <div className="absolute inset-[24px]">
           {/* Top label */}
@@ -34,7 +57,7 @@ export function Blueprint() {
 
           {/* Merchant node */}
           <div className="absolute top-[40px] left-[20px] flex items-center gap-2">
-            <span className="w-2 h-2 bg-[var(--bb-orange)] animate-[pulse_3s_ease-in-out_infinite]" />
+            <span className="w-2 h-2 bg-[var(--bb-white)]" />
             <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)]">
               MERCHANT
             </span>
@@ -65,7 +88,7 @@ export function Blueprint() {
               strokeWidth="1"
               strokeDasharray="4 4"
             />
-            {/* Orange highlight line */}
+            {/* Highlight line */}
             <line
               x1="80"
               y1="180"
@@ -73,7 +96,7 @@ export function Blueprint() {
               y2="180"
               stroke="var(--bb-orange)"
               strokeWidth="1"
-              opacity="0.6"
+              className="line-pulse"
             />
             {/* Secondary lines */}
             <line
@@ -103,25 +126,13 @@ export function Blueprint() {
               strokeDasharray="2 4"
             />
 
-            {/* Nodes with pulse animation */}
-            <rect x="88" y="92" width="8" height="8" fill="var(--bb-orange)">
-              <animate attributeName="opacity" values="1;0.5;1" dur="3s" repeatCount="indefinite" />
-            </rect>
-            <rect x="188" y="92" width="8" height="8" fill="var(--bb-grey-3)">
-              <animate attributeName="opacity" values="1;0.6;1" dur="4s" repeatCount="indefinite" />
-            </rect>
-            <rect x="288" y="92" width="8" height="8" fill="var(--bb-grey-3)">
-              <animate attributeName="opacity" values="1;0.6;1" dur="4.5s" repeatCount="indefinite" />
-            </rect>
-            <rect x="188" y="172" width="8" height="8" fill="var(--bb-orange)">
-              <animate attributeName="opacity" values="1;0.5;1" dur="2.5s" repeatCount="indefinite" />
-            </rect>
-            <rect x="88" y="252" width="8" height="8" fill="var(--bb-grey-3)">
-              <animate attributeName="opacity" values="1;0.6;1" dur="3.5s" repeatCount="indefinite" />
-            </rect>
-            <rect x="288" y="252" width="8" height="8" fill="var(--bb-grey-3)">
-              <animate attributeName="opacity" values="1;0.6;1" dur="5s" repeatCount="indefinite" />
-            </rect>
+            {/* Nodes */}
+            <rect x="88" y="92" width="8" height="8" fill="var(--bb-white)" />
+            <rect x="188" y="92" width="8" height="8" fill="var(--bb-grey-3)" />
+            <rect x="288" y="92" width="8" height="8" fill="var(--bb-grey-3)" />
+            <rect x="188" y="172" width="8" height="8" fill="var(--bb-white)" />
+            <rect x="88" y="252" width="8" height="8" fill="var(--bb-grey-3)" />
+            <rect x="288" y="252" width="8" height="8" fill="var(--bb-grey-3)" />
 
             {/* Dashed sub-connectors */}
             <line
@@ -143,26 +154,11 @@ export function Blueprint() {
               strokeDasharray="3 3"
             />
 
-            {/* Animated data flow dots — 4 staggered video-like trails */}
-            <circle r="2.2" fill="var(--bb-orange)" opacity="0.9">
-              <animateMotion dur="2.4s" repeatCount="indefinite" path="M88,100 L188,180" />
-            </circle>
-            <circle r="1.6" fill="#ffb86a" opacity="0.7">
-              <animateMotion dur="2.4s" repeatCount="indefinite" path="M88,100 L188,180" begin="0.45s" />
-            </circle>
-            <circle r="2.2" fill="var(--bb-orange)" opacity="0.9">
-              <animateMotion dur="2.8s" repeatCount="indefinite" path="M296,100 L196,172" begin="0.7s" />
-            </circle>
-            <circle r="1.6" fill="#ffb86a" opacity="0.7">
-              <animateMotion dur="2.8s" repeatCount="indefinite" path="M296,100 L196,172" begin="1.35s" />
-            </circle>
-            {/* vertical consent pulse */}
-            <circle r="1.8" fill="var(--bb-orange)" opacity="0.8">
-              <animateMotion dur="3.2s" repeatCount="indefinite" path="M200,65 L200,172" begin="0.2s" />
-            </circle>
-            <circle r="1.4" fill="var(--bb-orange)" opacity="0.45">
-              <animateMotion dur="3.2s" repeatCount="indefinite" path="M200,172 L200,258" begin="1.1s" />
-            </circle>
+            {/* In-box packets travelling the wires */}
+            <Packet cx={48} cy={100} dx={296} dy={0} duration={2.6} delay={0} />
+            <Packet cx={100} cy={104} dx={84} dy={72} duration={2.2} delay={0.4} r={2} />
+            <Packet cx={292} cy={104} dx={-92} dy={64} duration={2.8} delay={1.1} r={2} />
+            <Packet cx={200} cy={70} dx={0} dy={98} duration={3.1} delay={0.7} r={2} />
           </svg>
 
           {/* Labels */}
@@ -172,7 +168,7 @@ export function Blueprint() {
           <div className="absolute top-[80px] right-[80px] font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)]">
             POLICY
           </div>
-          <div className="absolute top-[160px] left-[50%] -translate-x-1/2 font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-orange)]">
+          <div className="absolute top-[160px] left-[50%] -translate-x-1/2 font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-1)]">
             CONSENT
           </div>
           <div className="absolute top-[240px] left-[120px] font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)]">
@@ -187,8 +183,8 @@ export function Blueprint() {
             <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)]">
               STATUS: ACTIVE
             </span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-orange)] flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 bg-[var(--bb-orange)] rounded-full animate-[pulse_2s_ease-in-out_infinite]" />
+            <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-1)] flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 bg-[var(--bb-white)] rounded-full" />
               LIVE
             </span>
           </div>

@@ -80,16 +80,12 @@ export function ConsolePreview() {
   const surface = SURFACES[active];
 
   return (
-    <section id="console" className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 opacity-[0.5]" style={{ background: "radial-gradient(680px 420px at 50% 90%, rgba(255,105,0,0.05), transparent 66%)" }} />
-      </div>
-
+    <section id="console" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
         <div className="max-w-[720px]">
-          <Eyebrow label="06 — MERCHANT CONSOLE" />
+          <Eyebrow label="10 — MERCHANT CONSOLE" />
           <h2 className="section-title mt-6 text-[var(--bb-white)]">
-            A cockpit, not an admin panel
+            Mission control for your AI sales channel
           </h2>
           <p className="body-copy mt-6">
             Everything the backend does is observable and controllable from the
@@ -112,7 +108,7 @@ export function ConsolePreview() {
                 }`}
               >
                 <span
-                  className={`absolute left-0 top-0 bottom-0 w-[2px] transition-all ${
+                  className={`absolute left-0 top-0 bottom-0 w-[2px] transition-colors ${
                     active === i ? "bg-[var(--bb-orange)]" : "bg-transparent"
                   }`}
                 />
@@ -127,7 +123,7 @@ export function ConsolePreview() {
           {/* Detail panel */}
           <div className="relative p-7 sm:p-9">
             <CornerBrackets />
-            <div key={surface.key} className="animate-slide-up">
+            <div key={surface.key} className="tab-in">
               <h3 className="font-[var(--font-sans)] text-[1.4rem] tracking-[-0.03em] text-[var(--bb-white)]">
                 {surface.title}
               </h3>

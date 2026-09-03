@@ -52,14 +52,10 @@ const CONTROLS = [
 
 export function Security() {
   return (
-    <section id="security" className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 opacity-[0.5]" style={{ background: "radial-gradient(640px 420px at 50% 30%, rgba(255,105,0,0.05), transparent 66%)" }} />
-      </div>
-
+    <section id="security" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
         <div className="max-w-[720px]">
-          <Eyebrow label="07 — SECURITY MODEL" />
+          <Eyebrow label="10 — SECURITY MODEL" />
           <h2 className="section-title mt-6 text-[var(--bb-white)]">
             The security model is the product
           </h2>
@@ -84,7 +80,7 @@ export function Security() {
                 i < CONTROLS.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
               }`}
             >
-              <div className="font-[var(--font-mono)] text-[0.68rem] text-red-400/90">{c.threat}</div>
+              <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-white)]">{c.threat}</div>
               <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-white)]">
                 <span className="md:hidden font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)] block mb-0.5">
                   CONTROL

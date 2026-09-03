@@ -1,163 +1,87 @@
 "use client";
 
-import { useInView } from "@/lib/use-in-view";
 import { Eyebrow } from "./ui/eyebrow";
+import { Reveal } from "./ui/reveal";
 
+// Plain-language commerce flow — static numbered rows, no scroll
+// animations or flowing lights.
 const steps = [
   {
     number: "01",
-    title: "DISCOVER",
-    agent: "BUYER AGENT",
+    title: "Discover",
     description:
-      "AI buyer discovers the merchant via /.well-known/agents.json manifest and reads the machine-readable catalog.",
-    icon: (
-      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-        <circle cx="16" cy="16" r="11" stroke="var(--bb-grey-3)" strokeWidth="1" />
-        <circle cx="16" cy="16" r="4" fill="var(--bb-orange)" />
-        <line x1="16" y1="1" x2="16" y2="5" stroke="var(--bb-grey-4)" strokeWidth="1" />
-        <line x1="16" y1="27" x2="16" y2="31" stroke="var(--bb-grey-4)" strokeWidth="1" />
-        <line x1="1" y1="16" x2="5" y2="16" stroke="var(--bb-grey-4)" strokeWidth="1" />
-        <line x1="27" y1="16" x2="31" y2="16" stroke="var(--bb-grey-4)" strokeWidth="1" />
-      </svg>
-    ),
+      "An AI buyer finds your store. Your store exposes information that AI agents can understand — no HTML rendering required.",
   },
   {
     number: "02",
-    title: "NEGOTIATE",
-    agent: "SELLER AGENT",
+    title: "Understand",
     description:
-      "Seller agent proposes quotes within merchant policy. Bounded counter-offers protect floor prices and margins.",
-    icon: (
-      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-        <rect x="2" y="8" width="12" height="16" rx="2" stroke="var(--bb-grey-3)" strokeWidth="1" />
-        <rect x="18" y="8" width="12" height="16" rx="2" stroke="var(--bb-grey-3)" strokeWidth="1" />
-        <path d="M14 16h4" stroke="var(--bb-orange)" strokeWidth="1" strokeDasharray="2 2" />
-        <circle cx="16" cy="16" r="2" fill="var(--bb-orange)" />
-      </svg>
-    ),
+      "The AI Seller understands what the buyer needs and searches your real products — never invented ones.",
   },
   {
     number: "03",
-    title: "CONSENT",
-    agent: "CONSENT SERVICE",
+    title: "Negotiate",
     description:
-      "Single-use, time-bound, amount-bound consent token issued. No payment proceeds without explicit authorization.",
-    icon: (
-      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-        <rect x="6" y="4" width="20" height="24" rx="2" stroke="var(--bb-grey-3)" strokeWidth="1" />
-        <path d="M11 16l3 3 7-7" stroke="var(--bb-orange)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
+      "The agents can negotiate. The Seller Agent may offer a better price, but it can never go below the minimum you set.",
   },
   {
     number: "04",
-    title: "PAY",
-    agent: "PAYMENT RAIL",
+    title: "Recommend",
     description:
-      "Razorpay test-mode order created, payment captured, webhook verified. Full audit trail recorded in XAI ledger.",
-    icon: (
-      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-        <circle cx="16" cy="16" r="12" stroke="var(--bb-grey-3)" strokeWidth="1" />
-        <path d="M16 8v16M12 12h8M12 20h8" stroke="var(--bb-orange)" strokeWidth="1.5" strokeLinecap="round" />
-      </svg>
-    ),
+      "The Seller Agent suggests useful add-ons — a laptop plus a compatible sleeve — within price, category, and budget.",
+  },
+  {
+    number: "05",
+    title: "Protect",
+    description:
+      "Rules and authorization control the transaction. High-value purchases can require human approval, and payment needs explicit consent.",
+  },
+  {
+    number: "06",
+    title: "Pay & verify",
+    description:
+      "Razorpay processes the payment and a signed webhook confirms the result. The full transaction can then be replayed.",
   },
 ];
 
 export function HowItWorks() {
-  const { ref, isInView } = useInView();
-
   return (
-    <section id="how-it-works" className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
-      {/* video-type gradient wash behind section */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 opacity-[0.45]" style={{ background: "radial-gradient(720px 420px at 50% 8%, rgba(255,105,0,0.055), transparent 68%)" }} />
-        <div className="absolute inset-0 hero-video-grid opacity-[0.06]" />
-      </div>
-      <div className="page-frame relative" ref={ref}>
-        <div className="text-center mb-16">
-          <Eyebrow label="01 — TRANSACTION LIFECYCLE" />
-          <h2
-            className={`section-title mt-6 text-[var(--bb-white)] transition-all duration-700 ${
-              isInView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
-            }`}
-          >
-            How a purchase flows through SELLABLE
+    <section id="how-it-works" className="technical-section py-[clamp(80px,10vw,160px)]">
+      <div className="page-frame relative">
+        <div className="max-w-[720px]">
+          <Eyebrow label="04 — HOW IT WORKS" />
+          <h2 className="section-title mt-6 text-[var(--bb-white)]">
+            From “I need something” to a completed purchase
           </h2>
-          <p
-            className={`body-copy mt-6 mx-auto transition-all duration-700 delay-100 ${
-              isInView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
-            }`}
-          >
-            Every step is policy-gated, consent-authorized, and audit-logged.
-            The LLM proposes; deterministic systems dispose.
+          <p className="body-copy mt-6">
+            Six steps. Every one is checked against your rules, authorized by
+            consent, and written to the ledger.
           </p>
         </div>
 
-        {/* Flow line */}
-        <div className="relative">
-          {/* Vertical connector line (desktop) with live flowing light */}
-          <div className="hidden lg:block absolute left-[50%] top-0 bottom-0 w-px bg-[var(--bb-line)] overflow-hidden">
-            <div className="absolute left-0 right-0 h-[140px] bg-gradient-to-b from-transparent via-[var(--bb-orange)]/80 to-transparent animate-[rail-flow_3s_linear_infinite]" />
-            <div className="absolute left-0 right-0 h-[140px] bg-gradient-to-b from-transparent via-[#ffb86a]/60 to-transparent animate-[rail-flow_3s_linear_infinite]" style={{ animationDelay: "1.4s" }} />
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-x-[clamp(48px,6vw,96px)] lg:gap-y-16">
-            {steps.map((step, i) => (
-              <div
-                key={step.number}
-                className={`relative transition-all duration-700 ${
-                  isInView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-8"
-                }`}
-                style={{ transitionDelay: `${i * 150}ms` }}
-              >
-                {/* Desktop: alternate sides */}
-                <div
-                  className={`${
-                    i % 2 === 0
-                      ? "lg:col-start-1 lg:pr-16 lg:text-right"
-                      : "lg:col-start-2 lg:pl-16"
-                  }`}
-                >
-                  {/* Node dot on the line (desktop) with live pulse */}
-                  <div
-                    className={`hidden lg:block absolute top-6 w-3 h-3 border border-[var(--bb-orange)] bg-[var(--bb-black)] shadow-[0_0_10px_rgba(255,105,0,0.35)] ${
-                      i % 2 === 0
-                        ? "right-[-7px] translate-x-[calc(50%+3.5px)]"
-                        : "left-[-7px] -translate-x-[calc(50%+3.5px)]"
-                    }`}
-                  >
-                    <span className="absolute inset-0 bg-[var(--bb-orange)]/20 animate-[pulse_2s_ease-in-out_infinite]" />
-                  </div>
-
-                  <div className="flex items-start gap-4 lg:justify-end">
-                    {i % 2 !== 0 && (
-                      <div className="flex-shrink-0 mt-1">{step.icon}</div>
-                    )}
-                    <div>
-                      <div className="flex items-center gap-3 lg:justify-end mb-2">
-                        <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] text-[var(--bb-orange)]">
-                          STEP {step.number}
-                        </span>
-                        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] text-[var(--bb-grey-4)]">
-                          {step.agent}
-                        </span>
-                      </div>
-                      <h3 className="font-[var(--font-sans)] text-[1.6rem] tracking-[-0.04em] text-[var(--bb-white)] mb-2">
-                        {step.title}
-                      </h3>
-                      <p className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-grey-1)] leading-relaxed max-w-[400px]">
-                        {step.description}
-                      </p>
-                    </div>
-                    {i % 2 === 0 && (
-                      <div className="flex-shrink-0 mt-1">{step.icon}</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="mt-12 border-t border-[var(--bb-line)] relative">
+          {/* animated dashed rail — 2px strip, background-position loop */}
+          <div aria-hidden="true" className="flow-rail absolute left-[5px] top-10 bottom-10 w-[2px] hidden sm:block" />
+          {steps.map((step, i) => (
+            <Reveal key={step.number} delay={Math.min(i, 5) * 70} y={14}>
+            <div
+              className="group grid grid-cols-1 sm:grid-cols-[88px_220px_1fr] gap-2 sm:gap-6 items-baseline py-6 border-b border-[var(--bb-line-soft)] transition-colors duration-300 hover:bg-[var(--bb-panel)]"
+            >
+              <span className="relative font-[var(--font-mono)] text-[0.7rem] tracking-[0.12em] text-[var(--bb-orange)] tabular-nums sm:pl-8">
+                <span aria-hidden="true" className="absolute left-0 top-1/2 -translate-y-1/2 hidden sm:block w-[11px] h-[11px] border border-[var(--bb-orange)] bg-[var(--bb-black)]">
+                  <span className="absolute inset-[3px] bg-[var(--bb-orange)]" />
+                </span>
+                {step.number}
+              </span>
+              <h3 className="font-[var(--font-sans)] text-[1.35rem] tracking-[-0.03em] text-[var(--bb-white)]">
+                {step.title}
+              </h3>
+              <p className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-grey-1)] leading-relaxed max-w-[62ch]">
+                {step.description}
+              </p>
+            </div>
+            </Reveal>
+          ))}
         </div>
       </div>
     </section>

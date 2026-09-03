@@ -68,24 +68,19 @@ export function Discovery() {
   }, [state, chars]);
 
   return (
-    <section id="discovery" className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 opacity-[0.5]" style={{ background: "radial-gradient(640px 420px at 82% 60%, rgba(255,105,0,0.06), transparent 66%)" }} />
-      </div>
-
+    <section id="discovery" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative" ref={ref}>
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-[clamp(48px,7vw,112px)] items-center">
-          {/* Right-order on desktop: panel first visual weight balance — copy left */}
+          {/* Copy */}
           <div>
-            <Eyebrow label="03 — AGENT DISCOVERY" />
+            <Eyebrow label="07 — AI-NATIVE STORE" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              AI buyers find you the way crawlers found the web
+              Your store, ready for the AI economy.
             </h2>
             <p className="body-copy mt-6">
-              No SEO games. Your store serves a machine-readable manifest and
-              catalog at well-known URLs, so an autonomous buyer can discover
-              you, read your stock, and transact — without ever rendering a
-              pixel of HTML.
+              Your store isn&apos;t only a website anymore. It becomes a place
+              that AI agents can understand, interact with, and transact
+              with — no SEO games, no rendered pixels required.
             </p>
 
             <div className="mt-8 space-y-2">
@@ -104,13 +99,13 @@ export function Discovery() {
                   <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.06em] px-1.5 py-0.5 border border-[var(--bb-line)] text-[var(--bb-grey-1)] shrink-0">
                     GET
                   </span>
-                  <span className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-white)] group-hover:text-[var(--bb-orange)] transition-colors truncate">
+                  <span className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-white)] group-hover:text-[var(--bb-white)] transition-colors truncate">
                     {path}
                   </span>
                   <span className="ml-auto font-[var(--font-mono)] text-[0.52rem] text-[var(--bb-grey-4)] hidden sm:block shrink-0">
                     {note}
                   </span>
-                  <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] group-hover:text-[var(--bb-orange)] transition-colors">↗</span>
+                  <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] group-hover:text-[var(--bb-white)] transition-colors">↗</span>
                 </a>
               ))}
             </div>
@@ -124,22 +119,16 @@ export function Discovery() {
                 <div className="flex items-center gap-2.5">
                   <span className={`w-[5px] h-[5px] ${
                     state.status === "live"
-                      ? "bg-emerald-400 animate-[pulse_1.6s_ease-in-out_infinite]"
+                      ? "bg-[var(--bb-orange)] live-dot rounded-full"
                       : state.status === "loading"
-                        ? "bg-yellow-400 animate-pulse"
-                        : "bg-red-400"
+                        ? "bg-[var(--bb-grey-3)]"
+                        : "bg-[var(--bb-grey-4)]"
                   }`} />
                   <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
                     /.well-known/agents.json
                   </span>
                 </div>
-                <span className={`font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] ${
-                  state.status === "live"
-                    ? "text-emerald-400"
-                    : state.status === "loading"
-                      ? "text-yellow-400"
-                      : "text-red-400"
-                }`}>
+                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] text-[var(--bb-grey-2)]">
                   {state.status === "live"
                     ? "LIVE · FETCHED NOW"
                     : state.status === "loading"
@@ -157,7 +146,7 @@ export function Discovery() {
                   <>
                     {state.manifest.slice(0, chars)}
                     {chars < state.manifest.length && (
-                      <span className="inline-block w-[7px] h-[13px] bg-[var(--bb-orange)] ml-0.5 -mb-[2px] animate-[blink_0.9s_steps(1)_infinite]" />
+                      <span className="inline-block w-[7px] h-[13px] bg-[var(--bb-white)] ml-0.5 -mb-[2px] animate-[blink_0.9s_steps(1)_infinite]" />
                     )}
                   </>
                 )}

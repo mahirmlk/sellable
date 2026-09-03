@@ -44,16 +44,12 @@ export function Features() {
   const [activeCap, setActiveCap] = useState<number | null>(null);
 
   return (
-    <section id="platform" className="technical-section py-[clamp(80px,10vw,160px)] overflow-hidden relative">
-      {/* video wash */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 opacity-[0.5]" style={{ background: "radial-gradient(640px 420px at 78% 32%, rgba(255,105,0,0.07), transparent 66%)" }} />
-      </div>
+    <section id="platform" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.82fr)] gap-[clamp(48px,8vw,128px)]">
           {/* Left: Content */}
           <div>
-            <Eyebrow label="04 — TRUST &amp; SAFETY" />
+            <Eyebrow label="06 — TRUST & SAFETY" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
               Every money action is explainable, bounded, and gated
             </h2>
@@ -97,7 +93,7 @@ export function Features() {
                     PUBLIC API SURFACE
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="w-[5px] h-[5px] bg-emerald-400 animate-[pulse_1.8s_ease-in-out_infinite]" />
+                    <span className="w-[5px] h-[5px] bg-[var(--bb-orange)]" />
                     <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
                       live
                     </span>
@@ -133,20 +129,19 @@ export function Features() {
                     ))}
                   </div>
 
-                  {/* Active status — with live video sheen */}
-                  <div className="status-highlight relative overflow-hidden mt-5">
-                    <div className="code-shimmer opacity-40" />
+                  {/* Active status */}
+                  <div className="status-highlight relative mt-5">
                     <div className="flex items-center justify-between relative">
                       <div>
                         <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] mb-1 flex items-center gap-1.5">
                           ARCHITECTURE STATUS
-                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-[pulse_1.6s_ease-in-out_infinite]" />
+                          <span className="w-1 h-1 rounded-full bg-[var(--bb-orange)]" />
                         </div>
                         <div className="font-[var(--font-sans)] text-[1.1rem] font-medium text-[var(--bb-orange)]">
                           AUDIT-READY
                         </div>
                       </div>
-                      <span className="w-2.5 h-2.5 bg-[var(--bb-orange)] rounded-full animate-[pulse_2s_ease-in-out_infinite] shadow-[0_0_10px_rgba(255,105,0,0.6)]" aria-hidden="true" />
+                      <span className="w-2.5 h-2.5 bg-[var(--bb-orange)] rounded-full" aria-hidden="true" />
                     </div>
                     <div className="mt-4 grid grid-cols-2 gap-4">
                       <div title="Design target — measured p95 in local verification">
