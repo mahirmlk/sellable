@@ -98,7 +98,7 @@ export function CodeSection() {
                   <span className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase">
                     curl
                   </span>
-                  <span className="ml-2 hidden sm:inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5">
+                  <span className="ml-2 hidden sm:inline-flex items-center gap-1.5 border border-white/10 bg-white/[0.04] px-2 py-0.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-[pulse_1.4s_ease-in-out_infinite]" />
                     <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] text-[var(--bb-grey-1)]">LIVE</span>
                   </span>

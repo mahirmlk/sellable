@@ -3,6 +3,7 @@
 import { Eyebrow } from "./ui/eyebrow";
 import { Blueprint } from "./blueprint";
 import { Parallax } from "./ui/parallax";
+import { TraceTicker } from "./trace-ticker";
 
 export function Hero() {
   return (
@@ -44,17 +45,26 @@ export function Hero() {
               </a>
             </div>
 
-            {/* live micro-stats row under CTA — video-like ticker */}
-            <div className="mt-8 flex items-center gap-3 animate-slide-up animate-delay-4">
-              <span className="inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] animate-[pulse_1.4s_ease-in-out_infinite]" />
-                <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Policy engine</span>
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-orange)]">deterministic</span>
+            {/* live ledger trace ticker — real event schema, looping */}
+            <div className="mt-8 max-w-[440px] border-l-2 border-[var(--bb-orange)]/50 bg-[var(--bb-panel)]/70 px-4 py-2.5 animate-slide-up animate-delay-3">
+              <TraceTicker />
+            </div>
+
+            {/* live micro-stats row under CTA — terminal chips */}
+            <div className="mt-8 flex items-center gap-2.5 animate-slide-up animate-delay-4">
+              <span className="inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
+                <span className="w-[5px] h-[5px] bg-[var(--bb-orange)] animate-[pulse_1.4s_ease-in-out_infinite]" />
+                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)]">Policy engine</span>
+                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.04em] text-[var(--bb-orange)]">deterministic</span>
               </span>
-              <span className="hidden sm:inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-[pulse_1.8s_ease-in-out_infinite]" />
-                <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Ledger</span>
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-emerald-400">recording</span>
+              <span className="hidden sm:inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
+                <span className="w-[5px] h-[5px] bg-emerald-400 animate-[pulse_1.8s_ease-in-out_infinite]" />
+                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)]">Ledger</span>
+                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.04em] text-emerald-400">recording</span>
+              </span>
+              <span className="hidden lg:inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
+                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)]">Rails</span>
+                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.04em] text-[var(--bb-grey-1)]">razorpay · test</span>
               </span>
             </div>
           </div>

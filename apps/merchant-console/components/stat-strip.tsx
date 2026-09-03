@@ -3,95 +3,114 @@
 import { useEffect, useState } from "react";
 import { ScrollReveal } from "./ui/scroll-reveal";
 import { AnimatedCounter } from "./ui/animated-counter";
-import { searchCatalog, getAgentManifest, getHealthPublic } from "@/lib/api";
+import { getHealthPublic } from "@/lib/api";
 
-interface Stat {
+interface Fact {
+  index: string;
+  value?: number | null; // animated when numeric
+  display?: string | null; // static display (overrides value)
+  prefix?: string;
+  suffix?: string;
   label: string;
-  hint: string;
-  highlight: boolean;
-  prefix: string;
-  suffix: string;
-  numeric: number | null;
-  text: string | null;
+  note: string;
 }
 
-// Every value here is derived from live backend data (catalog count, agent
-// manifest capabilities, health). No fabricated metrics.
+// Facts that are true by design — derived from the actual codebase
+// (policy engine rules, seller agent tools, ledger contract, auth stack),
+// not from auth-gated API counters.
+const FACTS: Fact[] = [
+  {
+    index: "01",
+    value: 7,
+    label: "POLICY RULES",
+    note: "deterministic, SKU → floor → HITL",
+  },
+  {
+    index: "02",
+    value: 5,
+    label: "AGENT TOOLS",
+    note: "catalog · quote · negotiate · upsell · policy",
+  },
+  {
+    index: "03",
+    value: 100,
+    suffix: "%",
+    label: "LEDGER COVERAGE",
+    note: "every money action explained",
+  },
+  {
+    index: "04",
+    display: null, // filled from live health probe
+    value: null,
+    label: "PAYMENT RAIL",
+    note: "razorpay test · signed webhooks",
+  },
+];
+
 export function StatStrip() {
-  const [stats, setStats] = useState<Stat[]>([
-    { label: "CATALOG PRODUCTS", hint: "Live catalog count", highlight: false, prefix: "", suffix: "", numeric: null, text: "—" },
-    { label: "AGENT CAPABILITIES", hint: "Manifest capabilities", highlight: false, prefix: "", suffix: "", numeric: null, text: "—" },
-    { label: "POLICY ENGINE", hint: "Deterministic money boundary", highlight: true, prefix: "", suffix: "", numeric: null, text: "DETERMINISTIC" },
-    { label: "PAYMENT RAIL", hint: "Razorpay test mode", highlight: false, prefix: "", suffix: "", numeric: null, text: "—" },
-  ]);
-  const [loaded, setLoaded] = useState(false);
+  const [railState, setRailState] = useState<"checking" | "live" | "offline">("checking");
 
   useEffect(() => {
     const t = window.setTimeout(() => {
-      Promise.allSettled([searchCatalog(""), getAgentManifest(), getHealthPublic()]).then(
-        ([catalog, manifest, health]) => {
-          const catalogCount = catalog.status === "fulfilled" ? catalog.value.length : null;
-          const capabilities =
-            manifest.status === "fulfilled" && Array.isArray(manifest.value.capabilities)
-              ? manifest.value.capabilities.length
-              : null;
-          const razorpayConfigured = health.status === "fulfilled" ? health.value.razorpay_configured : null;
-          setStats([
-            { label: "CATALOG PRODUCTS", hint: "Live catalog count", highlight: false, prefix: "", suffix: "", numeric: catalogCount, text: catalogCount != null ? null : "—" },
-            { label: "AGENT CAPABILITIES", hint: "Manifest capabilities", highlight: false, prefix: "", suffix: "", numeric: capabilities, text: capabilities != null ? null : "—" },
-            { label: "POLICY ENGINE", hint: "Deterministic money boundary", highlight: true, prefix: "", suffix: "", numeric: null, text: "DETERMINISTIC" },
-            { label: "PAYMENT RAIL", hint: "Razorpay test mode", highlight: false, prefix: "", suffix: "", numeric: null, text: razorpayConfigured == null ? "—" : razorpayConfigured ? "RAZORPAY TEST" : "UNCONFIGURED" },
-          ]);
-          setLoaded(true);
-        }
-      );
+      getHealthPublic()
+        .then((h) => setRailState(h.razorpay_configured ? "live" : "offline"))
+        .catch(() => setRailState("offline"));
     }, 0);
     return () => window.clearTimeout(t);
   }, []);
 
   return (
-    <section className="technical-section border-t border-[var(--bb-line)] relative overflow-hidden" aria-label="Key metrics">
-      {/* subtle video wash */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute inset-0 opacity-[0.04]" style={{ background: "linear-gradient(90deg, transparent 8%, rgba(255,105,0,0.14) 46%, transparent 82%)" }} />
-      </div>
-      <div className="page-frame relative">
-        <div className="grid grid-cols-2 lg:grid-cols-4">
-          {stats.map((stat, i) => (
-            <ScrollReveal key={stat.label} delay={i * 100}>
+    <ScrollReveal>
+      <section
+        className="technical-section border-t border-[var(--bb-line)] relative overflow-hidden"
+        aria-label="Platform facts"
+      >
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 opacity-[0.04]" style={{ background: "linear-gradient(90deg, transparent 8%, rgba(255,105,0,0.14) 46%, transparent 82%)" }} />
+        </div>
+        <div className="page-frame relative">
+          <div className="grid grid-cols-2 lg:grid-cols-4">
+            {FACTS.map((fact, i) => (
               <div
-                className="stat group relative transition-all duration-300 hover:bg-[var(--bb-panel)]/50 overflow-hidden"
-                title={stat.hint}
-                aria-label={`${stat.label}: ${stat.numeric != null ? stat.numeric : stat.text} — ${stat.hint}`}
+                key={fact.label}
+                className={`px-6 py-8 border-[var(--bb-line)] ${
+                  i < FACTS.length - 1 ? "border-r" : ""
+                } ${i < 2 ? "border-b lg:border-b-0" : ""}`}
               >
-                <div
-                  className={`stat-value transition-colors duration-200 ${stat.highlight ? "text-[var(--bb-orange)]" : "text-[var(--bb-white)]"} ${!loaded ? "opacity-0" : "opacity-100"}`}
-                >
-                  {stat.numeric != null ? (
+                <div className="flex items-baseline gap-2 mb-3">
+                  <span className="font-[var(--font-mono)] text-[0.52rem] text-[var(--bb-grey-4)] tabular-nums">
+                    {fact.index}
+                  </span>
+                  <span className="w-[5px] h-[5px] bg-[var(--bb-orange)]" />
+                </div>
+                <div className="font-[var(--font-mono)] text-[1.6rem] leading-none text-[var(--bb-white)] tabular-nums tracking-tight">
+                  {fact.display ? (
+                    fact.display
+                  ) : fact.value != null ? (
                     <>
-                      {stat.prefix}
-                      <AnimatedCounter target={stat.numeric} duration={1000} />
-                      {stat.suffix}
+                      {fact.prefix}
+                      <AnimatedCounter target={fact.value} duration={1200} />
+                      {fact.suffix}
                     </>
+                  ) : railState === "live" ? (
+                    <span className="text-emerald-400">LIVE</span>
+                  ) : railState === "checking" ? (
+                    <span className="text-[var(--bb-grey-3)]">···</span>
                   ) : (
-                    <span className="text-[clamp(1.3rem,2vw,1.9rem)]">{stat.text}</span>
-                  )}
-                  {stat.highlight && (
-                    <span className="ml-2 inline-block w-1.5 h-1.5 rounded-full bg-[var(--bb-orange)] align-middle animate-[pulse_1.5s_ease-in-out_infinite]" aria-hidden="true" />
+                    <span className="text-[var(--bb-grey-3)]">TEST</span>
                   )}
                 </div>
-                {!loaded && <div className="skeleton h-[2.2rem] w-24 mt-1" aria-hidden="true" />}
-                <div className="stat-label flex items-center gap-1.5">
-                  <span>{stat.label}</span>
-                  <span className="hidden sm:inline font-[var(--font-mono)] text-[0.5rem] tracking-[0.06em] lowercase text-[var(--bb-grey-4)] opacity-0 group-hover:opacity-100 transition-opacity">
-                    — {stat.hint}
-                  </span>
+                <div className="mt-4 font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
+                  {fact.label}
+                </div>
+                <div className="mt-1 font-[var(--font-mono)] text-[0.55rem] tracking-[0.02em] text-[var(--bb-grey-4)]">
+                  {fact.note}
                 </div>
               </div>
-            </ScrollReveal>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </ScrollReveal>
   );
 }

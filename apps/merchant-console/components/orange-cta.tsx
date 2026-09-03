@@ -20,10 +20,10 @@ export function OrangeCTA() {
       </div>
 
       <div className="page-frame relative">
-        <div className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-black/[0.06] px-3 py-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-black animate-[pulse_1.5s_ease-in-out_infinite]" />
+        <div className="inline-flex items-center gap-2 border border-black/10 bg-black/[0.06] px-3 py-1.5">
+          <span className="w-[5px] h-[5px] bg-black animate-[pulse_1.5s_ease-in-out_infinite]" />
           <span className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.14em] uppercase text-black/70">Live on Razorpay test mode</span>
-          <span className="font-[var(--font-mono)] text-[0.58rem] text-black/45">· webhooks verified</span>
+          <span className="font-[var(--font-mono)] text-[0.58rem] text-black/45">— webhooks verified</span>
         </div>
         <h2 className="mt-6">
           Make your store
@@ -46,15 +46,15 @@ export function OrangeCTA() {
         {/* live trust row */}
         <div className="mt-10 flex flex-wrap items-center gap-3 font-[var(--font-mono)] text-[0.62rem] tracking-[0.08em] uppercase text-black/55">
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 bg-black/70 rounded-full" /> Consent-gated
+            <span className="w-[5px] h-[5px] bg-black/70" /> Consent-gated
           </span>
           <span className="w-px h-3 bg-black/15" />
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 bg-black/70 rounded-full" /> Policy-bounded
+            <span className="w-[5px] h-[5px] bg-black/70" /> Policy-bounded
           </span>
           <span className="w-px h-3 bg-black/15" />
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 bg-black/70 rounded-full" /> Ledger-audited
+            <span className="w-[5px] h-[5px] bg-black/70" /> Ledger-audited
           </span>
         </div>
       </div>

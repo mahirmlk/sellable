@@ -76,7 +76,7 @@ export function HowItWorks() {
       </div>
       <div className="page-frame relative" ref={ref}>
         <div className="text-center mb-16">
-          <Eyebrow label="TRANSACTION LIFECYCLE" />
+          <Eyebrow label="01 — TRANSACTION LIFECYCLE" />
           <h2
             className={`section-title mt-6 text-[var(--bb-white)] transition-all duration-700 ${
               isInView ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"

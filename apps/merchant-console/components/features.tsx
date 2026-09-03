@@ -31,6 +31,15 @@ const capabilities = [
   },
 ];
 
+const apiSurface = [
+  { method: "GET", path: "/.well-known/agents.json", note: "agent discovery manifest" },
+  { method: "GET", path: "/catalog.ai.json", note: "machine-readable catalog" },
+  { method: "GET", path: "/llms.txt", note: "agent guidance" },
+  { method: "POST", path: "/agent/quotes.negotiate", note: "bounded negotiation" },
+  { method: "POST", path: "/agent/orders.create", note: "policy-gated ordering" },
+  { method: "POST", path: "/webhooks/razorpay", note: "signed settlement" },
+];
+
 export function Features() {
   const [activeCap, setActiveCap] = useState<number | null>(null);
 
@@ -44,7 +53,7 @@ export function Features() {
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.82fr)] gap-[clamp(48px,8vw,128px)]">
           {/* Left: Content */}
           <div>
-            <Eyebrow label="TRUST & SAFETY" />
+            <Eyebrow label="04 — TRUST &amp; SAFETY" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
               Every money action is explainable, bounded, and gated
             </h2>
@@ -67,69 +76,102 @@ export function Features() {
                   onMouseEnter={() => setActiveCap(i)}
                   onMouseLeave={() => setActiveCap(null)}
                 >
-                  <div className="capability-title">{cap.title}</div>
+                  <div className="capability-title">
+                    <span className="text-[var(--bb-grey-4)] mr-2 tabular-nums">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    {cap.title}
+                  </div>
                   <div className="capability-description">{cap.description}</div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Right: Nested deployment diagram */}
+          {/* Right: Real API surface panel */}
           <div className="flex items-center">
             <div className="w-full">
-              {/* Enterprise API panel */}
               <div className="border border-[#30302E] p-6 transition-all duration-500 hover:border-[#404040]">
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] mb-4">
-                  ENTERPRISE API
+                <div className="flex items-center justify-between mb-5">
+                  <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
+                    PUBLIC API SURFACE
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-[5px] h-[5px] bg-emerald-400 animate-[pulse_1.8s_ease-in-out_infinite]" />
+                    <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+                      live
+                    </span>
+                  </div>
                 </div>
 
-                {/* Dedicated capacity */}
+                {/* Merchant store layer */}
                 <div className="border border-[#282826] p-5 transition-all duration-500 hover:border-[#383836]">
-                  <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] mb-4">
-                    DEDICATED CAPACITY
+                  <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] mb-4">
+                    MERCHANT STORE
                   </div>
 
-                  {/* Single tenant */}
-                  <div className="border border-[#282826] p-5 transition-all duration-500 hover:border-[#383836]">
-                    <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] mb-4">
-                      SINGLE-TENANT DEPLOYMENT
-                    </div>
-
-                    {/* Active status — with live video sheen */}
-                    <div className="status-highlight relative overflow-hidden">
-                      <div className="code-shimmer opacity-40" />
-                      <div className="flex items-center justify-between relative">
-                        <div>
-                          <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] mb-1 flex items-center gap-1.5">
-                            ARCHITECTURE STATUS
-                            <span className="w-1 h-1 rounded-full bg-emerald-400 animate-[pulse_1.6s_ease-in-out_infinite]" />
-                          </div>
-                          <div className="font-[var(--font-sans)] text-[1.1rem] font-medium text-[var(--bb-orange)]">
-                            AUDIT-READY
-                          </div>
-                        </div>
-                        <span className="w-2.5 h-2.5 bg-[var(--bb-orange)] rounded-full animate-[pulse_2s_ease-in-out_infinite] shadow-[0_0_10px_rgba(255,105,0,0.6)]" aria-hidden="true" />
+                  {/* Endpoint rows — the real routes this app serves */}
+                  <div className="divide-y divide-[var(--bb-line-soft)]">
+                    {apiSurface.map((ep) => (
+                      <div key={ep.path} className="py-2.5 flex items-center gap-3 first:pt-0 last:pb-0">
+                        <span
+                          className={`font-[var(--font-mono)] text-[0.52rem] tracking-[0.06em] px-1.5 py-0.5 border flex-shrink-0 ${
+                            ep.method === "GET"
+                              ? "border-[var(--bb-line)] text-[var(--bb-grey-1)]"
+                              : "border-[var(--bb-orange)]/40 text-[var(--bb-orange)]"
+                          }`}
+                        >
+                          {ep.method}
+                        </span>
+                        <span className="font-[var(--font-mono)] text-[0.66rem] text-[var(--bb-white)] truncate">
+                          {ep.path}
+                        </span>
+                        <span className="ml-auto font-[var(--font-mono)] text-[0.52rem] text-[var(--bb-grey-4)] hidden sm:block flex-shrink-0">
+                          {ep.note}
+                        </span>
                       </div>
-                      <div className="mt-4 grid grid-cols-2 gap-4">
-                        <div title="Design target — measured p95 in local verification">
-                          <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                            LATENCY <span className="text-[0.5rem] normal-case tracking-normal text-[var(--bb-grey-4)]">target p95</span>
-                          </div>
-                          <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
-                            &lt; 200ms
-                          </div>
+                    ))}
+                  </div>
+
+                  {/* Active status — with live video sheen */}
+                  <div className="status-highlight relative overflow-hidden mt-5">
+                    <div className="code-shimmer opacity-40" />
+                    <div className="flex items-center justify-between relative">
+                      <div>
+                        <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] mb-1 flex items-center gap-1.5">
+                          ARCHITECTURE STATUS
+                          <span className="w-1 h-1 rounded-full bg-emerald-400 animate-[pulse_1.6s_ease-in-out_infinite]" />
                         </div>
-                        <div title="Every money action creates a ledger event">
-                          <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                            AUDIT
-                          </div>
-                          <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
-                            100%
-                          </div>
+                        <div className="font-[var(--font-sans)] text-[1.1rem] font-medium text-[var(--bb-orange)]">
+                          AUDIT-READY
+                        </div>
+                      </div>
+                      <span className="w-2.5 h-2.5 bg-[var(--bb-orange)] rounded-full animate-[pulse_2s_ease-in-out_infinite] shadow-[0_0_10px_rgba(255,105,0,0.6)]" aria-hidden="true" />
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-4">
+                      <div title="Design target — measured p95 in local verification">
+                        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+                          LATENCY <span className="text-[0.5rem] normal-case tracking-normal text-[var(--bb-grey-4)]">target p95</span>
+                        </div>
+                        <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
+                          &lt; 200ms
+                        </div>
+                      </div>
+                      <div title="Every money action creates a ledger event">
+                        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+                          AUDIT
+                        </div>
+                        <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
+                          100%
                         </div>
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="mt-4 font-[var(--font-mono)] text-[0.55rem] tracking-[0.06em] text-[var(--bb-grey-4)] leading-relaxed">
+                  Every route above is served by the deployed backend at api.sellable.shop —
+                  discovery is public, transactions are HMAC-signed, settlement is webhook-verified.
                 </div>
               </div>
             </div>

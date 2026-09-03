@@ -160,7 +160,7 @@ export function SiteFooter() {
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={`${social.label} (opens in new tab)`}
-                className="footer-social-icon w-9 h-9 inline-flex items-center justify-center rounded-full border border-transparent hover:border-[var(--bb-line)] hover:bg-[var(--bb-panel)] hover:text-[var(--bb-white)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bb-orange)] focus-visible:ring-offset-2 focus-visible:ring-offset-black transition-all duration-200"
+                className="footer-social-icon w-9 h-9 inline-flex items-center justify-center border border-transparent hover:border-[var(--bb-line)] hover:bg-[var(--bb-panel)] hover:text-[var(--bb-white)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bb-orange)] focus-visible:ring-offset-2 focus-visible:ring-offset-black transition-all duration-200"
               >
                 {social.icon}
               </a>

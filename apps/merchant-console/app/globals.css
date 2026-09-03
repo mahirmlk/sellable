@@ -268,18 +268,18 @@ svg {
    BUTTONS
    -------------------------------------------------- */
 .btn-light {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 56px;
-  padding: 0 32px;
-  border: 1px solid var(--bb-white);
-  border-radius: var(--radius-pill);
-  background: var(--bb-white);
-  color: var(--bb-black);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 56px;
+    padding: 0 32px;
+    border: 1px solid var(--bb-white);
+    border-radius: 0;
+    background: var(--bb-white);
+    color: var(--bb-black);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
   letter-spacing: 0.13em;
   text-transform: uppercase;
   font-weight: 600;
@@ -301,7 +301,7 @@ svg {
   min-height: 56px;
   padding: 0 32px;
   border: 1px solid #3a3a38;
-  border-radius: var(--radius-pill);
+  border-radius:  0;
   background: transparent;
   color: var(--bb-white);
   font-family: var(--font-mono);
@@ -327,7 +327,7 @@ svg {
   min-height: 56px;
   padding: 0 32px;
   border: 1px solid #0b0b0b;
-  border-radius: var(--radius-pill);
+  border-radius:  0;
   background: #0b0b0b;
   color: var(--bb-orange);
   font-family: var(--font-mono);
@@ -351,7 +351,7 @@ svg {
   min-height: 56px;
   padding: 0 32px;
   border: 1px solid rgba(8, 8, 8, 0.35);
-  border-radius: var(--radius-pill);
+  border-radius:  0;
   background: transparent;
   color: #0b0b0b;
   font-family: var(--font-mono);
