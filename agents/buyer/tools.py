@@ -9,6 +9,7 @@ from sellable.contracts import (
     LedgerActor,
     LedgerEvent,
     Order,
+    PolicyVerdict,
 )
 from sellable.gateway import AgentGateway
 
@@ -51,6 +52,9 @@ class BuyerTools:
         intent: IntentMandate,
         request_upsell: bool,
         trace_id: str,
+        requested_sku: str | None = None,
+        quantity: int = 1,
+        buyer_offer_paise: int | None = None,
     ) -> object:
         from agents.seller.agent import SellerRequest
 
@@ -58,6 +62,9 @@ class BuyerTools:
             SellerRequest(
                 message=message,
                 intent=intent,
+                requested_sku=requested_sku,
+                quantity=quantity,
+                buyer_offer_paise=buyer_offer_paise,
                 request_upsell=request_upsell,
             ),
             trace_id=trace_id,
@@ -71,6 +78,12 @@ class BuyerTools:
         cart = decision.cart
         if cart is None:
             raise ValueError("Cannot create an order without a candidate cart")
+        verdict = decision.policy_decision.verdict if decision.policy_decision else None
+        if verdict is not PolicyVerdict.ALLOW:
+            raise ValueError(
+                f"Buyer tool refuses to order a non-ALLOW cart (verdict={verdict}); "
+                "held orders need explicit merchant approval first"
+            )
         idempotency_key = f"idem_buyer_{trace_id}"
         order = self.gateway.commerce.create_order(
             cart=cart,
@@ -90,6 +103,12 @@ class BuyerTools:
         return order
 
     def request_consent(self, *, order_id: str, trace_id: str) -> Consent:
+        order = self.gateway.commerce.get_order(order_id)
+        if order.trace_id != trace_id:
+            raise ValueError(
+                "Consent request trace does not match the order trace; "
+                "refusing to fork the audit trail"
+            )
         consent = self.gateway.commerce.issue_consent(order_id)
         self._record(
             trace_id=trace_id,
@@ -110,6 +129,7 @@ class BuyerTools:
         self.gateway.commerce.ledger.append(
             LedgerEvent(
                 trace_id=trace_id,
+                merchant_id=self.gateway.commerce.merchant_scope,
                 actor=LedgerActor.BUYER_AGENT,
                 action=action,
                 output=output,

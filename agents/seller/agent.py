@@ -7,6 +7,7 @@ cart always originate from deterministic catalog and policy tools.
 
 from __future__ import annotations
 
+import logging
 from enum import StrEnum
 from typing import NotRequired, TypedDict
 from uuid import uuid4
@@ -14,11 +15,10 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 from pydantic import Field
 
-from agents.llm.adapters.base import LLMAdapter, Message
+from agents.llm.adapters.base import LLMAdapter, reply_skus_known
 from agents.seller.tools import SellerTools
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
-    CartItem,
     CartMandate,
     IntentMandate,
     LedgerActor,
@@ -29,6 +29,9 @@ from sellable.contracts import (
     StrictModel,
 )
 from sellable.core import CommerceCore
+
+
+logger = logging.getLogger("sellable.agents.seller")
 
 
 class SellerAction(StrEnum):
@@ -114,7 +117,11 @@ class SellerAgent:
             tool_calls = ["catalog.get"]
             results = [selected] if selected else []
         else:
-            results = self.tools.catalog_search(query=request.message, trace_id=trace_id)
+            results = self.tools.catalog_search(
+                query=request.message,
+                trace_id=trace_id,
+                allowed_categories=request.intent.allowed_categories,
+            )
             selected = results[0] if results else None
         return {
             "search_results": results,
@@ -159,11 +166,19 @@ class SellerAgent:
             or not request.request_upsell
         ):
             return {"upsell_product": None}
-        enriched, upsell = self.tools.upsell_suggest(cart=cart, trace_id=state["trace_id"])
+        # Single-shot respond(): at most one upsell per session here, so the
+        # session count is 0 and the merchant cap is enforced both in the
+        # tool (max == 0 disables upsells) and in the policy evaluation.
+        enriched, upsell = self.tools.upsell_suggest(
+            cart=cart, trace_id=state["trace_id"], session_upsells=0
+        )
         if upsell is None:
             return {"upsell_product": None}
         enriched_decision = self.commerce.evaluate_quote(
-            cart=enriched, intent=request.intent, trace_id=state["trace_id"]
+            cart=enriched,
+            intent=request.intent,
+            trace_id=state["trace_id"],
+            upsells_in_session=0,
         )
         if enriched_decision.verdict is PolicyVerdict.ALLOW:
             return {
@@ -247,19 +262,27 @@ class SellerAgent:
             output={"action": result.action, "cart_id": result.cart.mandate_id if result.cart else None},
             explanation="Produced a structured seller response from catalog and policy tool results.",
         )
-        return {"result": self._phrase_if_llm(result, state["request"].message)}
+        return {
+            "result": self._phrase_if_llm(result, state["request"].message, state["trace_id"])
+        }
 
-    def _phrase_if_llm(self, result: SellerDecision, buyer_message: str) -> SellerDecision:
+    def _phrase_if_llm(
+        self, result: SellerDecision, buyer_message: str, trace_id: str
+    ) -> SellerDecision:
         """Rephrase the response message in natural language when an LLM is wired.
 
         The LLM only rephrases the human-facing message from the structured,
         tool-grounded decision. It can never invent SKUs, prices, stock, or
         policy outcomes: it is handed the exact decision payload and asked to
-        write a concise buyer-facing reply. Any failure falls back to the
-        deterministic message so the commerce flow never breaks.
+        write a concise buyer-facing reply. The reply is validated against the
+        known cart SKUs — a reply naming an unknown SKU is rejected — and the
+        outcome is ledgered so replay distinguishes LLM phrasing from the
+        deterministic fallback. Any failure falls back to the deterministic
+        message so the commerce flow never breaks.
         """
         if self.llm is None or result.cart is None:
             return result
+        known_skus = {item.sku for item in result.cart.items}
         summary = self._decision_summary(result, buyer_message)
         try:
             reply = self.llm.complete(
@@ -279,10 +302,28 @@ class SellerAgent:
                     },
                 ]
             ).strip()
-            if reply and len(reply) <= 1_000:
-                result = result.model_copy(update={"response_message": reply})
-        except Exception:
-            pass
+            if reply and len(reply) <= 1_000 and reply_skus_known(reply, known_skus):
+                self.tools._record(
+                    trace_id=trace_id,
+                    action="seller.response_phrased",
+                    inputs={"tool_calls": result.tool_calls},
+                    output={"llm_used": True, "model": getattr(self.llm, "model", "unknown")},
+                    explanation="Rephrased the seller message with the LLM; SKUs validated against the cart.",
+                )
+                return result.model_copy(update={"response_message": reply})
+            if reply:
+                logger.warning(
+                    "seller rephrase rejected (length or unknown SKU); using deterministic text"
+                )
+        except Exception as error:
+            logger.warning("seller rephrase failed; using deterministic text: %s", error)
+        self.tools._record(
+            trace_id=trace_id,
+            action="seller.response_phrased",
+            inputs={"tool_calls": result.tool_calls},
+            output={"llm_used": False},
+            explanation="Kept the deterministic seller message.",
+        )
         return result
 
     def _decision_summary(self, result: SellerDecision, buyer_message: str) -> str:

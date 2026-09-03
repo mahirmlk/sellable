@@ -8,11 +8,14 @@ from uuid import uuid4
 
 from pydantic import Field
 
+import logging
+
 from agents.buyer.graph import build_buyer_graph
-from agents.buyer.policies import BuyerPolicy
+from agents.buyer.policies import BuyerPolicy, BuyerPolicyVerdict
 from agents.buyer.tools import BuyerTools
-from agents.llm.adapters.base import LLMAdapter
+from agents.llm.adapters.base import LLMAdapter, reply_skus_known
 from agents.seller.agent import SellerAction, SellerDecision, SellerRequest
+from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
     BuyerMission,
     Consent,
@@ -24,6 +27,9 @@ from sellable.contracts import (
     StrictModel,
 )
 from sellable.gateway import AgentGateway
+
+
+logger = logging.getLogger("sellable.agents.buyer")
 
 
 class BuyerAction(StrEnum):
@@ -107,6 +113,9 @@ class BuyerAgent:
             intent=intent,
             request_upsell=mission.request_upsell,
             trace_id=state["trace_id"],
+            requested_sku=mission.requested_sku,
+            quantity=mission.quantity,
+            buyer_offer_paise=mission.buyer_offer_paise,
         )
         return {
             "seller_decision": decision,
@@ -114,37 +123,83 @@ class BuyerAgent:
             "steps": [*state["steps"], "REQUEST_QUOTE"],
         }
 
+    def _independent_check(
+        self, cart, mission: BuyerMission, intent: IntentMandate
+    ) -> BuyerPolicyVerdict:
+        """Run the buyer's own guards: expiry + budget + category grounding.
+
+        Budget and categories come from the buyer's MISSION (its own
+        authorization), deliberately not from the intent sent to the merchant —
+        the two can diverge for direct tool callers, and the buyer must guard
+        its own ceiling first. The merchant policy engine backstops all of
+        these at order creation. Every cart SKU must also resolve in the
+        catalog, so a hallucinated SKU can never get a READY verdict here.
+        """
+        expiry = self.policy.check_mandate_expiry(intent=intent)
+        if not expiry.allowed:
+            return expiry
+        budget = self.policy.check_budget(
+            cart_total_paise=cart.total_paise,
+            budget_ceiling_paise=mission.budget_ceiling_paise,
+        )
+        if not budget.allowed:
+            return budget
+        categories_by_sku: dict[str, str] = {}
+        for item in cart.items:
+            try:
+                categories_by_sku[item.sku] = self.gateway.get_catalog_item(item.sku).category
+            except UnknownSkuError:
+                return BuyerPolicyVerdict(
+                    allowed=False,
+                    reason_code="UNKNOWN_SKU",
+                    explanation=f"{item.sku} does not exist in the merchant catalog.",
+                )
+        return self.policy.check_categories(
+            categories_by_sku=categories_by_sku,
+            allowed_categories=mission.allowed_categories,
+        )
+
     def _evaluate(self, state: BuyerGraphState) -> dict[str, object]:
         decision = state["seller_decision"]
         if decision.action is SellerAction.NO_MATCH:
             action = BuyerAction.NO_MATCH
             summary = "No merchant catalog item matches the buyer mission."
-        elif decision.action is SellerAction.NEEDS_HUMAN_APPROVAL:
-            action = BuyerAction.NEEDS_HUMAN_APPROVAL
-            summary = "The cart is within buyer budget but requires merchant approval before consent."
-        elif (
-            decision.policy_decision is None
-            or decision.policy_decision.verdict is not PolicyVerdict.ALLOW
-            or decision.cart is None
-        ):
+        elif decision.cart is None or decision.policy_decision is None:
             action = BuyerAction.DENIED
-            summary = "The merchant policy did not permit a candidate cart."
-        elif not self.policy.check_budget(
-            cart_total_paise=decision.cart.total_paise,
-            budget_ceiling_paise=state["mission"].budget_ceiling_paise,
-        ).allowed:
-            action = BuyerAction.DENIED
-            summary = "The candidate cart exceeds the independent buyer budget guard."
+            summary = "The seller returned no candidate cart to evaluate."
         else:
-            action = BuyerAction.READY_FOR_CONSENT
-            summary = "A catalog-grounded, policy-valid cart is ready for explicit transaction consent."
+            buyer_verdict: BuyerPolicyVerdict = self._independent_check(
+                decision.cart, state["mission"], state["intent"]
+            )
+            if not buyer_verdict.allowed:
+                # Budget (and expiry/category) is evaluated BEFORE the
+                # merchant approval state so an over-budget cart reports
+                # OVER_BUDGET instead of misleadingly queuing for approval.
+                action = BuyerAction.DENIED
+                summary = (
+                    f"DENIED ({buyer_verdict.reason_code}): {buyer_verdict.explanation}"
+                )
+            elif decision.action is SellerAction.NEEDS_HUMAN_APPROVAL:
+                action = BuyerAction.NEEDS_HUMAN_APPROVAL
+                summary = "The cart is within buyer budget but requires merchant approval before consent."
+            elif decision.policy_decision.verdict is PolicyVerdict.ALLOW:
+                action = BuyerAction.READY_FOR_CONSENT
+                summary = "A catalog-grounded, policy-valid cart is ready for explicit transaction consent."
+            else:
+                action = BuyerAction.DENIED
+                summary = (
+                    "The merchant policy did not permit a candidate cart: "
+                    f"{decision.policy_decision.reason_code or decision.policy_decision.verdict}"
+                )
         self._record(
             state["trace_id"],
             "buyer.mission_evaluated",
             {"result": action, "candidate_total_paise": decision.cart.total_paise if decision.cart else None},
             summary,
         )
-        summary = self._phrase_summary(summary, decision, state["mission"].message)
+        summary = self._phrase_summary(
+            summary, decision, state["mission"].message, state["trace_id"]
+        )
         return {
             "result": BuyerResult(
                 trace_id=state["trace_id"],
@@ -157,15 +212,25 @@ class BuyerAgent:
             "steps": [*state["steps"], "EVALUATE"],
         }
 
-    def _phrase_summary(self, deterministic_summary: str, decision: SellerDecision, mission: str) -> str:
+    def _phrase_summary(
+        self,
+        deterministic_summary: str,
+        decision: SellerDecision,
+        mission: str,
+        trace_id: str,
+    ) -> str:
         """Rephrase the buyer-facing summary with the LLM when available.
 
         The model only rephrases the deterministic evaluation outcome from the
         grounded seller decision; it cannot alter the action, cart, or budget
-        verdict. On any failure the deterministic summary is kept.
+        verdict. The reply is validated against the known cart SKUs — a reply
+        naming an unknown SKU is rejected — and every outcome (llm phrasing
+        vs deterministic fallback) is ledgered so replay shows the provenance.
+        On any failure the deterministic summary is kept.
         """
         if self.llm is None or decision.cart is None:
             return deterministic_summary
+        known_skus = {item.sku for item in decision.cart.items}
         payload = (
             f"Buyer mission: {mission}\n"
             f"Evaluation result: {deterministic_summary}\n"
@@ -188,10 +253,26 @@ class BuyerAgent:
                     {"role": "user", "content": payload},
                 ]
             ).strip()
-            if reply and len(reply) <= 1_000:
+            if reply and len(reply) <= 1_000 and reply_skus_known(reply, known_skus):
+                self._record(
+                    trace_id,
+                    "buyer.response_phrased",
+                    {"llm_used": True, "model": getattr(self.llm, "model", "unknown")},
+                    "Rephrased the buyer summary with the LLM; SKUs validated against the cart.",
+                )
                 return reply
-        except Exception:
-            pass
+            if reply:
+                logger.warning(
+                    "buyer summary rephrase rejected (length or unknown SKU); using deterministic text"
+                )
+        except Exception as error:
+            logger.warning("buyer summary rephrase failed; using deterministic text: %s", error)
+        self._record(
+            trace_id,
+            "buyer.response_phrased",
+            {"llm_used": False},
+            "Kept the deterministic buyer summary.",
+        )
         return deterministic_summary
 
     def _create_order(self, state: BuyerGraphState) -> dict[str, object]:
@@ -220,10 +301,34 @@ class BuyerAgent:
             "steps": steps,
         }
 
+    def verify_payment(self, order_id: str, *, trace_id: str | None = None) -> dict[str, object]:
+        """Read the authoritative order state for a buyer order.
+
+        The buyer flow ends at consent — payment itself happens outside
+        ``run()`` (human checkout or provider settlement). This method lets
+        the buyer (or an operator) verify the outcome later against the same
+        trace without ever touching the payment rail: read-only, no provider
+        calls, no state changes.
+        """
+        order = self.gateway.commerce.get_order(order_id)
+        resolved_trace = trace_id or order.trace_id
+        self._record(
+            resolved_trace,
+            "buyer.payment_verified",
+            {"order_id": order.order_id, "status": order.status},
+            f"Verified the authoritative order state: {order.status}.",
+        )
+        return {
+            "order_id": order.order_id,
+            "status": order.status,
+            "trace_id": resolved_trace,
+        }
+
     def _record(self, trace_id: str, action: str, output: dict[str, object], summary: str) -> None:
         self.gateway.commerce.ledger.append(
             LedgerEvent(
                 trace_id=trace_id,
+                merchant_id=self.gateway.commerce.merchant_scope,
                 actor=LedgerActor.BUYER_AGENT,
                 action=action,
                 output=output,

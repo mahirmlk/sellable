@@ -12,6 +12,23 @@ Message = dict[str, Any]
 _ADAPTER_REGISTRY: dict[str, type["LLMAdapter"]] = {}
 
 
+def reply_skus_known(reply: str, known_skus: set[str]) -> bool:
+    """Fail-closed check that an LLM reply names no unknown SKU-like tokens.
+
+    Tokens shaped like catalog SKUs (uppercase alnum groups joined by dashes,
+    e.g. ``AUDIO-CASE-01``) must all belong to ``known_skus``. Anything else
+    — a hallucinated product code in buyer-facing text — rejects the reply so
+    the caller falls back to its deterministic message. Fail-closed by design:
+    a false positive only costs the LLM phrasing, never correctness.
+    """
+    import re
+
+    for token in re.findall(r"\b(?=[A-Z0-9-]*[A-Z])[A-Z0-9]+(?:-[A-Z0-9]+)+\b", reply):
+        if token not in known_skus:
+            return False
+    return True
+
+
 class LLMError(RuntimeError):
     """Raised when a provider cannot satisfy a completion request."""
 

@@ -18,8 +18,12 @@ class SellerTools:
     def __init__(self, commerce: CommerceCore) -> None:
         self.commerce = commerce
 
-    def catalog_search(self, *, query: str, trace_id: str) -> list[Product]:
-        products = self.commerce.catalog.search(query)
+    def catalog_search(
+        self, *, query: str, trace_id: str, allowed_categories: list[str] | None = None
+    ) -> list[Product]:
+        # Ground search in the buyer mandate's categories up front; the
+        # policy engine remains the binding backstop at quote time.
+        products = self.commerce.catalog.search(query, set(allowed_categories or ()))
         self._record(
             trace_id=trace_id,
             action="catalog.search",
@@ -49,6 +53,15 @@ class SellerTools:
         intent_ref: str,
         trace_id: str,
     ) -> tuple[CartMandate, bool]:
+        """Build one catalog-grounded quote (single-shot counter-offer).
+
+        Negotiation is intentionally single-shot per call: a buyer offer below
+        the policy-valid minimum is countered once at that minimum (floor and
+        discount caps enforced); there is no multi-turn concession loop inside
+        this tool. A buyer that wants to bid again makes a new request, which
+        is re-evaluated from scratch — so ``max_negotiation_rounds`` bounds
+        the cart's round counter rather than an in-tool loop.
+        """
         offered_price, countered = self._safe_offer(product, buyer_offer_paise)
         item = CartItem(
             sku=product.sku,
@@ -78,9 +91,12 @@ class SellerTools:
         return cart, countered
 
     def upsell_suggest(
-        self, *, cart: CartMandate, trace_id: str
+        self, *, cart: CartMandate, trace_id: str, session_upsells: int = 0
     ) -> tuple[CartMandate, Product | None]:
-        if cart.upsell_offered:
+        # The merchant's per-session upsell cap is enforced here, not just in
+        # the policy engine: a max of 0 disables upsells entirely instead of
+        # still offering once per cart.
+        if cart.upsell_offered or session_upsells >= self.commerce.policy.max_upsells_per_session:
             return cart, None
         primary = self.commerce.catalog.get(cart.items[0].sku)
         upsell_sku = primary.attributes.get("upsell_sku")
@@ -138,6 +154,7 @@ class SellerTools:
         self.commerce.ledger.append(
             LedgerEvent(
                 trace_id=trace_id,
+                merchant_id=self.commerce.merchant_scope,
                 actor=LedgerActor.SELLER_AGENT,
                 action=action,
                 inputs=inputs,
