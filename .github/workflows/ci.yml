@@ -26,6 +26,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
+      - name: Enforce single agent tree
+        run: |
+          test ! -d services/commerce/agents || (echo "ERROR: duplicate agents tree at services/commerce/agents — only top-level agents/ is canonical" && exit 1)
+          python -c "import agents, sellable.agents.buyer, sellable.agents.seller; assert agents.__file__.startswith('agents') or '/agents/__init__' in agents.__file__.replace(chr(92), '/'), agents.__file__; print('agent tree OK:', agents.__file__)"
+
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 

@@ -14,25 +14,6 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-BUYER_STAGE_NAMES: tuple[str, ...] = (
-    "discover",
-    "research",
-    "request_quote",
-    "evaluate",
-    "create_order",
-    "request_consent",
-)
-
-BUYER_STEP_LABELS: tuple[str, ...] = (
-    "DISCOVER",
-    "RESEARCH",
-    "REQUEST_QUOTE",
-    "EVALUATE",
-    "ORDER",
-    "CONSENT",
-)
-
-
 def build_buyer_graph(agent: Any, state_schema: Any) -> Any:
     """Wire the buyer agent's node methods into a LangGraph state machine."""
     graph = StateGraph(state_schema)

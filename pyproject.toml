@@ -33,7 +33,9 @@ postgres = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["services/commerce"]
+pythonpath = ["services/commerce", "."]
+# "." keeps the single canonical top-level `agents/` package importable under
+# pytest. There must be exactly one `agents` tree (see CI single-tree check).
 addopts = "-p no:cacheprovider"
 
 [tool.setuptools.packages.find]
