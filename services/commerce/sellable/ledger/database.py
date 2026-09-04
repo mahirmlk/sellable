@@ -145,6 +145,29 @@ class AgentNonceRecord(Base):
     seen_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class AgentApiKeyRecord(Base):
+    """Merchant-issued agent API keys for external AI buyers.
+
+    Only the SHA-256 hash is stored — the plaintext is returned exactly once
+    at creation/rotation and can never be recovered. ``key_prefix`` lets the
+    merchant console display which key is which without exposing secrets.
+    Revocation is soft (``revoked_at``) so historical transactions stay
+    attributable to the key that made them.
+    """
+
+    __tablename__ = "agent_api_keys"
+
+    key_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    buyer_agent_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class CheckoutSessionRecord(Base):
     """Durable checkout sessions (chat continuity across reload/navigation).
 

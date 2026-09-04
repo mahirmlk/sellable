@@ -967,6 +967,53 @@ export async function consoleRetryPayment(orderId: string): Promise<PaymentAttem
   });
 }
 
+// --- Agent API keys (merchant-issued credentials for external AI buyers) ---
+
+export interface AgentApiKeyView {
+  key_id: string;
+  label: string;
+  buyer_agent_id: string;
+  key_prefix: string;
+  created_at: string;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+export interface AgentKeyCreated {
+  plaintext: string;
+  key: AgentApiKeyView;
+  rotated_from?: AgentApiKeyView;
+}
+
+export async function listAgentKeys(): Promise<AgentApiKeyView[]> {
+  const data = await apiFetch<{ keys: AgentApiKeyView[] }>("/console/agent-keys");
+  return data.keys ?? [];
+}
+
+export async function createAgentKey(body: {
+  label: string;
+  buyer_agent_id: string;
+}): Promise<AgentKeyCreated> {
+  return apiFetch<AgentKeyCreated>("/console/agent-keys", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function rotateAgentKey(keyId: string): Promise<AgentKeyCreated> {
+  return apiFetch<AgentKeyCreated>(
+    `/console/agent-keys/${encodeURIComponent(keyId)}/rotate`,
+    { method: "POST" }
+  );
+}
+
+export async function revokeAgentKey(keyId: string): Promise<AgentApiKeyView> {
+  return apiFetch<AgentApiKeyView>(
+    `/console/agent-keys/${encodeURIComponent(keyId)}`,
+    { method: "DELETE" }
+  );
+}
+
 /** Run the reference AI buyer against the merchant's OWN store (merchant JWT). */
 export async function consoleRunBuyerMission(body: {
   buyer_agent_id: string;

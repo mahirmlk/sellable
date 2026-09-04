@@ -71,6 +71,91 @@ class MerchantRepository:
             return record
 
 
+class AgentApiKeyRepository:
+    """Merchant-issued agent API keys (hash-only storage, soft revoke)."""
+
+    def __init__(self, engine: object | None = None) -> None:
+        from sellable.ledger.database import AgentApiKeyRecord
+
+        self._record_cls = AgentApiKeyRecord
+        self._engine = engine or make_engine()
+
+    def create(
+        self,
+        *,
+        key_id: str,
+        merchant_id: str,
+        key_hash: str,
+        key_prefix: str,
+        label: str,
+        buyer_agent_id: str,
+    ) -> Any:
+        # expire_on_commit=False: the console serializes the record after the
+        # session closes, and a committed instance's expired attributes would
+        # raise DetachedInstanceError.
+        with Session(self._engine, expire_on_commit=False) as session:
+            record = self._record_cls(
+                key_id=key_id,
+                merchant_id=merchant_id,
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                label=label,
+                buyer_agent_id=buyer_agent_id,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(record)
+            session.commit()
+            return record
+
+    def list_for_merchant(self, merchant_id: str) -> list[Any]:
+        with Session(self._engine) as session:
+            return (
+                session.query(self._record_cls)
+                .filter(self._record_cls.merchant_id == merchant_id)
+                .order_by(self._record_cls.created_at.desc())
+                .all()
+            )
+
+    def get(self, key_id: str, merchant_id: str) -> Any | None:
+        with Session(self._engine) as session:
+            record = session.get(self._record_cls, key_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            return record
+
+    def get_active_by_hash(self, key_hash: str) -> Any | None:
+        with Session(self._engine) as session:
+            record = (
+                session.query(self._record_cls)
+                .filter(self._record_cls.key_hash == key_hash)
+                .first()
+            )
+            if record is None or record.revoked_at is not None:
+                return None
+            return record
+
+    def touch_last_used(self, key_id: str) -> None:
+        try:
+            with Session(self._engine) as session:
+                record = session.get(self._record_cls, key_id)
+                if record is not None:
+                    record.last_used_at = datetime.now(timezone.utc)
+                    session.commit()
+        except Exception:
+            # Usage metadata is best-effort; auth must never fail because of it.
+            pass
+
+    def revoke(self, key_id: str, merchant_id: str) -> Any | None:
+        with Session(self._engine, expire_on_commit=False) as session:
+            record = session.get(self._record_cls, key_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            if record.revoked_at is None:
+                record.revoked_at = datetime.now(timezone.utc)
+                session.commit()
+            return record
+
+
 class OrderRepository:
     def __init__(self, engine: object | None = None) -> None:
         from sqlalchemy import Engine

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -1478,6 +1480,118 @@ def console_create_product(
 
 class OnboardingRequest(BaseModel):
     store_name: str = Field(min_length=2, max_length=80)
+
+
+class AgentKeyCreateRequest(BaseModel):
+    label: str = Field(default="", max_length=120)
+    buyer_agent_id: str = Field(default="", max_length=128)
+
+
+def _agent_key_view(record: object) -> dict:
+    return {
+        "key_id": record.key_id,
+        "label": record.label,
+        "buyer_agent_id": record.buyer_agent_id,
+        "key_prefix": record.key_prefix,
+        "created_at": record.created_at.isoformat(),
+        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
+        "last_used_at": record.last_used_at.isoformat() if record.last_used_at else None,
+    }
+
+
+def _generate_agent_key_plaintext() -> str:
+    return f"sellable_ak_{secrets.token_hex(24)}"
+
+
+@app.get("/console/agent-keys", tags=["console"])
+@limiter.limit("60/minute")
+def console_agent_keys_list(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """List this merchant's agent API keys (hashes/prefixes only, never plaintext)."""
+    from sellable.repositories import AgentApiKeyRepository
+
+    records = AgentApiKeyRepository().list_for_merchant(session.merchant_id)
+    return {"keys": [_agent_key_view(r) for r in records]}
+
+
+@app.post("/console/agent-keys", tags=["console"])
+@limiter.limit("10/minute")
+def console_agent_key_create(
+    request: Request,
+    body: AgentKeyCreateRequest,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """Issue a new agent API key. The plaintext is returned exactly once."""
+    require_owner(session)
+    from sellable.repositories import AgentApiKeyRepository
+
+    plaintext = _generate_agent_key_plaintext()
+    record = AgentApiKeyRepository().create(
+        key_id=f"ak_{secrets.token_hex(8)}",
+        merchant_id=session.merchant_id,
+        key_hash=hashlib.sha256(plaintext.encode("utf-8")).hexdigest(),
+        key_prefix=plaintext[:20],
+        label=body.label.strip(),
+        buyer_agent_id=body.buyer_agent_id.strip(),
+    )
+    return {"plaintext": plaintext, "key": _agent_key_view(record)}
+
+
+@app.post("/console/agent-keys/{key_id}/rotate", tags=["console"])
+@limiter.limit("10/minute")
+def console_agent_key_rotate(
+    request: Request,
+    key_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """Revoke the given key and issue a replacement with the same scope.
+
+    The new plaintext is returned exactly once; the old key stops working
+    immediately.
+    """
+    require_owner(session)
+    from sellable.repositories import AgentApiKeyRepository
+
+    repo = AgentApiKeyRepository()
+    existing = repo.get(key_id, session.merchant_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Agent key not found")
+    if existing.revoked_at is not None:
+        raise HTTPException(status_code=400, detail="This key is already revoked")
+    revoked = repo.revoke(key_id, session.merchant_id)
+    plaintext = _generate_agent_key_plaintext()
+    record = repo.create(
+        key_id=f"ak_{secrets.token_hex(8)}",
+        merchant_id=session.merchant_id,
+        key_hash=hashlib.sha256(plaintext.encode("utf-8")).hexdigest(),
+        key_prefix=plaintext[:20],
+        label=existing.label,
+        buyer_agent_id=existing.buyer_agent_id,
+    )
+    return {
+        "plaintext": plaintext,
+        "key": _agent_key_view(record),
+        "rotated_from": _agent_key_view(revoked),
+    }
+
+
+@app.delete("/console/agent-keys/{key_id}", tags=["console"])
+@limiter.limit("30/minute")
+def console_agent_key_revoke(
+    request: Request,
+    key_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """Revoke an agent API key. Requests signed with it stop authenticating."""
+    require_owner(session)
+    from sellable.repositories import AgentApiKeyRepository
+
+    record = AgentApiKeyRepository().revoke(key_id, session.merchant_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Agent key not found")
+    return _agent_key_view(record)
 
 
 @app.get("/console/store", tags=["console"])

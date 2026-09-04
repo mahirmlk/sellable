@@ -86,8 +86,52 @@ def _configured_hashes() -> set[str]:
     return hashes
 
 
+_issued_key_repo: object | None = None
+_issued_key_failed_at: float = 0.0
+
+
+def _lookup_issued_key(key_hash: str):
+    """Resolve a merchant-issued DB key by hash. None when not found/usable.
+
+    DB-issued keys are the merchant-console path for onboarding external AI
+    buyers; the env-configured hash list remains the platform/demo fallback.
+    Repository failures degrade to the env path (logged) rather than
+    breaking every static-key request.
+    """
+    global _issued_key_repo, _issued_key_failed_at
+    if _issued_key_repo is None and time.time() - _issued_key_failed_at > 60:
+        try:
+            from sellable.repositories import AgentApiKeyRepository
+
+            _issued_key_repo = AgentApiKeyRepository()
+        except Exception as error:  # noqa: BLE001 — degrade to env keys
+            _issued_key_failed_at = time.time()
+            logger.warning("Agent key store unavailable; env keys only: %s", error)
+    if _issued_key_repo is None:
+        return None
+    try:
+        record = _issued_key_repo.get_active_by_hash(key_hash)
+    except Exception as error:  # noqa: BLE001 — degrade to env keys
+        _issued_key_repo = None
+        _issued_key_failed_at = time.time()
+        logger.warning("Agent key lookup failed; env keys only: %s", error)
+        return None
+    if record is not None:
+        _issued_key_repo.touch_last_used(record.key_id)
+    return record
+
+
 def _resolve_static_key(x_agent_key: str) -> AgentApiKey:
     key_hash = _sha256(x_agent_key)
+    # Merchant-issued keys first: they carry their own merchant + buyer scope.
+    issued = _lookup_issued_key(key_hash)
+    if issued is not None:
+        return AgentApiKey(
+            key_id=issued.key_id,
+            merchant_id=issued.merchant_id,
+            buyer_agent_id=issued.buyer_agent_id or "unknown",
+            auth_method="api_key",
+        )
     # Constant-time comparison against each configured hash — plain set
     # membership on hex digests would leak a (small) timing signal.
     matched = any(
@@ -119,7 +163,16 @@ def _resolve_signed_request(
     if settings.agent_hmac_secret is None:
         raise HTTPException(status_code=401, detail="HMAC verification is not configured")
 
-    if _sha256(bearer_key) not in _configured_hashes():
+    bearer_hash = _sha256(bearer_key)
+    # Merchant-issued keys carry their own merchant + buyer scope.
+    issued = _lookup_issued_key(bearer_hash)
+    if issued is not None:
+        issued_merchant = issued.merchant_id
+        issued_buyer = issued.buyer_agent_id
+    elif bearer_hash in _configured_hashes():
+        issued_merchant = _DEMO_MERCHANT_ID
+        issued_buyer = None
+    else:
         raise HTTPException(status_code=403, detail="Invalid agent API key")
 
     if not agent_id:
@@ -166,9 +219,13 @@ def _resolve_signed_request(
         raise HTTPException(status_code=401, detail="Replayed request nonce")
 
     return AgentApiKey(
-        key_id=f"hmac:{_sha256(bearer_key)[:16]}",
-        merchant_id=_DEMO_MERCHANT_ID,
-        buyer_agent_id=agent_id,
+        key_id=(
+            issued.key_id
+            if issued is not None
+            else f"hmac:{bearer_hash[:16]}"
+        ),
+        merchant_id=issued_merchant,
+        buyer_agent_id=agent_id if issued_buyer is None else (issued_buyer or agent_id),
         auth_method="hmac",
     )
 
