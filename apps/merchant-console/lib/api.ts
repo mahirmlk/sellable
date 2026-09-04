@@ -913,11 +913,16 @@ export async function simulatePaymentFailure(orderId: string): Promise<PaymentAt
 }
 
 export async function consoleSellerRespond(
-  body: SellerRequestPayload
+  body: SellerRequestPayload & { trace_id?: string }
 ): Promise<SellerDecisionPayload> {
+  // The trace rides the X-Trace-Id header so every negotiation turn in one
+  // session lands on the same replayable trace instead of forking a fresh
+  // one per counteroffer.
+  const { trace_id, ...payload } = body;
   return apiFetch<SellerDecisionPayload>("/console/agent/seller/respond", {
     method: "POST",
-    body: JSON.stringify(body),
+    headers: trace_id ? { "X-Trace-Id": trace_id } : undefined,
+    body: JSON.stringify(payload),
   });
 }
 
@@ -927,6 +932,12 @@ export async function consoleCreateOrder(body: {
   idempotency_key: string;
   request_upsell: boolean;
   trace_id?: string;
+  // Checkout must re-evaluate the SAME negotiated quote the seller returned:
+  // without these the backend re-quotes at list price and the order diverges
+  // from the displayed cart.
+  requested_sku?: string | null;
+  quantity?: number;
+  buyer_offer_paise?: number | null;
 }): Promise<OrderCreateResult> {
   return apiFetch<OrderCreateResult>("/console/orders", {
     method: "POST",
@@ -965,6 +976,9 @@ export async function consoleRunBuyerMission(body: {
   purpose: string;
   expires_at: string;
   request_upsell: boolean;
+  requested_sku?: string | null;
+  quantity?: number;
+  buyer_offer_paise?: number | null;
 }): Promise<BuyerResultPayload> {
   return apiFetch<BuyerResultPayload>("/console/agent/buyer/run", {
     method: "POST",

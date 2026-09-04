@@ -312,6 +312,9 @@ export default function ChatPageInner() {
   const sessionMessageRef = useRef<string>("");
   const lastTraceIdRef = useRef<string | null>(null);
   const offerRef = useRef<number | null>(null);
+  // SKU of the quoted product: negotiation and checkout must re-quote the
+  // SAME catalog item (a message-only re-search can drift to another match).
+  const skuRef = useRef<string | null>(null);
   const abortPollRef = useRef<boolean>(false);
   const pollTimerRef = useRef<number | null>(null);
   const pollTimeoutRef = useRef<number | null>(null);
@@ -364,6 +367,7 @@ export default function ChatPageInner() {
     sessionMessageRef.current = "";
     lastTraceIdRef.current = null;
     offerRef.current = null;
+    skuRef.current = null;
     sessionKeyRef.current = uid("session");
   }, [stopPolling]);
 
@@ -673,7 +677,20 @@ export default function ChatPageInner() {
           s.decision && typeof s.decision === "object" && typeof (s.decision as { action?: unknown }).action === "string"
             ? (s.decision as unknown as SellerDecisionPayload)
             : null;
-        if (storedDecision) setDecision(storedDecision);
+        if (storedDecision) {
+          setDecision(storedDecision);
+          // Restore-safe negotiation state: a persisted negotiated cart
+          // (round > 0, offered < unit) deterministically reconstructs the
+          // buyer offer so follow-up turns and checkout keep the same price.
+          const c = storedDecision.cart;
+          const item = c?.items?.[0] ?? null;
+          if (item) {
+            skuRef.current = item.sku;
+            if ((c?.negotiation_round ?? 0) > 0 && item.offered_price_paise < item.unit_price_paise) {
+              offerRef.current = item.offered_price_paise;
+            }
+          }
+        }
         if (s.order_id) {
           try {
             const detail = await getConsoleTransactionDetail(s.order_id);
@@ -995,9 +1012,15 @@ export default function ChatPageInner() {
           request_upsell: opts.upsell,
           buyer_offer_paise: opts.offer ?? null,
           requested_sku: opts.sku ?? null,
+          // Reuse the session trace: negotiation rounds must not fork fresh
+          // traces — Activity and Replay show one consistent flow.
+          trace_id: lastTraceIdRef.current ?? undefined,
         });
         sessionMessageRef.current = message;
         lastTraceIdRef.current = result.trace_id;
+        const quotedSku =
+          result.selected_product?.sku ?? result.cart?.items[0]?.sku ?? null;
+        if (quotedSku) skuRef.current = quotedSku;
         setDecision(result);
         setUpsellOn(opts.upsell);
         // Always render the agent's reply — a first-message NO_MATCH must
@@ -1091,7 +1114,9 @@ export default function ChatPageInner() {
   const handleNegotiate = useCallback(async () => {
     const paise = Math.round(parseFloat(offerInput) * 100);
     if (!paise || paise <= 0 || busy || readOnly) return;
-    const message = sessionMessageRef.current;
+    // A restored session may not have re-sent the original message; the
+    // offer itself is always a valid minimum request payload.
+    const message = sessionMessageRef.current || `Offer for ${skuRef.current ?? "your product"}`;
     setMessages((prev) => [
       ...prev,
       {
@@ -1104,7 +1129,7 @@ export default function ChatPageInner() {
     setNegotiating(false);
     setPhase("thinking");
     offerRef.current = paise;
-    await runRespond(message, { upsell: upsellOn, offer: paise, sku: null, isFollowUp: true });
+    await runRespond(message, { upsell: upsellOn, offer: paise, sku: skuRef.current, isFollowUp: true });
   }, [offerInput, busy, upsellOn, runRespond, readOnly]);
 
   const handleCheckout = useCallback(async () => {
@@ -1119,6 +1144,21 @@ export default function ChatPageInner() {
       // and would otherwise carry a stale budget ceiling to order creation.
       const freshIntent = buildIntent(sessionMessageRef.current);
       setIntent(freshIntent);
+      // Checkout must re-evaluate the SAME negotiated quote the seller
+      // returned. The in-session offer lives in offerRef; after a restore
+      // it is reconstructed deterministically from the persisted cart
+      // (a negotiated cart always shows offered < unit and round > 0).
+      const firstItem = decision.cart?.items[0] ?? null;
+      const negotiatedCart =
+        decision.cart !== null &&
+        decision.cart.negotiation_round > 0 &&
+        firstItem !== null &&
+        firstItem.offered_price_paise < firstItem.unit_price_paise;
+      const effectiveOffer =
+        offerRef.current ??
+        (negotiatedCart && firstItem ? firstItem.offered_price_paise : null);
+      const effectiveSku = skuRef.current ?? firstItem?.sku ?? null;
+      const effectiveQuantity = firstItem?.quantity ?? 1;
       // Reload retry must not mint a duplicate order: when the restored
       // order already covers this exact cart on this trace, reuse its
       // idempotency key so the backend replays it instead of duplicating.
@@ -1135,6 +1175,9 @@ export default function ChatPageInner() {
           : `idem_chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         request_upsell: upsellOn,
         trace_id: lastTraceIdRef.current || undefined,
+        requested_sku: effectiveSku,
+        quantity: effectiveQuantity,
+        buyer_offer_paise: effectiveOffer,
       });
       setOrder(result);
       if (result.requires_approval) {
