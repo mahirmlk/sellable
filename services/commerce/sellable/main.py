@@ -22,6 +22,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from sellable.agents.buyer import BuyerAgent, BuyerResult
 from sellable.agents.seller import SellerAgent, SellerDecision, SellerRequest
 from sellable.auth import AgentApiKey, get_agent_api_key, get_agent_api_key_signed
+from sellable.buyer_missions import BuyerMissionService, UnknownBuyerMissionError
 from sellable.config import settings
 from sellable.contracts import (
     BuyerMission,
@@ -34,6 +35,7 @@ from sellable.contracts import (
     CheckoutSessionUpsert,
     ConsentRequest,
     ConsoleApprovalRequest,
+    ConsoleBuyerMission,
     ConsoleGrowthMetrics,
     ConsolePolicySettings,
     ConsolePolicyUpdate,
@@ -177,6 +179,16 @@ agent_gateway = AgentGateway(commerce_core, seller_agent)
 buyer_agent = BuyerAgent(agent_gateway, llm=_make_llm()[0])
 payment_service = PaymentService(commerce_core, RazorpayAdapter(settings), core_resolver=registry.get)
 refund_service = RefundService(commerce_core, RazorpayAdapter(settings))
+buyer_mission_service = BuyerMissionService()
+
+
+def merchant_buyer_agent(core: CommerceCore) -> BuyerAgent:
+    """A buyer agent bound to the given merchant's own core.
+
+    Used for the read-only post-settlement verification: its ledger events
+    are written under the merchant's scope, never the demo store's.
+    """
+    return BuyerAgent(AgentGateway(core, SellerAgent(core, llm=_seller_llm)))
 
 
 def merchant_core(session: MerchantSession) -> CommerceCore:
@@ -359,7 +371,8 @@ def buyer_run(
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
 ) -> BuyerResult:
-    return agent.run(mission, trace_id=resolve_trace_id(x_trace_id))
+    result = agent.run(mission, trace_id=resolve_trace_id(x_trace_id))
+    return _with_mission_id(commerce_core.merchant_scope, mission, result)
 
 
 @app.post("/agent/consents.request", tags=["agent-gateway"])
@@ -1148,6 +1161,19 @@ def console_approve_order(
     try:
         core.approve_order(order_id)
         consent = core.issue_consent(order_id)
+        # The mission row is a pointer, not a second state machine: this
+        # only refreshes its consent link / last-known state so the AI
+        # Buyer mission is resumable as payment-ready after a restart.
+        # Money state stays on the order; the continuation endpoint
+        # re-derives everything from it.
+        try:
+            buyer_mission_service.note_approval(
+                merchant_id=session.merchant_id,
+                order_id=order_id,
+                consent_id=consent.consent_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — pointer refresh is additive
+            logger.warning("Buyer mission approval refresh failed: %s", exc)
         return {"status": "approved", "order_id": order_id, "consent_id": consent.consent_id}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -1689,7 +1715,114 @@ def console_buyer_run(
     core = merchant_core(session)
     gateway = AgentGateway(core, SellerAgent(core, llm=_seller_llm))
     buyer = BuyerAgent(gateway, llm=_make_llm()[0])
-    return buyer.run(mission, trace_id=resolve_trace_id(x_trace_id))
+    result = buyer.run(mission, trace_id=resolve_trace_id(x_trace_id))
+    return _with_mission_id(session.merchant_id, mission, result)
+
+
+def _with_mission_id(
+    merchant_id: str, mission: BuyerMission, result: BuyerResult
+) -> BuyerResult:
+    """Persist the run as a resumable mission and stamp the id on the result.
+
+    Runs that never produced an order stay unpersisted (nothing to
+    continue); a persistence failure never fails the buyer run itself.
+    """
+    try:
+        mission_id = buyer_mission_service.record_run(
+            merchant_id=merchant_id, mission=mission, result=result
+        )
+    except Exception as exc:  # noqa: BLE001 — mission persistence is additive
+        logger.warning("Buyer mission persistence failed: %s", exc)
+        return result
+    if mission_id:
+        result = result.model_copy(update={"mission_id": mission_id})
+    return result
+
+
+@app.get(
+    "/console/buyer-missions",
+    response_model=list[ConsoleBuyerMission],
+    tags=["console"],
+    summary="Recent resumable buyer missions for this merchant.",
+)
+@app.get("/buyer-missions", response_model=list[ConsoleBuyerMission], tags=["console"])
+@limiter.limit("60/minute")
+def console_buyer_missions(
+    request: Request,
+    limit: int = 20,
+    commerce: CommerceCore = Depends(get_commerce),
+    session: MerchantSession = Depends(get_merchant_session),
+) -> list[ConsoleBuyerMission]:
+    limit = max(1, min(limit, 100))
+    return buyer_mission_service.list_snapshots(
+        core=merchant_core(session),
+        merchant_id=session.merchant_id,
+        buyer_agent=merchant_buyer_agent(merchant_core(session)),
+        limit=limit,
+    )
+
+
+@app.get(
+    "/console/buyer-missions/{mission_id}",
+    response_model=ConsoleBuyerMission,
+    tags=["console"],
+    summary="One buyer mission's authoritative, re-derived state.",
+)
+@limiter.limit("60/minute")
+def console_buyer_mission_get(
+    request: Request,
+    mission_id: str,
+    commerce: CommerceCore = Depends(get_commerce),
+    session: MerchantSession = Depends(get_merchant_session),
+) -> ConsoleBuyerMission:
+    core = merchant_core(session)
+    try:
+        return buyer_mission_service.snapshot(
+            core=core,
+            mission_id=mission_id,
+            merchant_id=session.merchant_id,
+            buyer_agent=merchant_buyer_agent(core),
+        )
+    except UnknownBuyerMissionError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post(
+    "/console/buyer-missions/{mission_id}/continue",
+    response_model=ConsoleBuyerMission,
+    tags=["console"],
+    summary=(
+        "Resume the mission's SAME order: verify approval, reuse/issue "
+        "consent, and start payment through the existing PaymentService."
+    ),
+)
+@limiter.limit("30/minute")
+def console_buyer_mission_continue(
+    request: Request,
+    mission_id: str,
+    payments: PaymentService = Depends(get_payment_service),
+    commerce: CommerceCore = Depends(get_commerce),
+    session: MerchantSession = Depends(get_merchant_session),
+) -> ConsoleBuyerMission:
+    core = merchant_core(session)
+    try:
+        return buyer_mission_service.continue_mission(
+            core=core,
+            payments=payments,
+            mission_id=mission_id,
+            merchant_id=session.merchant_id,
+            buyer_agent=merchant_buyer_agent(core),
+        )
+    except UnknownBuyerMissionError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except RazorpayConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RazorpayRequestError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @app.get("/console/catalog", response_model=list[Product], tags=["console"])

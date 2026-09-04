@@ -47,6 +47,9 @@ class BuyerResult(StrictModel):
     seller_decision: SellerDecision | None = None
     order_id: str | None = None
     consent_id: str | None = None
+    # Set by the API layer after the run is persisted as a resumable
+    # mission (None for runs that never produced an order).
+    mission_id: str | None = None
     steps: list[str] = Field(default_factory=list)
 
 

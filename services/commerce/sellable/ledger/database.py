@@ -228,6 +228,41 @@ class PolicyRecord(Base):
     policy_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
+class BuyerMissionRecord(Base):
+    """Durable buyer-mission state (AI Buyer HITL resume).
+
+    The row is a POINTER to the authoritative order (and through it to
+    consent/payment/webhook state) — never a second financial state
+    machine. ``current_state`` stores the last derived value so the console
+    can show progression after restarts; every read re-derives the truth
+    from the order row and the trace's ledger events.
+    """
+
+    __tablename__ = "buyer_missions"
+
+    mission_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    buyer_agent_id: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    consent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_state: Mapped[str] = mapped_column(String(32), nullable=False, default="NEEDS_HUMAN_APPROVAL")
+    mission_message: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
+    budget_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    requested_sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    buyer_offer_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    negotiated_amount_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        # One mission per trace: a repeated buyer run with the same trace is
+        # a retry of the SAME mission, never a forked one.
+        UniqueConstraint("merchant_id", "trace_id", name="uq_buyer_missions_merchant_trace"),
+    )
+
+
 class MerchantUserRecord(Base):
     __tablename__ = "merchant_users"
 

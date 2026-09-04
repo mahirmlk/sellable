@@ -242,6 +242,26 @@ class RefundStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class BuyerMissionState(StrEnum):
+    """Resumable buyer-mission lifecycle (a POINTER to the order, never a
+    second financial state machine — the order stays authoritative).
+
+    NEEDS_HUMAN_APPROVAL → APPROVED → CONSENT_READY → PAYMENT_PENDING
+        → PAID → VERIFIED, with PAYMENT_FAILED / ABORTED / REFUNDED as the
+    explicit failure branches derived from the order's own status.
+    """
+
+    NEEDS_HUMAN_APPROVAL = "NEEDS_HUMAN_APPROVAL"
+    APPROVED = "APPROVED"
+    CONSENT_READY = "CONSENT_READY"
+    PAYMENT_PENDING = "PAYMENT_PENDING"
+    PAID = "PAID"
+    VERIFIED = "VERIFIED"
+    PAYMENT_FAILED = "PAYMENT_FAILED"
+    ABORTED = "ABORTED"
+    REFUNDED = "REFUNDED"
+
+
 class CheckoutSessionStatus(StrEnum):
     ACTIVE = "ACTIVE"
     ORDER_PLACED = "ORDER_PLACED"
@@ -465,6 +485,34 @@ class ConsoleApprovalRequest(StrictModel):
     reason: str
     requested_at: datetime
     status: str = "PENDING"
+
+
+class ConsoleBuyerMission(StrictModel):
+    """Merchant-console view of a persisted buyer mission.
+
+    ``state`` is re-derived from the AUTHORITATIVE order on every read —
+    the persisted ``current_state`` column is only a pointer/last-known
+    value, never trusted over the order row and ledger.
+    """
+
+    mission_id: str
+    merchant_id: str
+    trace_id: str
+    buyer_agent_id: str
+    order_id: str
+    state: BuyerMissionState
+    required_action: str = "none"
+    order_status: OrderStatus | None = None
+    consent_id: str | None = None
+    mission_message: str = ""
+    budget_paise: int | None = None
+    requested_sku: str | None = None
+    quantity: int = 1
+    buyer_offer_paise: int | None = None
+    negotiated_amount_paise: int | None = None
+    payment_url: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ConsoleGrowthMetrics(StrictModel):

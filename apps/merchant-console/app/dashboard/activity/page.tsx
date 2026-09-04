@@ -12,6 +12,8 @@ import {
   consoleRunBuyerMission,
   getConsoleTransactionDetail,
   consoleStartPayment,
+  continueBuyerMission,
+  listBuyerMissions,
   simulatePaymentCapture,
   getConsolePolicy,
   getConsoleCatalogItem,
@@ -96,7 +98,8 @@ function missionSteps(
   if (result.order_id) done("ORDER");
   if (detail) {
     if (detail.status === "PAYMENT_PENDING") done("PAYMENT");
-    if (ORDER_TERMINAL.includes(detail.status)) done("VERIFIED");
+    if (detail.status === "PAID" || detail.status === "FULFILLED") done("VERIFIED");
+    if (detail.status === "PAYMENT_FAILED" || detail.status === "ABORTED") blocked("STOPPED");
   }
   if (result.consent_id || detail?.consent_status === "ISSUED" || detail?.consent_status === "CONSUMED") done("CONSENT");
   return out;
@@ -387,6 +390,25 @@ export default function ActivityPage() {
   const handleMissionPayment = useCallback(async () => {
     const result = missionResult;
     if (!result?.order_id || !missionOrderDetail) return;
+    // Preferred path: the backend continuation re-verifies the order,
+    // reuses/issues consent, and starts payment through the existing
+    // PaymentService — idempotent under repeated clicks/refreshes.
+    if (result.mission_id) {
+      try {
+        const mission = await continueBuyerMission(result.mission_id);
+        if (mission.state === "NEEDS_HUMAN_APPROVAL") {
+          setMissionMsg({ kind: "error", text: "Merchant approval is required before payment." });
+        } else {
+          setMissionMsg({ kind: "success", text: `Mission continued — state is now ${mission.state.replace(/_/g, " ")}.` });
+        }
+        pollMissionOrder(result.order_id);
+      } catch (err) {
+        const detail = err instanceof Error && err.message ? err.message : "unknown error";
+        setMissionMsg({ kind: "error", text: `Mission could not be continued: ${detail}` });
+      }
+      return;
+    }
+    // Legacy fallback for runs persisted before missions existed.
     const consentId = missionOrderDetail.consent_id;
     if (!consentId || missionOrderDetail.consent_status !== "ISSUED") return;
     try {
@@ -478,8 +500,17 @@ export default function ActivityPage() {
             : null,
           order_id: detail.order_id,
           consent_id: detail.consent_id ?? null,
+          mission_id: null,
           steps,
         };
+        // Re-attach the persisted mission id (if any) so the resumed panel
+        // can use the server-side continuation instead of frontend-only
+        // state. Best-effort: older runs may have no mission row.
+        try {
+          const missions = await listBuyerMissions();
+          const match = missions.find((m) => m.order_id === detail.order_id);
+          if (match) resumed.mission_id = match.mission_id;
+        } catch {}
         setMissionResult(resumed);
         setMissionOfferGiven(false);
         setMissionOrderDetail(detail);
@@ -738,11 +769,21 @@ export default function ActivityPage() {
             )}
           </div>
           {/* Continuation: real order state drives the next allowed action. */}
+          {missionOrderDetail && (
+            <div className="flex items-center justify-between gap-3 mt-4 border border-[var(--bb-line-soft)] bg-[var(--bb-black)] px-4 py-2.5">
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">AUTHORITATIVE ORDER STATE</span>
+              <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] ${
+                ORDER_TERMINAL.includes(missionOrderDetail.status)
+                  ? missionOrderDetail.status === "PAID" || missionOrderDetail.status === "FULFILLED" ? "text-green-400" : "text-red-400"
+                  : missionOrderDetail.status === "PAYMENT_PENDING" ? "text-yellow-400" : "text-amber-400"
+              }`}>{missionOrderDetail.status.replace(/_/g, " ")}</span>
+            </div>
+          )}
           {missionOrderDetail && missionOrderDetail.status === "AWAITING_CONSENT" && missionOrderDetail.policy_verdict === "NEEDS_HUMAN_APPROVAL" && !missionOrderDetail.consent_id && (
             <div className="mt-4 border border-amber-400/30 bg-amber-400/5 px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <ShieldAlert size={14} className="text-amber-400" />
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-400">HELD FOR MERCHANT APPROVAL — no consent is issued until approved</span>
+                <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-400">{missionResult.mission_id ? "HELD FOR MERCHANT APPROVAL — the mission resumes automatically after approval" : "HELD FOR MERCHANT APPROVAL — no consent is issued until approved"}</span>
               </div>
               <Link href="/dashboard/approvals" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-amber-400 hover:underline whitespace-nowrap">OPEN APPROVALS</Link>
             </div>

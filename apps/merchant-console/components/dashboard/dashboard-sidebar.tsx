@@ -178,6 +178,10 @@ export function DashboardSidebar({
                   active ? "text-[var(--bb-white)]" : "text-[var(--bb-grey-2)] hover:text-[var(--bb-white)]"
                 }`}
                 aria-current={active ? "page" : undefined}
+                // Accessible name for the icon-only rail: screen readers and
+                // native tooltips must never depend on the hover label CSS.
+                aria-label={collapsed ? link.label : undefined}
+                title={collapsed ? link.label : undefined}
               >
                 <span
                   className={`absolute left-0 top-1/2 -translate-y-1/2 w-[2px] transition-all duration-150 ${
@@ -220,6 +224,8 @@ export function DashboardSidebar({
             collapsed ? "justify-center" : "justify-end px-4"
           }`}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-pressed={collapsed}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? (
             <ChevronRight size={14} />

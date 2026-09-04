@@ -26,6 +26,7 @@ from sellable.contracts import (
 )
 from sellable.ledger.database import (
     AgentNonceRecord,
+    BuyerMissionRecord,
     CatalogProductRecord,
     CheckoutSessionRecord,
     ConsentRecord,
@@ -793,6 +794,135 @@ class CatalogRepository:
                         )
                     )
             session.commit()
+
+
+class BuyerMissionRepository:
+    """Persists buyer-mission pointer rows (merchant + trace scoped)."""
+
+    def __init__(self, engine: object | None = None) -> None:
+        self._engine = engine or make_engine()
+
+    def save(
+        self,
+        *,
+        mission_id: str,
+        merchant_id: str,
+        trace_id: str,
+        buyer_agent_id: str,
+        order_id: str | None,
+        consent_id: str | None,
+        current_state: str,
+        mission_message: str,
+        budget_paise: int | None,
+        requested_sku: str | None,
+        quantity: int,
+        buyer_offer_paise: int | None,
+        negotiated_amount_paise: int | None,
+    ) -> BuyerMissionRecord:
+        now = datetime.now(timezone.utc)
+        # expire_on_commit=False: attributes are read after the session
+        # closes (same reason as AgentApiKeyRepository).
+        with Session(self._engine, expire_on_commit=False) as session:
+            existing = session.get(BuyerMissionRecord, mission_id)
+            if existing is None:
+                # Trace-keyed replay: a repeated run under the same trace
+                # updates the SAME mission instead of forking a new row.
+                existing = (
+                    session.query(BuyerMissionRecord)
+                    .filter(
+                        BuyerMissionRecord.merchant_id == merchant_id,
+                        BuyerMissionRecord.trace_id == trace_id,
+                    )
+                    .first()
+                )
+            if existing is None:
+                record = BuyerMissionRecord(
+                    mission_id=mission_id,
+                    merchant_id=merchant_id,
+                    trace_id=trace_id,
+                    buyer_agent_id=buyer_agent_id,
+                    order_id=order_id,
+                    consent_id=consent_id,
+                    current_state=current_state,
+                    mission_message=mission_message,
+                    budget_paise=budget_paise,
+                    requested_sku=requested_sku,
+                    quantity=quantity,
+                    buyer_offer_paise=buyer_offer_paise,
+                    negotiated_amount_paise=negotiated_amount_paise,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(record)
+            else:
+                existing.buyer_agent_id = buyer_agent_id
+                if order_id:
+                    existing.order_id = order_id
+                if consent_id:
+                    existing.consent_id = consent_id
+                existing.current_state = current_state
+                existing.mission_message = mission_message
+                existing.budget_paise = budget_paise
+                existing.requested_sku = requested_sku
+                existing.quantity = quantity
+                existing.buyer_offer_paise = buyer_offer_paise
+                if negotiated_amount_paise is not None:
+                    existing.negotiated_amount_paise = negotiated_amount_paise
+                existing.updated_at = now
+                record = existing
+            session.commit()
+            return record
+
+    def touch(
+        self,
+        mission_id: str,
+        merchant_id: str,
+        *,
+        current_state: str | None = None,
+        consent_id: str | None = None,
+    ) -> BuyerMissionRecord | None:
+        """Update the pointer columns (never money state) on a mission row."""
+        with Session(self._engine, expire_on_commit=False) as session:
+            record = session.get(BuyerMissionRecord, mission_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            if current_state:
+                record.current_state = current_state
+            if consent_id:
+                record.consent_id = consent_id
+            record.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return record
+
+    def get(self, mission_id: str, merchant_id: str) -> BuyerMissionRecord | None:
+        with Session(self._engine) as session:
+            record = session.get(BuyerMissionRecord, mission_id)
+            if record is None or record.merchant_id != merchant_id:
+                # Foreign ids are invisible — same 404 semantics as orders.
+                return None
+            return record
+
+    def for_order(self, merchant_id: str, order_id: str) -> BuyerMissionRecord | None:
+        with Session(self._engine) as session:
+            query = (
+                select(BuyerMissionRecord)
+                .where(BuyerMissionRecord.merchant_id == merchant_id)
+                .where(BuyerMissionRecord.order_id == order_id)
+                .order_by(BuyerMissionRecord.updated_at.desc())
+            )
+            return session.scalars(query.limit(1)).first()
+
+    def list_for_merchant(
+        self, merchant_id: str, *, limit: int = 20
+    ) -> list[BuyerMissionRecord]:
+        with Session(self._engine) as session:
+            query = (
+                select(BuyerMissionRecord)
+                .where(BuyerMissionRecord.merchant_id == merchant_id)
+                .order_by(BuyerMissionRecord.created_at.desc())
+                .limit(max(1, min(limit, 100)))
+            )
+            return list(session.scalars(query).all())
 
 
 class ConsentRepository:

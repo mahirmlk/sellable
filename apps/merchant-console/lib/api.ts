@@ -523,7 +523,40 @@ export interface BuyerResultPayload {
   seller_decision: SellerDecisionPayload | null;
   order_id: string | null;
   consent_id: string | null;
+  mission_id: string | null;
   steps: string[];
+}
+
+export interface BuyerMissionPayload {
+  mission_id: string;
+  merchant_id: string;
+  trace_id: string;
+  buyer_agent_id: string;
+  order_id: string;
+  // Re-derived from the authoritative order on every read — never trusted
+  // from any client-side state.
+  state:
+    | "NEEDS_HUMAN_APPROVAL"
+    | "APPROVED"
+    | "CONSENT_READY"
+    | "PAYMENT_PENDING"
+    | "PAID"
+    | "VERIFIED"
+    | "PAYMENT_FAILED"
+    | "ABORTED"
+    | "REFUNDED";
+  required_action: string;
+  order_status: string | null;
+  consent_id: string | null;
+  mission_message: string;
+  budget_paise: number | null;
+  requested_sku: string | null;
+  quantity: number;
+  buyer_offer_paise: number | null;
+  negotiated_amount_paise: number | null;
+  payment_url: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 async function getMerchantToken(): Promise<string | null> {
@@ -1031,4 +1064,36 @@ export async function consoleRunBuyerMission(body: {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+/** Authoritative, re-derived state for one persisted buyer mission. */
+export async function getBuyerMission(
+  missionId: string
+): Promise<BuyerMissionPayload> {
+  return apiFetch<BuyerMissionPayload>(
+    `/console/buyer-missions/${encodeURIComponent(missionId)}`
+  );
+}
+
+/** Recent resumable buyer missions for this merchant (newest first). */
+export async function listBuyerMissions(
+  limit = 20
+): Promise<BuyerMissionPayload[]> {
+  return apiFetch<BuyerMissionPayload[]>(
+    `/console/buyer-missions?limit=${limit}`
+  );
+}
+
+/**
+ * Server-side mission continuation: the backend re-verifies the order,
+ * reuses/issues consent, and starts payment through the existing
+ * PaymentService — idempotent, never a duplicate order or payment.
+ */
+export async function continueBuyerMission(
+  missionId: string
+): Promise<BuyerMissionPayload> {
+  return apiFetch<BuyerMissionPayload>(
+    `/console/buyer-missions/${encodeURIComponent(missionId)}/continue`,
+    { method: "POST" }
+  );
 }
