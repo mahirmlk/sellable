@@ -1,11 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, Radio, Play } from "lucide-react";
+import Link from "next/link";
+import { RefreshCw, Radio, Play, X, Wallet, ShieldAlert, ExternalLink } from "lucide-react";
 import { ActorBadge, ActorIcon } from "@/components/dashboard/actor-badge";
-import { formatTimestamp } from "@/lib/formatters";
+import { formatTimestamp, formatPaise } from "@/lib/formatters";
 import { type ActorType, type LedgerEvent } from "@/lib/types/domain";
-import { getConsoleEvents, streamConsoleEvents, consoleRunBuyerMission } from "@/lib/api";
+import {
+  getConsoleEvents,
+  streamConsoleEvents,
+  consoleRunBuyerMission,
+  getConsoleTransactionDetail,
+  consoleStartPayment,
+  simulatePaymentCapture,
+  type BuyerResultPayload,
+  type ConsoleTransactionDetail,
+} from "@/lib/api";
 
 const actorFilters: { label: string; value: ActorType | "all" }[] = [
   { label: "All Actors", value: "all" },
@@ -29,6 +39,64 @@ const eventTypeFilters = [
   "payment.*",
   "order.*",
 ];
+
+const DEMO_MODE = process.env.NEXT_PUBLIC_AGENT_KEY === "sellable_demo_key_001";
+const ORDER_TERMINAL = ["PAID", "FULFILLED", "PAYMENT_FAILED", "ABORTED", "REFUNDED"];
+
+interface MissionFormState {
+  mission: string;
+  budget: string;
+  buyer: string;
+  purpose: string;
+  sku: string;
+  quantity: string;
+  offer: string;
+  categories: string;
+  upsell: boolean;
+}
+
+const EMPTY_MISSION: MissionFormState = {
+  mission: "",
+  budget: "",
+  buyer: "buyer_demo_01",
+  purpose: "",
+  sku: "",
+  quantity: "1",
+  offer: "",
+  categories: "",
+  upsell: true,
+};
+
+/** Real state chips derived ONLY from backend output — never animated. */
+function missionSteps(
+  result: BuyerResultPayload | null,
+  offerProvided: boolean,
+  detail: ConsoleTransactionDetail | null
+): { label: string; tone: "done" | "wait" | "block" }[] {
+  if (!result) return [];
+  const steps = result.steps ?? [];
+  const round = result.seller_decision?.cart?.negotiation_round ?? 0;
+  const verdict = result.seller_decision?.policy_decision?.verdict ?? null;
+  const out: { label: string; tone: "done" | "wait" | "block" }[] = [];
+  const done = (label: string) => out.push({ label, tone: "done" });
+  const blocked = (label: string) => out.push({ label, tone: "block" });
+  if (steps.includes("DISCOVER")) done("DISCOVERED");
+  if (steps.includes("RESEARCH")) done("RESEARCHED");
+  if (steps.includes("REQUEST_QUOTE")) done("QUOTE RECEIVED");
+  if (offerProvided && round > 0) done("NEGOTIATED");
+  if (verdict) done(`POLICY ${verdict}`);
+  if (result.action === "NEEDS_HUMAN_APPROVAL") blocked("APPROVAL REQUIRED");
+  else if (result.action === "READY_FOR_CONSENT") done("READY");
+  else if (result.action === "DENIED") blocked("DENIED");
+  else if (result.action === "NO_MATCH") blocked("NO MATCH");
+  if (result.order_id) done("ORDER");
+  if (detail) {
+    if (detail.status === "PAYMENT_PENDING") done("PAYMENT");
+    if (ORDER_TERMINAL.includes(detail.status)) done("VERIFIED");
+  }
+  if (result.consent_id || detail?.consent_status === "ISSUED" || detail?.consent_status === "CONSUMED") done("CONSENT");
+  return out;
+}
 
 function mapEvent(e: { event_id: string; trace_id: string; timestamp: string; actor: string; action: string; inputs: Record<string, unknown>; output: Record<string, unknown>; reasoning_summary: string | null; policy_refs: string[]; outcome_effect: Record<string, unknown> | null; provider_ref: string | null; flags: string[] }): LedgerEvent {
   return {
@@ -56,6 +124,14 @@ export default function ActivityPage() {
   const [runningMission, setRunningMission] = useState(false);
   const [missionMsg, setMissionMsg] = useState<{ kind: "error" | "success"; text: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Real interactive buyer mission (no hardcoded scenario).
+  const [missionFormOpen, setMissionFormOpen] = useState(false);
+  const [missionForm, setMissionForm] = useState<MissionFormState>(EMPTY_MISSION);
+  const [missionResult, setMissionResult] = useState<BuyerResultPayload | null>(null);
+  const [missionOfferGiven, setMissionOfferGiven] = useState(false);
+  const [missionOrderDetail, setMissionOrderDetail] = useState<ConsoleTransactionDetail | null>(null);
+  const missionPollRef = useRef<number | null>(null);
+  const missionPollDeadlineRef = useRef<number>(0);
   const seenIds = useRef<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
@@ -141,21 +217,88 @@ export default function ActivityPage() {
     };
   }, [fetchData]);
 
+  const stopMissionPoll = useCallback(() => {
+    if (missionPollRef.current !== null) {
+      window.clearInterval(missionPollRef.current);
+      missionPollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => stopMissionPoll, [stopMissionPoll]);
+
+  /** Read the authoritative order state for the mission's order (read-only). */
+  const pollMissionOrder = useCallback(
+    (orderId: string) => {
+      stopMissionPoll();
+      missionPollDeadlineRef.current = Date.now() + 5 * 60 * 1000;
+      const timer = window.setInterval(async () => {
+        if (Date.now() > missionPollDeadlineRef.current) {
+          stopMissionPoll();
+          return;
+        }
+        try {
+          const detail = await getConsoleTransactionDetail(orderId);
+          setMissionOrderDetail(detail);
+          if (ORDER_TERMINAL.includes(detail.status)) stopMissionPoll();
+        } catch {
+          // transient network errors are tolerated while polling
+        }
+      }, 2500);
+      missionPollRef.current = timer;
+    },
+    [stopMissionPoll]
+  );
+
+  const parsePaise = (rupees: string): number | null => {
+    const n = parseFloat(rupees);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.round(n * 100);
+  };
+
   const handleRunMission = useCallback(async () => {
     if (runningMission) return;
+    const missionText = missionForm.mission.trim();
+    if (!missionText) {
+      setMissionMsg({ kind: "error", text: "Describe the mission first." });
+      return;
+    }
+    const budget = parsePaise(missionForm.budget);
+    if (budget === null) {
+      setMissionMsg({ kind: "error", text: "Enter a positive budget amount in rupees." });
+      return;
+    }
     setRunningMission(true);
     setMissionMsg(null);
+    setMissionResult(null);
+    setMissionOrderDetail(null);
+    stopMissionPoll();
+    const categories = missionForm.categories
+      .split(",")
+      .map((c) => c.trim().toLowerCase())
+      .filter(Boolean);
+    const quantity = Math.max(1, Math.round(parseFloat(missionForm.quantity) || 1));
+    const offer = parsePaise(missionForm.offer);
+    setMissionOfferGiven(offer !== null);
     try {
-      await consoleRunBuyerMission({
-        buyer_agent_id: "buyer_demo_01",
-        message: "I need coffee for my desk",
-        budget_ceiling_paise: 200_000,
-        allowed_categories: ["accessories", "gifting", "snacks"],
-        purpose: "Buy coffee",
+      const result = await consoleRunBuyerMission({
+        buyer_agent_id: missionForm.buyer.trim() || "buyer_demo_01",
+        message: missionText,
+        budget_ceiling_paise: budget,
+        allowed_categories: categories.length > 0 ? categories : ["accessories", "gifting", "snacks"],
+        purpose: missionForm.purpose.trim() || missionText.slice(0, 280),
         expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        request_upsell: true,
+        request_upsell: missionForm.upsell,
+        requested_sku: missionForm.sku.trim() || null,
+        quantity,
+        buyer_offer_paise: offer,
       });
-      setMissionMsg({ kind: "success", text: "Buyer mission completed against your store — events are streaming into the feed below." });
+      setMissionResult(result);
+      setMissionMsg(
+        result.action === "READY_FOR_CONSENT"
+          ? { kind: "success" as const, text: "Buyer mission completed — every step below is real backend state." }
+          : { kind: "success" as const, text: `Buyer mission stopped at ${result.action.replace(/_/g, " ")}.` }
+      );
+      if (result.order_id) pollMissionOrder(result.order_id);
       fetchData();
     } catch (err) {
       const detail = err instanceof Error && err.message ? err.message : "unknown error";
@@ -163,7 +306,32 @@ export default function ActivityPage() {
     } finally {
       setRunningMission(false);
     }
-  }, [fetchData, runningMission]);
+  }, [fetchData, runningMission, missionForm, pollMissionOrder, stopMissionPoll]);
+
+  const handleMissionPayment = useCallback(async () => {
+    const result = missionResult;
+    if (!result?.order_id || !missionOrderDetail) return;
+    const consentId = missionOrderDetail.consent_id;
+    if (!consentId || missionOrderDetail.consent_status !== "ISSUED") return;
+    try {
+      await consoleStartPayment(result.order_id, consentId);
+      pollMissionOrder(result.order_id);
+    } catch (err) {
+      const detail = err instanceof Error && err.message ? err.message : "unknown error";
+      setMissionMsg({ kind: "error", text: `Payment could not be started: ${detail}` });
+    }
+  }, [missionResult, missionOrderDetail, pollMissionOrder]);
+
+  const handleMissionSimulate = useCallback(async () => {
+    const orderId = missionResult?.order_id;
+    if (!orderId) return;
+    try {
+      await simulatePaymentCapture(orderId);
+      pollMissionOrder(orderId);
+    } catch {
+      // backend may reject the simulation; polling reflects real state
+    }
+  }, [missionResult, pollMissionOrder]);
 
   const filtered = events.filter((e) => {
     if (actorFilter !== "all" && e.actor !== actorFilter) return false;
@@ -185,14 +353,232 @@ export default function ActivityPage() {
               {streamMode === "live" ? "LIVE" : streamMode === "polling" ? "POLLING" : "OFFLINE"}
             </span>
           </div>
-          <button onClick={handleRunMission} disabled={runningMission} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-orange)]/40 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-all cursor-pointer disabled:opacity-50">
-            {runningMission ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} RUN AI BUYER MISSION
+          <button onClick={() => setMissionFormOpen((v) => !v)} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-orange)]/40 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-all cursor-pointer">
+            {missionFormOpen ? <X size={12} /> : <Play size={12} />} {missionFormOpen ? "CLOSE MISSION" : "NEW BUYER MISSION"}
           </button>
           <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
           </button>
         </div>
       </div>
+
+      {missionFormOpen && (
+        <div className="border border-[var(--bb-orange)]/30 bg-[var(--bb-panel)] p-5 stagger-child">
+          <div className="flex items-center gap-2 mb-4">
+            <Play size={13} className="text-[var(--bb-orange)]" />
+            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-orange)]">NEW BUYER MISSION</span>
+            <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-3)] ml-2">runs the real Buyer Agent against your store</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="md:col-span-2 flex flex-col gap-1">
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">MISSION *</span>
+              <textarea
+                value={missionForm.mission}
+                onChange={(e) => setMissionForm((f) => ({ ...f, mission: e.target.value }))}
+                placeholder="I need an ergonomic office chair for my home office"
+                rows={2}
+                className="font-[var(--font-sans)] text-[0.8rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">BUDGET (₹) *</span>
+              <input
+                type="number"
+                min="1"
+                value={missionForm.budget}
+                onChange={(e) => setMissionForm((f) => ({ ...f, budget: e.target.value }))}
+                placeholder="15000"
+                className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 tabular-nums focus:outline-none focus:border-[var(--bb-orange)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">BUYER IDENTITY</span>
+              <input
+                value={missionForm.buyer}
+                onChange={(e) => setMissionForm((f) => ({ ...f, buyer: e.target.value }))}
+                className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 focus:outline-none focus:border-[var(--bb-orange)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">PURPOSE</span>
+              <input
+                value={missionForm.purpose}
+                onChange={(e) => setMissionForm((f) => ({ ...f, purpose: e.target.value }))}
+                placeholder="defaults to the mission text"
+                className="font-[var(--font-sans)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">CATEGORIES (OPTIONAL)</span>
+              <input
+                value={missionForm.categories}
+                onChange={(e) => setMissionForm((f) => ({ ...f, categories: e.target.value }))}
+                placeholder="accessories, snacks — defaults to all"
+                className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">SKU (OPTIONAL)</span>
+              <input
+                value={missionForm.sku}
+                onChange={(e) => setMissionForm((f) => ({ ...f, sku: e.target.value.toUpperCase() }))}
+                placeholder="CHAIR-PRO-01"
+                className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">QUANTITY</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={missionForm.quantity}
+                  onChange={(e) => setMissionForm((f) => ({ ...f, quantity: e.target.value }))}
+                  className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 tabular-nums focus:outline-none focus:border-[var(--bb-orange)]"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">OFFER (₹, OPTIONAL)</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={missionForm.offer}
+                  onChange={(e) => setMissionForm((f) => ({ ...f, offer: e.target.value }))}
+                  placeholder="11500"
+                  className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 tabular-nums placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+                />
+              </label>
+            </div>
+            <div className="flex items-end justify-between gap-3 md:col-span-2">
+              <button
+                onClick={() => setMissionForm((f) => ({ ...f, upsell: !f.upsell }))}
+                className={`h-[30px] px-3 font-[var(--font-mono)] text-[0.52rem] tracking-[0.08em] uppercase border transition-all cursor-pointer ${missionForm.upsell ? "border-[var(--bb-orange)]/50 bg-[var(--bb-orange)]/10 text-[var(--bb-orange)]" : "border-[var(--bb-line)] text-[var(--bb-grey-2)] hover:text-[var(--bb-white)]"}`}
+                aria-pressed={missionForm.upsell}
+              >
+                UPSELLS {missionForm.upsell ? "ON" : "OFF"}
+              </button>
+              <button
+                onClick={handleRunMission}
+                disabled={runningMission}
+                className="inline-flex items-center gap-2 h-[36px] px-5 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {runningMission ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} RUN
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {missionResult && (
+        <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] p-5 stagger-child">
+          <div className="flex items-center justify-between mb-3">
+            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-1)]">BUYER MISSION RESULT</span>
+            <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] ${missionResult.action === "READY_FOR_CONSENT" ? "text-green-400" : missionResult.action === "NEEDS_HUMAN_APPROVAL" ? "text-amber-400" : "text-red-400"}`}>
+              {missionResult.action.replace(/_/g, " ")}
+            </span>
+          </div>
+          {/* Real lifecycle steps — rendered only from backend output. */}
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {missionSteps(missionResult, missionOfferGiven, missionOrderDetail).map((s) => (
+              <span
+                key={s.label}
+                className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] px-2 py-0.5 border ${
+                  s.tone === "done"
+                    ? "border-green-400/40 text-green-400"
+                    : s.tone === "block"
+                      ? "border-amber-400/40 text-amber-400"
+                      : "border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]"
+                }`}
+              >
+                {s.label}
+              </span>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Mission</span>
+              <span className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-white)] text-right truncate max-w-[70%]" title={missionForm.mission}>{missionForm.mission || "—"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Product</span>
+              <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)]">{missionResult.seller_decision?.cart?.items?.[0]?.sku ?? "—"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Final price</span>
+              <span className="font-[var(--font-mono)] text-[0.75rem] text-[var(--bb-white)] tabular-nums">
+                {missionResult.seller_decision?.cart ? formatPaise(missionResult.seller_decision.cart.total_paise) : "—"}
+                {missionResult.seller_decision?.cart && missionResult.seller_decision.cart.discount_paise > 0 && (
+                  <span className="text-green-400 ml-2 text-[0.6rem]">−{formatPaise(missionResult.seller_decision.cart.discount_paise)} · ROUND {missionResult.seller_decision.cart.negotiation_round}</span>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Trace ID</span>
+              <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-2)]">{missionResult.trace_id}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Order ID</span>
+              {missionOrderDetail ? (
+                <Link href={`/dashboard/transactions/${missionOrderDetail.order_id}`} className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-orange)] hover:text-[var(--bb-orange-bright)] flex items-center gap-1">
+                  {missionResult.order_id} <ExternalLink size={10} />
+                </Link>
+              ) : (
+                <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)]">{missionResult.order_id ?? "—"}</span>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Consent ID</span>
+              <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-2)]">{missionResult.consent_id ?? missionOrderDetail?.consent_id ?? "—"}</span>
+            </div>
+            {missionResult.buyer_summary && (
+              <div className="md:col-span-2 border-l-2 border-[var(--bb-line-soft)] pl-3 py-1">
+                <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-2)] leading-relaxed">{missionResult.buyer_summary}</div>
+              </div>
+            )}
+          </div>
+          {/* Continuation: real order state drives the next allowed action. */}
+          {missionOrderDetail && missionOrderDetail.status === "AWAITING_CONSENT" && missionOrderDetail.policy_verdict === "NEEDS_HUMAN_APPROVAL" && !missionOrderDetail.consent_id && (
+            <div className="mt-4 border border-amber-400/30 bg-amber-400/5 px-4 py-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert size={14} className="text-amber-400" />
+                <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-400">HELD FOR MERCHANT APPROVAL — no consent is issued until approved</span>
+              </div>
+              <Link href="/dashboard/approvals" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-amber-400 hover:underline whitespace-nowrap">OPEN APPROVALS</Link>
+            </div>
+          )}
+          {missionOrderDetail && missionOrderDetail.status === "AWAITING_CONSENT" && missionOrderDetail.consent_status === "ISSUED" && missionOrderDetail.consent_id && (
+            <button
+              onClick={handleMissionPayment}
+              className="mt-4 w-full h-[36px] bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Wallet size={12} /> START PAYMENT {formatPaise(missionOrderDetail.amount_paise)}
+            </button>
+          )}
+          {missionOrderDetail && missionOrderDetail.status === "PAYMENT_PENDING" && (
+            <div className="mt-4 space-y-2">
+              <div className="border border-[var(--bb-line)] px-4 py-3 flex items-center justify-between">
+                <span className="font-[var(--font-mono)] text-[0.6rem] text-yellow-400">AWAITING SIGNED PROVIDER WEBHOOK</span>
+                {missionOrderDetail.payment_url && (
+                  <a href={missionOrderDetail.payment_url} target="_blank" rel="noopener noreferrer" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:underline">REOPEN PAYMENT LINK ↗</a>
+                )}
+              </div>
+              {DEMO_MODE && (
+                <button onClick={handleMissionSimulate} className="w-full h-[32px] border border-green-400/30 bg-green-400/5 font-[var(--font-mono)] text-[0.55rem] uppercase text-green-400 hover:bg-green-400/10 cursor-pointer">
+                  SIMULATE CAPTURE (DEV)
+                </button>
+              )}
+            </div>
+          )}
+          {missionOrderDetail && ORDER_TERMINAL.includes(missionOrderDetail.status) && (
+            <Link
+              href={`/dashboard/transactions/${missionOrderDetail.order_id}/replay`}
+              className="mt-4 inline-flex items-center justify-center w-full h-[34px] border border-green-400/30 bg-green-400/10 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-green-400 hover:bg-green-400/20 transition-colors"
+            >
+              VIEW REPLAY
+            </Link>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3 stagger-child">
         <div className="flex items-center gap-2">
