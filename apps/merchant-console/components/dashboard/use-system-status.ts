@@ -4,7 +4,7 @@
 // Every failure is surfaced as its real cause (auth, wrong endpoint, backend
 // error, network, malformed contract) instead of collapsing into "Offline".
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getAgentsStatus, type AgentsStatusResponse } from "@/lib/api";
 
 export type StatusError =
@@ -50,6 +50,10 @@ export function useSystemStatus(initialLoad = true): SystemStatusState {
   const [error, setError] = useState<StatusError | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
+  // Set by reload() so the effect below performs the ONE forced load.
+  // (Calling load() directly AND bumping a tick used to fire two loads —
+  // the direct forced one plus an effect re-run.)
+  const forceNextRef = useRef(false);
 
   const load = useCallback(async (force = false) => {
     setLoading(true);
@@ -68,16 +72,19 @@ export function useSystemStatus(initialLoad = true): SystemStatusState {
 
   useEffect(() => {
     if (!initialLoad) return;
-    const t = window.setTimeout(() => void load(), 0);
+    const t = window.setTimeout(() => {
+      const force = forceNextRef.current;
+      forceNextRef.current = false;
+      void load(force);
+    }, 0);
     return () => window.clearTimeout(t);
   }, [initialLoad, load, tick]);
 
-  // Manual refresh bypasses the shared cache; the tick re-runs the effect,
-  // which then hits the (just refreshed) cache instead of the network.
+  // Manual refresh = exactly one forced request via the effect above.
   const reload = useCallback(() => {
+    forceNextRef.current = true;
     setTick((t) => t + 1);
-    void load(true);
-  }, [load]);
+  }, []);
 
   return { data, loading, error, lastUpdated, reload };
 }

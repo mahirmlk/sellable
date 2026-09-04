@@ -42,8 +42,12 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # Hermetic demo-mode merchant session so the console endpoints accept the
     # demo X-Agent-Key, exactly like the existing dashboard-alias tests.
     monkeypatch.setattr(merchant_auth, "settings", Settings(environment="development"))
+    # Each test mutates status settings; drop cached snapshots so one test's
+    # payload can never leak into another's assertions.
+    status_module._status_snapshots.clear()
     with TestClient(app) as c:
         yield c
+    status_module._status_snapshots.clear()
 
 
 def test_status_requires_merchant_auth(client: TestClient) -> None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -189,14 +190,17 @@ def _gateway_status(gateway: Any) -> dict[str, object]:
         return {"status": "offline", "state": "ERROR", "detail": "Agent Gateway is not available."}
     try:
         manifest = gateway.discovery_manifest()
-        gateway.catalog_document()
+        # Count products without serializing the whole catalog: the check is
+        # "gateway can see merchant products", and catalog_document() dumps
+        # every product to JSON on each status poll for no reason.
+        product_count = len(gateway.commerce.catalog.all())
         endpoint_count = len(manifest.get("transaction_endpoints") or {})
         if not manifest.get("merchant_id"):
             return {"status": "degraded", "state": "DEGRADED", "detail": "Agent Gateway manifest is incomplete."}
         return {
             "status": "online",
             "state": "CONNECTED",
-            "detail": f"Agent Gateway manifest and machine catalog render OK ({endpoint_count} endpoints).",
+            "detail": f"Agent Gateway manifest OK ({endpoint_count} endpoints, {product_count} catalog products).",
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("Gateway health check failed: %s", exc)
@@ -304,6 +308,49 @@ def _payment_rail_status(ledger: Any) -> dict[str, object]:
     }
 
 
+# Short-lived aggregate-health snapshot: dashboard polls hit this instead of
+# rebuilding every time. Keyed by merchant (counts are merchant-scoped).
+# NEVER user auth, payment auth, policy verdicts, or order state — those
+# always read live. Commerce truth never comes from here.
+_STATUS_SNAPSHOT_TTL_SECONDS = 10.0
+_STATUS_SNAPSHOT_MAX_ENTRIES = 128
+_status_snapshots: dict[str, tuple[float, dict[str, object]]] = {}
+_status_snapshot_lock = threading.Lock()
+_status_rebuild_lock = threading.Lock()
+
+
+def get_cached_status_snapshot(
+    merchant_id: str,
+    builder: "Callable[[], dict[str, object]]",
+    *,
+    ttl_seconds: float = _STATUS_SNAPSHOT_TTL_SECONDS,
+) -> tuple[dict[str, object], bool]:
+    """Return (payload, from_cache) for one merchant's health snapshot.
+
+    Single-flight: concurrent callers with a stale entry wait on ONE rebuild
+    instead of each re-running DB counts and gateway checks (cold-start
+    stampede guard). Builder exceptions are never cached — the next caller
+    retries the build instead of serving a poisoned snapshot.
+    """
+    now = time.time()
+    with _status_snapshot_lock:
+        entry = _status_snapshots.get(merchant_id)
+        if entry and (now - entry[0]) < ttl_seconds:
+            return entry[1], True
+    with _status_rebuild_lock:
+        with _status_snapshot_lock:
+            entry = _status_snapshots.get(merchant_id)
+            if entry and (time.time() - entry[0]) < ttl_seconds:
+                return entry[1], True
+        payload = builder()
+        with _status_snapshot_lock:
+            if len(_status_snapshots) >= _STATUS_SNAPSHOT_MAX_ENTRIES:
+                oldest = min(_status_snapshots, key=lambda k: _status_snapshots[k][0])
+                del _status_snapshots[oldest]
+            _status_snapshots[merchant_id] = (time.time(), payload)
+        return payload, False
+
+
 def build_status(
     *,
     commerce: Any,
@@ -313,24 +360,42 @@ def build_status(
     gateway: Any,
     llm_adapter: Any,
     llm_init_error: str | None = None,
+    timings: dict[str, float] | None = None,
 ) -> dict[str, object]:
-    """Assemble the full /agents/status payload from real backend state."""
-    llm = _llm_status(llm_adapter, init_error=llm_init_error)
-    seller = _seller_status(llm, seller_agent)
-    buyer = _buyer_status(buyer_agent, gateway)
-    gateway_status = _gateway_status(gateway)
-    policy = _policy_status(commerce)
-    ledger_status = _ledger_status(ledger)
-    payment = _payment_rail_status(ledger)
+    """Assemble the full /agents/status payload from real backend state.
+
+    When ``timings`` is given it is filled with per-stage durations in
+    milliseconds (for the Server-Timing diagnostic header) — stage names
+    only, never secrets or tokens.
+    """
+    def _timed(name: str, func: "Callable[[], Any]") -> Any:
+        if timings is None:
+            return func()
+        start = time.perf_counter()
+        try:
+            return func()
+        finally:
+            timings[name] = (time.perf_counter() - start) * 1000.0
+
+    llm = _timed("llm", lambda: _llm_status(llm_adapter, init_error=llm_init_error))
+    seller = _timed("seller", lambda: _seller_status(llm, seller_agent))
+    buyer = _timed("buyer", lambda: _buyer_status(buyer_agent, gateway))
+    gateway_status = _timed("gateway", lambda: _gateway_status(gateway))
+    policy = _timed("policy", lambda: _policy_status(commerce))
+    ledger_status = _timed("ledger", lambda: _ledger_status(ledger))
+    payment = _timed("payment", lambda: _payment_rail_status(ledger))
 
     # Counts, not rows: the summary needs totals, so one GROUP BY replaces
     # loading every order into memory on each status poll.
-    counts: dict[str, int] = {}
-    if commerce is not None:
+    def _counts() -> dict[str, int]:
+        if commerce is None:
+            return {}
         try:
-            counts = commerce.order_repo.status_counts(commerce.merchant_scope)
+            return commerce.order_repo.status_counts(commerce.merchant_scope)
         except Exception:  # noqa: BLE001
-            counts = {}
+            return {}
+
+    counts = _timed("counts", _counts)
     paid = counts.get("PAID", 0) + counts.get("FULFILLED", 0)
 
     return {

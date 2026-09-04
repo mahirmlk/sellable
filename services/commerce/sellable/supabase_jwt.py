@@ -31,6 +31,11 @@ ASYMMETRIC_ALGS = frozenset({"ES256", "ES384", "ES512", "RS256", "RS384", "RS512
 _jwks_cache: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 _jwks_lock = threading.Lock()
 
+# Single-flight state: at most one JWKS network fetch per project URL is ever
+# in progress; concurrent cache-miss callers wait on the owner's event
+# instead of each firing their own fetch (post-deploy stampede guard).
+_jwks_inflight: dict[str, dict[str, Any]] = {}
+
 
 def _b64url_decode(segment: str) -> bytes:
     padding = "=" * (-len(segment) % 4)
@@ -75,14 +80,75 @@ def _fetch_jwks() -> dict[str, dict[str, Any]]:
 
 
 def _get_jwks(force_refresh: bool = False) -> dict[str, dict[str, Any]]:
-    with _jwks_lock:
-        cached = _jwks_cache.get(settings.supabase_url)
-        if not force_refresh and cached and (time.time() - cached[0]) < _JWKS_TTL_SECONDS:
-            return cached[1]
-    keys = _fetch_jwks()
-    with _jwks_lock:
-        _jwks_cache[settings.supabase_url] = (time.time(), keys)
-    return keys
+    """Return cached JWKS, fetching once across concurrent callers.
+
+    Invariant: for a missing/expired entry, exactly one thread performs the
+    network fetch while the rest wait on its completion event (bounded wait —
+    a stuck owner never parks waiters forever; they retry as new owners).
+    """
+    url = settings.supabase_url
+    for _ in range(2):
+        with _jwks_lock:
+            cached = _jwks_cache.get(url)
+            if not force_refresh and cached and (time.time() - cached[0]) < _JWKS_TTL_SECONDS:
+                return cached[1]
+            flight = _jwks_inflight.get(url)
+            if flight is None:
+                flight = {"event": threading.Event(), "keys": None, "error": None}
+                _jwks_inflight[url] = flight
+                owner = True
+            else:
+                owner = False
+        if owner:
+            try:
+                keys = _fetch_jwks()
+            except Exception as exc:
+                with _jwks_lock:
+                    flight["error"] = exc
+                    del _jwks_inflight[url]
+                    flight["event"].set()
+                raise
+            with _jwks_lock:
+                _jwks_cache[url] = (time.time(), keys)
+                flight["keys"] = keys
+                del _jwks_inflight[url]
+                flight["event"].set()
+            return keys
+        # Waiter: bounded wait, then either share the result or retry once as
+        # a potential new owner (owner failure must not wedge us here).
+        if not flight["event"].wait(timeout=15):
+            continue
+        if flight["error"] is None and flight["keys"] is not None:
+            return flight["keys"]
+        force_refresh = False
+    # Two failed rounds: surface a 502 so the caller falls back to the online
+    # Auth API path instead of hanging the request.
+    raise HTTPException(status_code=502, detail="Could not fetch Supabase JWKS")
+
+
+def warm_jwks_cache() -> None:
+    """Prefetch the JWKS in a daemon thread (startup warm, never blocking).
+
+    After a deploy/restart the first cluster of dashboard requests would
+    otherwise compete for the same cold fetch (mitigated by single-flight,
+    eliminated here). Failures are logged at debug — a cold cache simply
+    means the first request fetches normally.
+    """
+    if not settings.supabase_url:
+        return
+
+    def _warm() -> None:
+        try:
+            with _jwks_lock:
+                cached = _jwks_cache.get(settings.supabase_url)
+                if cached and (time.time() - cached[0]) < _JWKS_TTL_SECONDS:
+                    return
+            _get_jwks()
+        except Exception as exc:  # noqa: BLE001 — warm must never raise
+            logger.debug("JWKS warm prefetch failed (first request will fetch): %s", exc)
+
+    thread = threading.Thread(target=_warm, name="jwks-warm", daemon=True)
+    thread.start()
 
 
 def verify_access_token(token: str) -> dict[str, Any]:
@@ -178,4 +244,4 @@ def verify_access_token(token: str) -> dict[str, Any]:
     return payload
 
 
-__all__ = ["ASYMMETRIC_ALGS", "decode_header", "verify_access_token"]
+__all__ = ["ASYMMETRIC_ALGS", "decode_header", "verify_access_token", "warm_jwks_cache"]

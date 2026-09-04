@@ -71,7 +71,9 @@ def _verify_online(token: str) -> dict[str, object]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        # Bounded: this is a recovery fallback, never the hot path — a slow
+        # Auth API must fail fast and truthfully, not park the request.
+        with urllib.request.urlopen(request, timeout=5) as response:
             user = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         # Supabase answered: the token (or the project config) is the problem.

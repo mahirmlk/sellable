@@ -7,7 +7,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
@@ -98,6 +98,13 @@ async def lifespan(_: FastAPI):
     logger.info("Starting SELLABLE Commerce Core")
     initialise_database()
     logger.info("Database initialized")
+    # Non-blocking JWKS warm: daemon thread only, startup never waits on it.
+    try:
+        from sellable.supabase_jwt import warm_jwks_cache
+
+        warm_jwks_cache()
+    except Exception as exc:  # noqa: BLE001 — warm must never break startup
+        logger.debug("JWKS warm skipped: %s", exc)
     yield
     logger.info("Shutting down SELLABLE Commerce Core")
 
@@ -1339,17 +1346,45 @@ def agents_status(
     buyer_agent: BuyerAgent = Depends(get_buyer_agent),
     gateway: AgentGateway = Depends(get_agent_gateway),
     session: MerchantSession = Depends(get_merchant_session),
-) -> dict:
-    """Report real, backend-driven component state (never hardcoded green)."""
+) -> Response:
+    """Report real, backend-driven component state (never hardcoded green).
+
+    Aggregate health only, served from a short per-merchant snapshot cache
+    with single-flight rebuilds. Per-stage durations go out as a
+    Server-Timing header (stage names only — never secrets or tokens).
+    """
+    import time as _time
+
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.responses import JSONResponse
+
+    from sellable.status import get_cached_status_snapshot
+
+    timings: dict[str, float] = {}
+    start = _time.perf_counter()
     core = merchant_core(session)
-    return build_status(
-        commerce=core,
-        ledger=ledger,
-        seller_agent=seller_agent,
-        buyer_agent=buyer_agent,
-        gateway=gateway,
-        llm_adapter=_seller_llm,
-        llm_init_error=_llm_init_error,
+    timings["merchant"] = (_time.perf_counter() - start) * 1000.0
+
+    def _build() -> dict[str, object]:
+        return build_status(
+            commerce=core,
+            ledger=ledger,
+            seller_agent=seller_agent,
+            buyer_agent=buyer_agent,
+            gateway=gateway,
+            llm_adapter=_seller_llm,
+            llm_init_error=_llm_init_error,
+            timings=timings,
+        )
+
+    payload, cached = get_cached_status_snapshot(session.merchant_id, _build)
+    timings["total"] = (_time.perf_counter() - start) * 1000.0
+    server_timing = "; ".join(
+        f"{name};dur={value:.1f}" for name, value in sorted(timings.items())
+    )
+    return JSONResponse(
+        content=jsonable_encoder(payload),
+        headers={"Server-Timing": server_timing, "X-Status-Cached": "1" if cached else "0"},
     )
 
 
