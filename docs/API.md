@@ -385,6 +385,35 @@ All console endpoints require a merchant session (Supabase JWT, or the demo
 | `/console/policy` | GET/PUT | Read merchant policy / owner-only update (re-validates) |
 | `/catalog/products` | POST | Add a catalog product |
 | `/agents/status` | GET | Agent + payment-rail health |
+| `/console/store` | GET | The authenticated merchant's own store record |
+| `/console/onboarding` | POST | Create the verified user's own merchant store |
+| `/console/agent/seller/respond` | POST | Conversational checkout via the seller agent |
+| `/console/agent/buyer/run` | POST | Run the reference buyer against your own store |
+| `/console/orders` | POST | Create an order from a chat quote (idempotent) |
+| `/console/orders/{id}/consent` | POST | Issue single-use consent for the order |
+| `/console/orders/{id}/payment` | POST | Start a Razorpay test-mode payment |
+| `/console/orders/{id}/payment/retry` | POST | One bounded retry after a verified failure |
+| `/console/checkout/session` | GET/POST | Restore/persist the durable checkout session |
+| `/console/checkout/sessions` | GET | Lightweight chat-history list |
+| `/console/checkout/session/{id}` | GET/PATCH/DELETE | Open, rename/archive a chat session |
+| `/console/catalog` · `/console/catalog/{sku}` | GET | The merchant's own catalog / one product |
+
+### Agent API Keys (Merchant Console)
+
+Merchant-issued credentials that let an external AI buyer call the agent
+gateway. Only the SHA-256 hash is stored; the plaintext is returned exactly
+once at creation/rotation. Owner role required for mutations.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/console/agent-keys` | GET | List keys (prefix + metadata, never plaintext) |
+| `/console/agent-keys` | POST | Issue a key → `{ plaintext, key }` (shown once) |
+| `/console/agent-keys/{key_id}/rotate` | POST | Revoke + replace; new plaintext returned once |
+| `/console/agent-keys/{key_id}` | DELETE | Revoke; requests with the key stop authenticating |
+
+Issued keys authenticate `X-Agent-Key` gateway requests scoped to the issuing
+merchant (buyer agent id defaults to the key's `buyer_agent_id`) and are also
+accepted on the HMAC-signed path.
 
 ---
 

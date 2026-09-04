@@ -25,6 +25,158 @@ function useInViewOnce(threshold = 0.18) {
   return { ref, visible };
 }
 
+/* --- plain-language callout: same facts, no jargon --- */
+function PlainWords({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mt-5 border border-dashed border-[#ff6900]/50 bg-[#fffaf6] px-4 py-3.5">
+      <div className="flex items-center gap-2">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#ff6900]" />
+        <span className="font-mono text-[0.6rem] tracking-[0.14em] uppercase text-[#ff6900]">In plain words</span>
+      </div>
+      <p className="mt-1.5 font-sans text-[0.94rem] leading-[1.62] text-[#3a3a36]">{children}</p>
+    </div>
+  );
+}
+
+/* --- Excalidraw-style hand-drawn diagram primitives ---
+   Wobble comes from a displacement filter over clean geometry; the boxes
+   are simple rects/paths so the whole diagram keeps a fixed viewBox size
+   and scales proportionally at every breakpoint. */
+const HAND_FONT = "'Segoe Print', 'Comic Sans MS', 'Bradley Hand', cursive";
+
+function SketchDefs() {
+  return (
+    <defs>
+      <filter id="sketch-wobble" x="-4%" y="-4%" width="108%" height="108%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="11" result="n" />
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" />
+      </filter>
+      <filter id="sketch-wobble-soft" x="-4%" y="-4%" width="108%" height="108%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.02" numOctaves="2" seed="4" result="n" />
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="1.8" />
+      </filter>
+      <marker id="sk-arrow" viewBox="0 0 10 8" refX="8.5" refY="4" markerWidth="8" markerHeight="6.5" orient="auto-start-reverse">
+        <path d="M0.5 0.5 L9 4 L0.5 7.5 L3 4 Z" fill="#4a4a46" stroke="none" />
+      </marker>
+      <marker id="sk-arrow-orange" viewBox="0 0 10 8" refX="8.5" refY="4" markerWidth="8" markerHeight="6.5" orient="auto-start-reverse">
+        <path d="M0.5 0.5 L9 4 L0.5 7.5 L3 4 Z" fill="#ff6900" stroke="none" />
+      </marker>
+    </defs>
+  );
+}
+
+function SketchBox({
+  x, y, w, h, title, sub, stroke = "#33312e", fill = "#ffffff", titleFill = "#1a1a18", dashed = false,
+}: {
+  x: number; y: number; w: number; h: number;
+  title: string; sub?: string;
+  stroke?: string; fill?: string; titleFill?: string; dashed?: boolean;
+}) {
+  return (
+    <g filter="url(#sketch-wobble)">
+      {/* hand-drawn double border: offset second pass like a re-traced line */}
+      <rect x={x} y={y} width={w} height={h} rx={10} fill={fill} stroke={stroke} strokeWidth={dashed ? 1.6 : 2} strokeDasharray={dashed ? "7 5" : undefined} />
+      <rect x={x + 3} y={y + 3} width={w - 6} height={h - 6} rx={8} fill="none" stroke={stroke} strokeWidth={0.9} opacity={0.35} />
+      <text x={x + w / 2} y={sub ? y + h / 2 - 4 : y + h / 2 + 4} textAnchor="middle" fontFamily={HAND_FONT} fontSize={17} fontWeight={600} fill={titleFill}>
+        {title}
+      </text>
+      {sub && (
+        <text x={x + w / 2} y={y + h / 2 + 15} textAnchor="middle" fontFamily={HAND_FONT} fontSize={11.5} fill="#6b6b66">
+          {sub}
+        </text>
+      )}
+    </g>
+  );
+}
+
+function SketchArrow({ x1, y1, x2, y2, label, orange = false, dashed = false }: { x1: number; y1: number; x2: number; y2: number; label?: string; orange?: boolean; dashed?: boolean }) {
+  const stroke = orange ? "#ff6900" : "#4a4a46";
+  const mx = (x1 + x2) / 2 + (orange ? 4 : -3);
+  const my = (y1 + y2) / 2;
+  return (
+    <g filter="url(#sketch-wobble-soft)">
+      <path
+        d={`M ${x1} ${y1} C ${x1 + (mx - x1) * 0.4} ${my - 6}, ${x2 + (mx - x2) * 0.4} ${my + 6}, ${x2} ${y2}`}
+        fill="none" stroke={stroke} strokeWidth={1.8} strokeDasharray={dashed ? "6 4" : undefined}
+        markerEnd={orange ? "url(#sk-arrow-orange)" : "url(#sk-arrow)"}
+      />
+      {label && (
+        <text x={mx} y={my - 7} textAnchor="middle" fontFamily={HAND_FONT} fontSize={11} fill={orange ? "#e25700" : "#6b6b66"}>
+          {label}
+        </text>
+      )}
+    </g>
+  );
+}
+
+function SketchNote({ x, y, text, anchor = "start", fill = "#8a5a00" }: { x: number; y: number; text: string; anchor?: "start" | "middle" | "end"; fill?: string }) {
+  return (
+    <text x={x} y={y} textAnchor={anchor} fontFamily={HAND_FONT} fontSize={11.5} fill={fill}>
+      {text}
+    </text>
+  );
+}
+
+/** Hand-drawn flow: how an AI buyer buys from the store, start to PAID. */
+function SketchArchitectureDiagram() {
+  return (
+    <svg viewBox="0 0 720 660" className="w-full h-auto" role="img" aria-label="Hand-drawn diagram of the agentic commerce flow: AI buyer discovers the store, gets a policy-checked quote, one-time consent, Razorpay payment, and every step is written to the ledger">
+      <SketchDefs />
+      {/* column guide lines, like a notebook margin */}
+      <g filter="url(#sketch-wobble-soft)">
+        <path d="M 40 18 C 42 200, 36 420, 41 640" stroke="#e7e5e0" strokeWidth={1.4} fill="none" />
+        <path d="M 680 22 C 678 220, 684 430, 679 638" stroke="#e7e5e0" strokeWidth={1.4} fill="none" />
+      </g>
+
+      <SketchBox x={255} y={14} w={210} h={54} title="AI Buyer" sub="a shopping agent, not a person" stroke="#33312e" />
+      <SketchArrow x1={360} y1={68} x2={360} y2={108} label="reads your store" />
+      <SketchBox x={205} y={110} w={310} h={54} title="AI Storefront" sub="agents.json · catalog the machine can read" stroke="#33312e" />
+      <SketchArrow x1={360} y1={164} x2={360} y2={204} label="asks for a price" />
+      <SketchBox x={205} y={206} w={310} h={54} title="Seller Agent" sub="builds a quote from your real catalog" stroke="#ff6900" fill="#fff7f0" />
+      <SketchArrow x1={360} y1={260} x2={360} y2={300} label="is this deal allowed?" orange />
+      <SketchBox x={205} y={302} w={310} h={54} title="Policy Engine" sub="budget · floor · categories · limits" stroke="#2f9e6e" fill="#f2fbf6" />
+
+      {/* DENY branch */}
+      <SketchArrow x1={515} y1={329} x2={600} y2={329} label="" orange dashed />
+      <SketchBox x={602} y={302} w={104} h={54} title="Stops." sub="explains why" stroke="#c4453a" fill="#fdf3f2" dashed />
+      <SketchNote x={654} y={296} text="no money moves" anchor="middle" fill="#c4453a" />
+
+      <SketchArrow x1={360} y1={356} x2={360} y2={396} label="allowed → one-time permission" />
+      <SketchBox x={205} y={398} w={310} h={54} title="Consent" sub="single-use · exact amount · expires" stroke="#7c5cd6" fill="#f8f5ff" />
+      <SketchArrow x1={360} y1={452} x2={360} y2={492} label="pays for real" />
+      <SketchBox x={205} y={494} w={310} h={54} title="Razorpay" sub="test-mode rails · signed webhook confirms" stroke="#b9952e" fill="#fffdf2" />
+      <SketchArrow x1={360} y1={548} x2={360} y2={588} label="verified → paid" />
+      <SketchBox x={235} y={590} w={250} h={48} title="PAID — and written down" stroke="#2f9e6e" fill="#f2fbf6" />
+
+      {/* ledger side rail: everything is recorded */}
+      <SketchArrow x1={214} y1={520} x2={140} y2={520} label="" orange dashed />
+      <SketchBox x={12} y={488} w={126} h={64} title="The Ledger" sub="every step recorded" stroke="#2f9e6e" fill="#f2fbf6" dashed />
+      <SketchNote x={75} y={576} text="why, what, which rule — replayable" anchor="middle" />
+    </svg>
+  );
+}
+
+/** Hand-drawn gate: the LLM proposes, the deterministic engine decides. */
+function SketchPolicyGateDiagram() {
+  return (
+    <svg viewBox="0 0 720 240" className="w-full h-auto" role="img" aria-label="Hand-drawn diagram: the language model proposes, the deterministic policy engine allows, denies, or asks a human — it can never touch money directly">
+      <SketchDefs />
+      <SketchBox x={14} y={82} w={200} h={70} title="The AI" sub="suggests a price, an upsell, a cart" stroke="#ff6900" fill="#fff7f0" />
+      <SketchArrow x1={216} y1={117} x2={296} y2={117} label="proposes" orange />
+      <SketchBox x={298} y={72} w={190} h={90} title="Policy Engine" sub="plain rules, no AI inside —" stroke="#2f9e6e" fill="#f2fbf6" />
+      <text x={393} y={180} textAnchor="middle" fontFamily={HAND_FONT} fontSize={11.5} fill="#2f9e6e">same inputs, same answer, every time</text>
+
+      <SketchArrow x1={490} y1={92} x2={580} y2={60} label="ALLOW" />
+      <SketchBox x={584} y={34} w={122} h={48} title="go ahead" stroke="#2f9e6e" fill="#f2fbf6" />
+      <SketchArrow x1={490} y1={122} x2={580} y2={126} label="DENY" orange dashed />
+      <SketchBox x={584} y={100} w={122} h={48} title="blocked" sub="with a reason" stroke="#c4453a" fill="#fdf3f2" dashed />
+      <SketchArrow x1={490} y1={150} x2={580} y2={192} label="too big?" dashed />
+      <SketchBox x={584} y={168} w={122} h={48} title="ask a human" sub="merchant approves" stroke="#b9952e" fill="#fffdf2" dashed />
+      <SketchNote x={16} y={210} text="The AI never signs the payment. It can only ask — the rules and the human say yes or no." />
+    </svg>
+  );
+}
+
 function InteractionModelLive() {
   const [step, setStep] = useState(0);
   const [typed, setTyped] = useState(0);
@@ -66,7 +218,9 @@ function InteractionModelLive() {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[1.35fr_0.75fr] gap-0">
         <div className="px-5 py-5 sm:px-6 sm:py-6">
-          <p className="font-sans text-[0.92rem] leading-[1.68] tracking-[-0.01em] text-[#1a1a18] min-h-[3.2rem]">
+          {/* Fixed reserve: the tallest the sentence reaches, so the typing
+              animation never shifts the panel below it. */}
+          <p className="font-sans text-[0.92rem] leading-[1.68] tracking-[-0.01em] text-[#1a1a18] min-h-[7.2rem] sm:min-h-[4.6rem] md:min-h-[6.4rem]">
             {visibleText}
             {typed < fullLeft.length ? (
               <span className="inline-block w-[2px] h-[1.05em] translate-y-[2px] bg-[#111] animate-[blink_1s_steps(1)_infinite] ml-[1px]" />
@@ -80,13 +234,16 @@ function InteractionModelLive() {
             The writer pauses on <em className="text-[#111] not-italic font-medium">“fina…”</em> — the model has already
             noticed the missing fact. It does not interrupt the sentence.
           </p>
-          {showInsert && (
-            <p className="mt-2 font-mono text-[0.68rem] leading-[1.5] text-neutral-600 animate-[slide-up_0.4s_ease-out_both]">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
-                <span className="w-1 h-1 rounded-full bg-emerald-500" /> Held fact released — “Spurs 111, Thunder 103” inserted where the sentence naturally wanted it.
+          {/* Fixed reserve for the insertion banner: it appears at step 3. */}
+          <p className="mt-2 font-mono text-[0.68rem] leading-[1.5] min-h-[2.6rem]">
+            {showInsert ? (
+              <span className="animate-[slide-up_0.4s_ease-out_both]">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
+                  <span className="w-1 h-1 rounded-full bg-emerald-500" /> Held fact released — “Spurs 111, Thunder 103” inserted where the sentence naturally wanted it.
+                </span>
               </span>
-            </p>
-          )}
+            ) : null}
+          </p>
         </div>
         <div className="border-t md:border-t-0 md:border-l border-black/10 bg-[#fdfdfb] px-5 py-5">
           <div className="font-mono text-[0.6rem] tracking-[0.1em] uppercase text-neutral-400">Model actions</div>
@@ -440,12 +597,18 @@ export default function CaseStudyClient() {
             <p>
               This is the &quot;held fact&quot; pattern. The fact is <em className="font-medium not-italic text-[#111]">not hidden</em> — it is <em className="font-medium not-italic text-[#111]">timed</em>. The model holds it in memory, aware of its relevance, but defers insertion until the context is right. Inserting it too early would disrupt the sentence flow. Inserting it too late would miss the moment. The discipline is in the timing.
             </p>
+            <PlainWords>
+              Think of a good assistant who has already found the answer but waits for the right moment to speak. The answer is ready; the timing is deliberate. SELLABLE applies that same &ldquo;wait for the right moment&rdquo; discipline to payments.
+            </PlainWords>
             <p>
               In agentic commerce, the same pattern governs money. The Seller Agent holds a valid quote — a price computed from catalog, margin rules, and negotiation history. It holds an upsell suggestion — a complementary product checked against stock and budget. It holds a consent token — a single-use, amount-bound, expiring authorization. Each of these is a &quot;held fact&quot; about money. The agent cannot insert them arbitrarily. They must wait for the policy engine to confirm that every guardrail is satisfied, and then release exactly once.
             </p>
             <p>
               This is why the held fact is not just a UX metaphor. It is the safety architecture. The model proposes; the policy engine disposes; the ledger records the moment of insertion with a trace_id, a reasoning_summary, and the policy references that governed the decision. Every rupee has an explanation. Every hold has a reason. Every insertion has an anchor.
             </p>
+            <PlainWords>
+              In SELLABLE, the AI can suggest and negotiate, but it can never move money by itself. A rulebook (not another AI) checks every deal, and a receipt-style log explains every step in plain language.
+            </PlainWords>
           </div>
 
           <div className="mt-3 font-mono text-[0.66rem] tracking-[0.08em] uppercase text-neutral-400">Reference interaction — white paper style, live sampling indicator</div>
@@ -482,6 +645,9 @@ export default function CaseStudyClient() {
               NPCI&apos;s 2025 protocol specification defines consent tokens, spend limits, and audit requirements that merchants must implement <em>now</em> to participate in this channel.
               The merchants who build agent-facing infrastructure today will capture the first wave of autonomous procurement spend — estimated at $47B globally by 2027.
             </p>
+            <PlainWords>
+              Two things changed at once: the rules (India&apos;s payment network now says how an AI agent may pay on your behalf) and the buyers (shopping AIs that actually buy, not just recommend). Stores today are built for people clicking a &ldquo;Buy&rdquo; button — an AI literally cannot read them.
+            </PlainWords>
             <p>
               Merchants today are built for human eyeballs: HTML storefronts, carts, coupon codes. They are <span className="bg-[#111] text-white px-1">invisible and unusable</span> to AI buyers: no
               machine-readable catalog, no agent-facing API, no negotiation policy, no consent flow, no audit trail when an agent spends money. The problem is not that AI cannot buy — it is that merchants have not been built to be bought <em>by</em> AI.
@@ -509,14 +675,6 @@ export default function CaseStudyClient() {
                 <div className="mt-1 font-sans text-[0.86rem] leading-[1.5] text-neutral-700">{c.v}</div>
               </div>
             ))}
-          </div>
-
-          <div className="mt-6 font-sans text-[1.0rem] leading-[1.72] tracking-[-0.012em] text-[#1e1e1c]">
-            <p>
-              The Track 01 brief asks for both: <span className="font-medium text-[#111]">(a) grow the merchant’s revenue</span> using agents and{" "}
-              <span className="font-medium text-[#111]">(b) make the merchant sellable to AI buyers</span>. We chose to solve (b) end-to-end and let (a) emerge from the
-              same transaction — upsell attach, bounded negotiation that protects margin, and AI discoverability itself as a revenue channel.
-            </p>
           </div>
 
           <div className="mt-6 overflow-hidden border border-black/10">
@@ -554,6 +712,9 @@ export default function CaseStudyClient() {
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             Each step in the workflow is not just a UI state — it is a ledger event. The Buyer Agent discovers the merchant via <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">/.well-known/agents.json</code>, reads the machine-readable catalog, and initiates a quote request. The Seller Agent responds with a price computed from real catalog data, bounded negotiation rules, and margin floors. The Policy Engine validates both sides: the buyer&apos;s budget ceiling and the merchant&apos;s floor price. Only when both allow does the flow proceed to consent. The consent token is single-use, amount-bound, and expiring — it cannot be replayed, cannot exceed the amount, and cannot be reused after payment. If any gate fails, the flow stops gracefully with a structured explanation. Nothing is retried silently. Nothing is left ambiguous.
           </p>
+          <PlainWords>
+            Here is the whole purchase in one breath: an AI finds your store, asks for a price, haggles a little, gets a one-time permission token, pays through Razorpay, and every one of those steps is written down so you can replay it later. If a rule says no at any point, the flow stops — politely, with an explanation.
+          </PlainWords>
           <WorkflowStepper />
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-[0.66rem] leading-[1.5]">
             <div className="border border-black/10 bg-white px-3 py-3">
@@ -581,112 +742,21 @@ export default function CaseStudyClient() {
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             Agents are orchestration and language surfaces; the Commerce Core owns authoritative business state and money invariants. The Trust Layer makes every decision replayable.
           </p>
+          <PlainWords>
+            Picture your shop with a new front door built for robots. Two AI workers (one buys, one sells) talk to each other; a strict rulebook and a cashier&apos;s desk (the Commerce Core) actually hold the till; and a security camera with a transcript (the Trust Layer) records every exchange.
+          </PlainWords>
 
-          {/* Mermaid-style SVG architecture diagram */}
+          {/* Hand-drawn (Excalidraw-style) diagrams — same style as
+              ARCHITECTURE.md; fixed viewBoxes scale cleanly everywhere. */}
           <div className="mt-7 border border-black/10 bg-white overflow-hidden p-6">
-            <div className="font-mono text-[0.62rem] tracking-[0.12em] uppercase text-neutral-400 mb-4">Architecture flow — agent-to-agent transaction path</div>
-            <svg viewBox="0 0 900 420" className="w-full h-auto" aria-label="Architecture diagram showing transaction flow">
-              {/* Background grid */}
-              <defs>
-                <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-                  <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(0,0,0,0.04)" strokeWidth="0.5"/>
-                </pattern>
-                <marker id="arrow" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-                  <polygon points="0 0, 10 3.5, 0 7" fill="#999"/>
-                </marker>
-                <marker id="arrow-orange" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
-                  <polygon points="0 0, 10 3.5, 0 7" fill="#ff6900"/>
-                </marker>
-              </defs>
-              <rect width="900" height="420" fill="url(#grid)"/>
+            <div className="font-mono text-[0.62rem] tracking-[0.12em] uppercase text-neutral-400 mb-4">Architecture flow — how an AI buyer buys, start to PAID</div>
+            <SketchArchitectureDiagram />
+            <div className="mt-3 font-mono text-[0.6rem] leading-[1.5] text-neutral-400">Every arrow is one ledger event. Dashed = a gate that can say no. The LLM never touches payment directly.</div>
+          </div>
 
-              {/* Human layer */}
-              <rect x="350" y="10" width="200" height="36" rx="4" fill="#fafafa" stroke="#e5e5e5"/>
-              <text x="450" y="33" textAnchor="middle" fontSize="10" fontFamily="monospace" fill="#888" letterSpacing="0.05em">HUMAN LAYER</text>
-
-              {/* Arrows down */}
-              <line x1="450" y1="46" x2="450" y2="72" stroke="#ddd" strokeWidth="1" markerEnd="url(#arrow)"/>
-
-              {/* Buyer Agent */}
-              <rect x="120" y="72" width="200" height="50" rx="6" fill="#fff7ed" stroke="#ff6900" strokeWidth="1.5"/>
-              <text x="220" y="94" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">Buyer Agent</text>
-              <text x="220" y="112" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">LangGraph · budget guard</text>
-
-              {/* Seller Agent */}
-              <rect x="580" y="72" width="200" height="50" rx="6" fill="#fff7ed" stroke="#ff6900" strokeWidth="1.5"/>
-              <text x="680" y="94" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">Seller Agent</text>
-              <text x="680" y="112" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">LangGraph · bounded tools</text>
-
-              {/* A2A arrow */}
-              <line x1="320" y1="97" x2="580" y2="97" stroke="#ff6900" strokeWidth="1.5" strokeDasharray="6,4" markerEnd="url(#arrow-orange)"/>
-              <text x="450" y="92" textAnchor="middle" fontSize="8" fontFamily="monospace" fill="#ff6900" letterSpacing="0.04em">A2A NEGOTIATION</text>
-
-              {/* Gateway */}
-              <rect x="300" y="150" width="300" height="50" rx="6" fill="#f0f9ff" stroke="#38bdf8" strokeWidth="1.5"/>
-              <text x="450" y="172" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">Agent Gateway</text>
-              <text x="450" y="190" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">agents.json · llms.txt · HMAC auth</text>
-
-              {/* Arrows from agents to gateway */}
-              <line x1="220" y1="122" x2="350" y2="150" stroke="#ddd" strokeWidth="1" markerEnd="url(#arrow)"/>
-              <line x1="680" y1="122" x2="550" y2="150" stroke="#ddd" strokeWidth="1" markerEnd="url(#arrow)"/>
-
-              {/* Commerce Core */}
-              <rect x="300" y="230" width="300" height="50" rx="6" fill="#f5f3ff" stroke="#a78bfa" strokeWidth="1.5"/>
-              <text x="450" y="252" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">Commerce Core</text>
-              <text x="450" y="270" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">Catalog · Quotes · Orders · Consent</text>
-
-              <line x1="450" y1="200" x2="450" y2="230" stroke="#ddd" strokeWidth="1" markerEnd="url(#arrow)"/>
-
-              {/* Policy Engine */}
-              <rect x="80" y="230" width="180" height="50" rx="6" fill="#ecfdf5" stroke="#34d399" strokeWidth="1.5"/>
-              <text x="170" y="252" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">Policy Engine</text>
-              <text x="170" y="270" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">deterministic · testable</text>
-
-              <line x1="260" y1="255" x2="300" y2="255" stroke="#34d399" strokeWidth="1.5" markerEnd="url(#arrow)" strokeDasharray="4,3"/>
-              <text x="280" y="248" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="#34d390">ALLOW/DENY</text>
-
-              {/* XAI Ledger */}
-              <rect x="640" y="230" width="180" height="50" rx="6" fill="#ecfdf5" stroke="#34d399" strokeWidth="1.5"/>
-              <text x="730" y="252" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">XAI Ledger</text>
-              <text x="730" y="270" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">append-only · immutable</text>
-
-              <line x1="600" y1="255" x2="640" y2="255" stroke="#34d399" strokeWidth="1.5" markerEnd="url(#arrow)" strokeDasharray="4,3"/>
-              <text x="620" y="248" textAnchor="middle" fontSize="7" fontFamily="monospace" fill="#34d390">RECORD</text>
-
-              {/* Payment Rail */}
-              <rect x="300" y="310" width="300" height="50" rx="6" fill="#fefce8" stroke="#facc15" strokeWidth="1.5"/>
-              <text x="450" y="332" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">Payment Rail</text>
-              <text x="450" y="350" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">Razorpay · HMAC webhooks · refunds</text>
-
-              <line x1="450" y1="280" x2="450" y2="310" stroke="#ddd" strokeWidth="1" markerEnd="url(#arrow)"/>
-
-              {/* Consent */}
-              <rect x="80" y="310" width="180" height="50" rx="6" fill="#faf5ff" stroke="#c084fc" strokeWidth="1.5"/>
-              <text x="170" y="332" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">Consent</text>
-              <text x="170" y="350" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">single-use · amount-bound</text>
-
-              <line x1="260" y1="335" x2="300" y2="335" stroke="#c084fc" strokeWidth="1.5" markerEnd="url(#arrow)" strokeDasharray="4,3"/>
-
-              {/* HITL */}
-              <rect x="640" y="310" width="180" height="50" rx="6" fill="#fefce8" stroke="#facc15" strokeWidth="1.5"/>
-              <text x="730" y="332" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="600" fill="#111">HITL Queue</text>
-              <text x="730" y="350" textAnchor="middle" fontSize="8.5" fontFamily="sans-serif" fill="#666">threshold-gated approval</text>
-
-              <line x1="600" y1="335" x2="640" y2="335" stroke="#facc15" strokeWidth="1.5" markerEnd="url(#arrow)" strokeDasharray="4,3"/>
-
-              {/* Final state */}
-              <rect x="340" y="385" width="220" height="28" rx="14" fill="#111"/>
-              <text x="450" y="404" textAnchor="middle" fontSize="9.5" fontFamily="monospace" fontWeight="600" fill="white" letterSpacing="0.06em">ORDER → PAID → FULFILLED</text>
-
-              <line x1="450" y1="360" x2="450" y2="385" stroke="#999" strokeWidth="1" markerEnd="url(#arrow)"/>
-
-              {/* Labels */}
-              <text x="15" y="195" fontSize="8" fontFamily="monospace" fill="#bbb" letterSpacing="0.08em">TRUST</text>
-              <text x="15" y="255" fontSize="8" fontFamily="monospace" fill="#bbb" letterSpacing="0.08em">LAYER</text>
-              <text x="865" y="195" fontSize="8" fontFamily="monospace" fill="#bbb" letterSpacing="0.08em" textAnchor="end">LEDGER</text>
-              <text x="865" y="255" fontSize="8" fontFamily="monospace" fill="#bbb" letterSpacing="0.08em" textAnchor="end">TRACE</text>
-            </svg>
-            <div className="mt-3 font-mono text-[0.6rem] leading-[1.5] text-neutral-400">Every arrow = one ledger event. Solid = data flow. Dashed = policy/consent gate. The LLM never touches payment directly.</div>
+          <div className="mt-4 border border-black/10 bg-white overflow-hidden p-6">
+            <div className="font-mono text-[0.62rem] tracking-[0.12em] uppercase text-neutral-400 mb-4">The gate — the AI proposes, the rules decide</div>
+            <SketchPolicyGateDiagram />
           </div>
 
           <div className="mt-7 border border-black/10 bg-white overflow-hidden">
@@ -795,6 +865,9 @@ export default function CaseStudyClient() {
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             The engine is deterministic: given the same inputs, it always returns the same decision. This means it can be unit-tested without an LLM, debugged without a model, and audited without a prompt. The LLM&apos;s role is to <em className="text-[#111] font-medium">propose</em> — to phrase a counter-offer, to suggest an upsell, to present a quote. The engine&apos;s role is to <em className="text-[#111] font-medium">dispose</em> — to validate that the proposal falls within every guardrail. This separation is what makes the system explainable: every decision has a reason_code, every reason_code maps to a policy, and every policy is documented and testable.
           </p>
+          <PlainWords>
+            The AI is the talker; the rulebook is the bouncer. The rulebook never gets tired, never gets creative, and always explains its decision with a code you can look up.
+          </PlainWords>
 
           <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
@@ -844,6 +917,9 @@ export default function CaseStudyClient() {
             <p>
               Human-in-the-loop (HITL) adds a second safety layer: orders above a configurable threshold (default ₹2,000) are routed to the merchant operator for manual approval before consent can proceed. This is not a UI nicety — it is a policy engine decision. The engine returns <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">NEEDS_HUMAN_APPROVAL</code> and the flow pauses until the operator acts. The operator sees the full context: order details, agent identity, policy evaluation, and the reason for escalation. They can approve, reject, or modify the order. This is the human-in-the-loop that NPCI&apos;s protocol requires for high-value transactions.
             </p>
+            <PlainWords>
+              Every payment needs its own one-time permission slip — no blanket &ldquo;charge me whenever&rdquo;. And if a cart is unusually expensive, the flow rings the shopkeeper: it waits for a real human to tap Approve before a single rupee moves.
+            </PlainWords>
           </div>
 
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -878,6 +954,9 @@ export default function CaseStudyClient() {
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             The XAI Ledger is append-only and immutable. Every event — from catalog search to payment confirmation — is recorded with a unique <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">trace_id</code> that links all actions in a single transaction. The event schema includes: <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">actor</code> (who initiated), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">action</code> (what was attempted), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">inputs</code> (what data was used), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">output</code> (what decision was made), <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">reasoning_summary</code> (plain-English explanation), and <code className="font-mono text-[0.82rem] bg-black/5 px-1 py-0.5 border border-black/10">policy_refs</code> (which rules were consulted). This is not optional logging — it is the core of the trust architecture. Without it, an autonomous agent spending money is unauditable. With it, every rupee has a story.
           </p>
+          <PlainWords>
+            Think of it as a till receipt for decisions, not just for money. For every step you can ask: who did it, what exactly happened, which rule applied, and why — and the answer is stored forever, in order.
+          </PlainWords>
           <LedgerTimelineWhite />
         </div>
 
@@ -891,6 +970,9 @@ export default function CaseStudyClient() {
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             The growth story is not a separate product — it emerges from the same transaction infrastructure. When an AI buyer discovers a merchant through <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">agents.json</code>, negotiates within policy, and pays via Razorpay, the merchant gains a new revenue channel that was previously invisible. The &quot;growth&quot; is not about adding marketing features — it is about making the merchant discoverable to a new class of buyer that did not exist before.
           </p>
+          <PlainWords>
+            You don&apos;t have to run ads to get this growth. The moment an AI shopper can find, haggle with, and pay your store, you have a new kind of customer — and the same transaction already does the upselling and the discount-limit enforcement for you.
+          </PlainWords>
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               ["Contextual upsell", "At most 1/session, catalog-verified, stock-checked, budget-checked. With a concise why.", "₹5,100 → +₹100 desk mat = ₹5,200"],
@@ -942,6 +1024,9 @@ export default function CaseStudyClient() {
             store. The demo store still exists, but as an actual database row used by the
             agent-to-agent surface - never as a fallback for a human login.
           </p>
+          <PlainWords>
+            Most demo apps share one fake login. This one gives every real person their own real store with their own products, orders, and ledger — like actual software, not a stage prop.
+          </PlainWords>
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               ["01 - Identity is verified, authorization is separate", "Signature, expiry, issuer and audience are checked against the JWKS (kid-matched, rotation-aware). Then the user id is resolved through merchant_users to their own store. No row means onboarding - never silent demo access."],

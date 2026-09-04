@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import threading
@@ -274,6 +275,14 @@ def make_engine(config: Settings = settings):
 
 def _build_engine(config: Settings = settings):
     if config.database_url.startswith("sqlite"):
+        # A file-backed SQLite URL fails with "unable to open database file"
+        # when the parent directory does not exist (fresh CI checkouts, new
+        # containers — data/ is gitignored). Create it, never for :memory:.
+        if ":memory:" not in config.database_url:
+            db_path = config.database_url.split("///", 1)[-1].split("?", 1)[0]
+            parent = Path(db_path).parent
+            if str(parent) not in ("", "."):
+                Path(parent).mkdir(parents=True, exist_ok=True)
         connect_args: dict[str, object] = {"check_same_thread": False}
     elif "pooler.supabase.com" in config.database_url or "pgbouncer=true" in config.database_url:
         # Supabase pooler (PgBouncer transaction mode) does not support prepared statements

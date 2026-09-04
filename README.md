@@ -10,7 +10,7 @@
 
 <br/>
 
-[![CI](https://github.com/sellable/sellable/actions/workflows/ci.yml/badge.svg)](https://github.com/sellable/sellable/actions)
+[![CI](https://github.com/mahirmlk/sellable/actions/workflows/ci.yml/badge.svg)](https://github.com/mahirmlk/sellable/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2-143C5D.svg)](https://langchain-ai.github.io/langgraph/)
@@ -63,7 +63,7 @@ The commerce landscape is shifting. AI buyers -- Perplexity, OpenAI shopping age
 - **Buyer Agent** -- Reference implementation: discover -> research -> request_quote -> evaluate
 - **Policy Engine** -- Pure, LLM-independent evaluator: budget, floor price, categories, stock, negotiation rounds, HITL threshold
 - **XAI Ledger** -- Append-only audit trail with reasoning summaries for every material action
-- **Merchant Console** -- Next.js dashboard: activity feed, approval queue, catalog management, growth insights
+- **Merchant Console** -- Next.js dashboard: activity feed, approval queue, catalog management, growth insights, and agent API key management for external AI buyers
 - **Payment Integration** -- Razorpay test-mode with webhook reconciliation and refund support
 - **Evaluation Framework** -- 7 deterministic scenarios covering valid purchase, denial, HITL, payment failure, idempotency
 
@@ -299,7 +299,7 @@ graph TB
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/sellable/sellable.git
+git clone https://github.com/mahirmlk/sellable.git
 cd sellable
 
 # Backend
@@ -403,8 +403,13 @@ open http://localhost:3000
 |---|---|---|
 | `/console/store` | GET | The authenticated merchant's own store record |
 | `/console/onboarding` | POST | Create the verified user's own merchant store |
+| `/console/agent-keys` | GET/POST | List agent API keys / issue a new one (plaintext shown once) |
+| `/console/agent-keys/{key_id}/rotate` | POST | Revoke a key and issue a replacement |
+| `/console/agent-keys/{key_id}` | DELETE | Revoke an agent API key |
 | `/console/transactions` | GET | Transaction list (scoped to the caller's merchant) |
+| `/console/transactions/{order_id}` | GET | Transaction detail + full ledger trace |
 | `/console/catalog` | GET | The merchant's own DB-persisted catalog |
+| `/console/catalog/{sku}` | GET | One catalog product by SKU |
 | `/console/events` | GET | XAI Ledger events (scoped) |
 | `/activity/stream` | GET | SSE live ledger stream (scoped) |
 | `/agents/status` | GET | Agent + payment-rail health (summary scoped) |
@@ -415,9 +420,17 @@ open http://localhost:3000
 | `/console/policy` | GET/PUT | Read/update the merchant's own policy |
 | `/catalog/products` | POST | Add a product to the merchant's own catalog |
 | `/console/agent/seller/respond` | POST | Conversational checkout (merchant JWT) |
+| `/console/agent/buyer/run` | POST | Run the reference buyer against your own store (merchant JWT) |
 | `/console/orders` | POST | Create order via chat checkout (merchant JWT) |
 | `/console/orders/{id}/consent` | POST | Issue single-use consent (merchant JWT) |
 | `/console/orders/{id}/payment` | POST | Start Razorpay test-mode payment (merchant JWT) |
+| `/console/orders/{id}/payment/retry` | POST | One bounded retry after a verified failure (merchant JWT) |
+| `/console/orders/{id}/fulfill` | POST | Mark a paid order fulfilled (merchant auth) |
+| `/console/checkout/session` | GET/POST | Restore/persist the durable checkout session |
+| `/console/checkout/sessions` | GET | Lightweight chat-history list (scoped) |
+| `/console/checkout/session/{id}` | GET/PATCH/DELETE | Open, rename/archive a chat session |
+| `/console/orders/{id}/simulate-capture` | POST | Dev-only signed-webhook-boundary capture simulation |
+| `/console/orders/{id}/simulate-failure` | POST | Dev-only payment-failure simulation |
 
 ---
 
@@ -438,10 +451,12 @@ mock fallbacks in production:
 - **Buyer agents** -- API key + HMAC request signing. Agent calls authenticate
   with `X-Agent-Key` or an HMAC-SHA256 signature over
   `timestamp.nonce.agent_id.method.path` with `X-Timestamp`, `X-Nonce`, and
-  `X-Signature` headers, including server-side replay protection. Only a
-  SHA-256 hash of the long-lived key is stored (`BUYER_AGENT_API_KEY_HASH`).
-  The well-known demo key is accepted only outside production; the agent
-  gateway serves the demo merchant's records.
+  `X-Signature` headers, including server-side replay protection. Two key
+  sources are supported: merchant-issued keys (created in the console under
+  Storefront → Agent API Keys; only a SHA-256 hash is stored, scoped to the
+  issuing merchant) and platform-configured hashes
+  (`BUYER_AGENT_API_KEY_HASH`). The well-known demo key is accepted only
+  outside production; env-hash keys serve the demo merchant's records.
 - **Database** — application tables (`merchant_users`, `merchants`,
   `catalog_products`, `orders`, `consents`, `ledger_events`, `policy`) have
   RLS enabled and no `anon`/`authenticated` grants; only the backend
@@ -534,7 +549,7 @@ The `evals/` directory contains 7 deterministic scenarios:
 
 ```bash
 # Run all evaluation scenarios
-python -m evals.runner
+python -m evals.runner.scenario_runner
 ```
 
 ---
