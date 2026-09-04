@@ -127,38 +127,45 @@ interface MissionHistoryItem {
   orderId: string | null;
   held: boolean;
   amountPaise: number | null;
+  paid: boolean;
 }
 
 /**
  * Derive recent buyer missions from the ledger events already loaded in the
  * feed: one entry per `buyer.mission_received` trace, joined with the order
- * the mission produced (`buyer.order_requested` / `buyer.order_held`).
- * Newest-first, matching the feed order.
+ * the mission produced (`buyer.order_requested` / `buyer.order_held`) and
+ * its payment outcome. Two passes on purpose: the feed is newest-first, so
+ * the order/payment events appear ABOVE the mission event — a single pass
+ * saw `buyer.order_held` before its mission existed and dropped it, which
+ * rendered resumable missions as "NO ORDER".
  */
 function deriveMissionHistory(events: LedgerEvent[]): MissionHistoryItem[] {
   const byTrace = new Map<string, MissionHistoryItem>();
   for (const e of events) {
-    if (e.action === "buyer.mission_received") {
-      const out = (e.output ?? {}) as Record<string, unknown>;
-      byTrace.set(e.traceId, {
-        traceId: e.traceId,
-        mission:
-          (e.reasoningSummary ?? "").replace(/^Received a buyer mission:\s*/, "").trim() || "—",
-        budgetPaise: typeof out.budget_ceiling_paise === "number" ? out.budget_ceiling_paise : null,
-        timestamp: e.timestamp,
-        orderId: null,
-        held: false,
-        amountPaise: null,
-      });
-    } else if (
-      (e.action === "buyer.order_requested" || e.action === "buyer.order_held") &&
-      byTrace.has(e.traceId)
-    ) {
-      const item = byTrace.get(e.traceId)!;
+    if (e.action !== "buyer.mission_received") continue;
+    const out = (e.output ?? {}) as Record<string, unknown>;
+    byTrace.set(e.traceId, {
+      traceId: e.traceId,
+      mission:
+        (e.reasoningSummary ?? "").replace(/^Received a buyer mission:\s*/, "").trim() || "—",
+      budgetPaise: typeof out.budget_ceiling_paise === "number" ? out.budget_ceiling_paise : null,
+      timestamp: e.timestamp,
+      orderId: null,
+      held: false,
+      amountPaise: null,
+      paid: false,
+    });
+  }
+  for (const e of events) {
+    const item = byTrace.get(e.traceId);
+    if (!item) continue;
+    if (e.action === "buyer.order_requested" || e.action === "buyer.order_held") {
       const out = (e.output ?? {}) as Record<string, unknown>;
       if (typeof out.order_id === "string") item.orderId = out.order_id;
       if (typeof out.amount_paise === "number") item.amountPaise = out.amount_paise;
       item.held = e.action === "buyer.order_held";
+    } else if (e.action === "payment.captured" || e.action === "order.paid") {
+      item.paid = true;
     }
   }
   return [...byTrace.values()];
@@ -795,8 +802,8 @@ export default function ActivityPage() {
               <div className="flex items-center gap-2 shrink-0">
                 {m.orderId ? (
                   <>
-                    <span className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase px-1.5 py-0.5 border ${m.held ? "border-amber-400/40 text-amber-400" : "border-green-400/40 text-green-400"}`}>
-                      {m.held ? "HELD" : "ORDER"}
+                    <span className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase px-1.5 py-0.5 border ${m.paid ? "border-green-400/40 text-green-400" : m.held ? "border-amber-400/40 text-amber-400" : "border-green-400/40 text-green-400"}`}>
+                      {m.paid ? "PAID" : m.held ? "HELD" : "ORDER"}
                     </span>
                     <button
                       onClick={() => void handleResumeMission(m)}
