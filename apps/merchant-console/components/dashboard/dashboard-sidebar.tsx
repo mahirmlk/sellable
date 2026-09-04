@@ -157,8 +157,13 @@ export function DashboardSidebar({
           </span>
         </div>
 
-        {/* Nav links — when collapsed, icons only with hover name tooltips */}
-        <nav className="flex-1 py-2 overflow-y-auto overflow-x-hidden" aria-label="Dashboard navigation">
+        {/* Nav links — when collapsed, icons only with hover name tooltips.
+            Collapsed + lg drops the scroll clipping (overflow-x-hidden would
+            clip the hover labels that escape the 56px rail). */}
+        <nav
+          className={`flex-1 py-2 ${collapsed ? "lg:overflow-visible" : "overflow-y-auto overflow-x-hidden"}`}
+          aria-label="Dashboard navigation"
+        >
           {sidebarLinks.map((link, index) => {
             const Icon = link.icon;
             const active = isActive(link.href);
@@ -195,9 +200,11 @@ export function DashboardSidebar({
                 <span className={`font-[var(--font-sans)] text-[0.82rem] ${collapsed ? "lg:hidden" : ""}`}>
                   {link.label}
                 </span>
-                {/* Hover label — only rendered when the rail is collapsed */}
+                {/* Hover label — only rendered when the rail is collapsed.
+                    z-index sits inside the aside's own stacking context, so
+                    labels always paint above page content. */}
                 {collapsed && (
-                  <span className="hidden lg:flex absolute left-[calc(100%+10px)] top-1/2 -translate-y-1/2 z-[70] items-center px-2 py-1 bg-[var(--bb-panel)] border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-white)] whitespace-nowrap pointer-events-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 shadow-lg">
+                  <span className="hidden lg:flex absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 z-[70] items-center px-2 py-1 bg-[var(--bb-panel)] border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-white)] whitespace-nowrap pointer-events-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 shadow-lg">
                     {link.label}
                   </span>
                 )}
