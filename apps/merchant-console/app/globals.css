@@ -880,6 +880,15 @@ svg {
   animation: response-in 0.5s var(--ease-out) both;
 }
 
+/* Chat typing indicator — staggered opacity/translate dots */
+@keyframes typing-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+.typing-dot {
+  animation: typing-dot 1.2s ease-in-out infinite;
+}
+
 /* --------------------------------------------------
    AMBIENT MOTION — transform / opacity ONLY.
    These never touch layout, paint-heavy props, blur,

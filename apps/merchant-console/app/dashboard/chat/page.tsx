@@ -81,6 +81,65 @@ function uid(prefix = "msg"): string {
 const DEMO_MODE = process.env.NEXT_PUBLIC_AGENT_KEY === "sellable_demo_key_001";
 const PAYMENT_TERMINAL = ["PAID", "FULFILLED", "PAYMENT_FAILED", "ABORTED", "REFUNDED"];
 
+/** Lifecycle progress for the header stepper, derived only from the phase. */
+function phaseProgress(phase: ChatPhase): { idx: number; tone: "active" | "blocked" | "failed" | "done" } | null {
+  switch (phase) {
+    case "thinking": return { idx: 0, tone: "active" };
+    case "quote": return { idx: 0, tone: "done" };
+    case "checkout": return { idx: 1, tone: "active" };
+    case "approval": return { idx: 1, tone: "blocked" };
+    case "consent": return { idx: 2, tone: "active" };
+    case "payment": return { idx: 3, tone: "active" };
+    case "receipt": return { idx: 3, tone: "done" };
+    case "failed": return { idx: 3, tone: "failed" };
+    case "aborted": return { idx: 2, tone: "failed" };
+    default: return null;
+  }
+}
+
+const PHASE_STEPS = ["QUOTE", "ORDER", "CONSENT", "PAID"] as const;
+
+function PhaseStepper({ phase }: { phase: ChatPhase }) {
+  const progress = phaseProgress(phase);
+  if (!progress) return null;
+  const dotTone: Record<string, string> = {
+    done: "bg-green-400",
+    active: "bg-[var(--bb-orange)] animate-[blink_1.5s_ease-in-out_infinite]",
+    blocked: "bg-amber-400",
+    failed: "bg-red-400",
+  };
+  const textTone: Record<string, string> = {
+    done: "text-[var(--bb-grey-2)]",
+    active: "text-[var(--bb-white)]",
+    blocked: "text-amber-400",
+    failed: "text-red-400",
+  };
+  return (
+    <div className="hidden md:flex items-center gap-2" aria-label="Checkout lifecycle progress">
+      {PHASE_STEPS.map((step, i) => {
+        const state =
+          i < progress.idx ? "done" : i === progress.idx ? progress.tone : "todo";
+        const active = state !== "todo";
+        return (
+          <div key={step} className="flex items-center gap-2">
+            {i > 0 && <span className={`w-[14px] h-px ${active ? "bg-[var(--bb-grey-4)]" : "bg-[var(--bb-line)]"}`} />}
+            <span className="flex items-center gap-1.5">
+              <span className={`w-[5px] h-[5px] ${state === "todo" ? "bg-[var(--bb-line)]" : dotTone[state]}`} />
+              <span
+                className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.12em] uppercase ${
+                  state === "todo" ? "text-[var(--bb-grey-4)]" : textTone[state]
+                }`}
+              >
+                {step}
+              </span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 px-2 py-[3px] border border-[var(--bb-line-soft)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.5rem] tracking-[0.06em] text-[var(--bb-grey-2)]">
@@ -90,15 +149,20 @@ function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
   );
 }
 
-function CartCard({ cart }: { cart: CartPayload }) {
+function CartCard({ cart, productTitle }: { cart: CartPayload; productTitle?: string | null }) {
   return (
     <div className="border border-[var(--bb-line)] p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-1">
         <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-1)]">Cart</span>
         <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase text-[var(--bb-grey-1)]">
           ROUND {cart.negotiation_round}
         </span>
       </div>
+      {productTitle && (
+        <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)] mb-3 truncate" title={productTitle}>
+          {productTitle}
+        </div>
+      )}
       <div className="space-y-2 mb-3">
         {cart.items.map((item) => (
           <div key={item.sku} className="flex items-center justify-between gap-3">
@@ -1361,16 +1425,19 @@ export default function ChatPageInner() {
   return (
     <div className="flex flex-col h-[calc(100vh-52px)]">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-[var(--bb-line)] flex items-center justify-between flex-shrink-0">
-        <div>
+      <div className="px-6 py-4 border-b border-[var(--bb-line)] flex items-center justify-between gap-4 flex-shrink-0">
+        <div className="min-w-0">
           <h1 className="font-[var(--font-sans)] text-[1.35rem] tracking-[-0.04em] text-[var(--bb-white)]">Checkout</h1>
           <p className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-1)] mt-1">
             AGENT-ASSISTED · POLICY-BOUND · HUMAN APPROVED
           </p>
         </div>
-        <button onClick={resetSession} className="inline-flex items-center gap-2 h-[30px] px-3 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.52rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
-          <RefreshCw size={11} /> NEW SESSION
-        </button>
+        <div className="flex items-center gap-4 flex-shrink-0">
+          <PhaseStepper phase={phase} />
+          <button onClick={resetSession} className="inline-flex items-center gap-2 h-[30px] px-3 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.52rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
+            <RefreshCw size={11} /> NEW SESSION
+          </button>
+        </div>
       </div>
 
       {/* Main grid */}
@@ -1407,33 +1474,34 @@ export default function ChatPageInner() {
               </div>
             )}
             {messages.length === 0 && phase === "idle" && (
-              <div className="max-w-[480px] mx-auto mt-[7vh]">
-                <div className="flex items-center gap-2 mb-4">
-                  <Sparkles size={15} className="text-[var(--bb-orange)]" />
+              <div className="max-w-[520px] mx-auto mt-[7vh] tab-in">
+                <div className="flex items-center gap-2 mb-5">
+                  <span className="w-[5px] h-[5px] bg-[var(--bb-orange)]" />
                   <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.18em] uppercase text-[var(--bb-orange)]">Seller Agent</span>
                 </div>
                 {catalogEmpty ? (
                   <>
-                    <div className="font-[var(--font-sans)] text-[1.15rem] text-[var(--bb-white)] mb-2 leading-snug">Your catalog is empty.</div>
-                    <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-2)] leading-relaxed mb-5">
+                    <div className="font-[var(--font-sans)] text-[1.25rem] text-[var(--bb-white)] mb-2 leading-snug">Your catalog is empty.</div>
+                    <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)] leading-relaxed mb-6">
                       The agent only sells what you actually stock. Add a few products first —
                       then come back and describe what a buyer might ask for.
                     </div>
                     <Link
                       href="/dashboard/catalog"
-                      className="inline-flex items-center gap-2 h-[34px] px-4 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-2 h-[36px] px-4 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
                     >
                       Add products <ArrowRight size={12} />
                     </Link>
                   </>
                 ) : (
                   <>
-                    <div className="font-[var(--font-sans)] text-[1.15rem] text-[var(--bb-white)] mb-2 leading-snug">Describe what you need.</div>
-                    <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-2)] leading-relaxed mb-6">
+                    <div className="font-[var(--font-sans)] text-[1.25rem] text-[var(--bb-white)] mb-2 leading-snug">Describe what you need.</div>
+                    <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)] leading-relaxed mb-7">
                       I search your catalog, quote a policy-valid cart, and negotiate within your
                       guardrails. Every step lands in the ledger.
                     </div>
-                    <div className="flex flex-col gap-1.5">
+                    <div className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.14em] uppercase text-[var(--bb-grey-4)] mb-2.5">Try a mission</div>
+                    <div className="flex flex-col gap-2">
                       {[
                         "I need a coffee setup for my desk under ₹2,000",
                         "A protective travel case for my headphones",
@@ -1442,9 +1510,10 @@ export default function ChatPageInner() {
                         <button
                           key={s}
                           onClick={() => handleSend(s)}
-                          className="self-start text-left px-3.5 py-2 border border-[var(--bb-line-soft)] text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors cursor-pointer"
+                          className="group flex items-center justify-between gap-3 text-left px-3.5 py-2.5 border border-[var(--bb-line)] bg-[var(--bb-panel)] hover:border-[var(--bb-orange)]/50 hover:bg-[var(--bb-orange)]/5 transition-all cursor-pointer"
                         >
-                          <span className="font-[var(--font-mono)] text-[0.65rem]">{s}</span>
+                          <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)] group-hover:text-[var(--bb-white)] transition-colors">{s}</span>
+                          <ArrowRight size={12} className="text-[var(--bb-grey-4)] group-hover:text-[var(--bb-orange)] transition-colors shrink-0" />
                         </button>
                       ))}
                     </div>
@@ -1454,8 +1523,12 @@ export default function ChatPageInner() {
             )}
 
             {phase === "thinking" && (
-              <div className="flex items-center gap-3">
-                <Loader2 size={14} className="animate-spin text-[var(--bb-orange)]" />
+              <div className="flex items-center gap-3 tab-in" aria-live="polite">
+                <span className="flex gap-1">
+                  <span className="w-[5px] h-[5px] bg-[var(--bb-orange)] typing-dot" />
+                  <span className="w-[5px] h-[5px] bg-[var(--bb-orange)] typing-dot [animation-delay:0.15s]" />
+                  <span className="w-[5px] h-[5px] bg-[var(--bb-orange)] typing-dot [animation-delay:0.3s]" />
+                </span>
                 <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">SEARCHING CATALOG · CHECKING POLICY · PREPARING QUOTE</span>
               </div>
             )}
@@ -1463,24 +1536,34 @@ export default function ChatPageInner() {
             {messages.map((msg) => {
               if (msg.role === "user") {
                 return (
-                  <div key={msg.id} className="flex justify-end">
-                    <div className="max-w-[70%] px-3.5 py-2 bg-[var(--bb-panel)]">
-                      <div className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-1)] leading-relaxed">{msg.text}</div>
+                  <div key={msg.id} className="flex justify-end tab-in">
+                    <div className="max-w-[75%] px-3.5 py-2.5 bg-[var(--bb-orange)]/10 border border-[var(--bb-orange)]/25">
+                      <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-1)] leading-relaxed">{msg.text}</div>
                     </div>
                   </div>
                 );
               }
               if (msg.role === "system") {
-                const color = msg.status === "error" ? "border-l-2 border-red-400/60 text-red-400" : msg.status === "warning" ? "border-l-2 border-amber-400/60 text-amber-400" : "border-l-2 border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]";
+                const tone =
+                  msg.status === "error"
+                    ? "border-l-2 border-red-400/60 text-red-400"
+                    : msg.status === "warning"
+                      ? "border-l-2 border-amber-400/60 text-amber-400"
+                      : msg.status === "success"
+                        ? "border-l-2 border-green-400/60 text-green-400"
+                        : "border-l-2 border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]";
                 return (
-                  <div key={msg.id} className={`px-4 py-2 bg-[var(--bb-panel)] ${color}`}>
-                    <div className="font-[var(--font-mono)] text-[0.68rem] leading-relaxed">{msg.text}</div>
+                  <div key={msg.id} className={`px-4 py-2.5 bg-[var(--bb-panel)] tab-in ${tone}`}>
+                    <div className="font-[var(--font-mono)] text-[0.68rem] leading-relaxed flex items-start gap-2">
+                      <span className={`mt-[3px] w-[5px] h-[5px] rotate-45 shrink-0 ${msg.status === "error" ? "bg-red-400" : msg.status === "warning" ? "bg-amber-400" : msg.status === "success" ? "bg-green-400" : "bg-[var(--bb-grey-4)]"}`} />
+                      {msg.text}
+                    </div>
                   </div>
                 );
               }
               return (
-                <div key={msg.id} className="max-w-[85%]">
-                  <div className="flex items-center gap-2 mb-1.5">
+                <div key={msg.id} className="max-w-[85%] border border-[var(--bb-line)] bg-[var(--bb-panel)] p-3.5 tab-in">
+                  <div className="flex items-center gap-2 mb-2">
                     <span className="w-[5px] h-[5px] bg-[var(--bb-orange)]" />
                     <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.14em] uppercase text-[var(--bb-orange)]">SELLER AGENT</span>
                   </div>
@@ -1507,24 +1590,36 @@ export default function ChatPageInner() {
                 e.preventDefault();
                 handleSend(input);
               }}
-              className="flex items-center gap-2.5"
+              className="flex items-center gap-2.5 border border-[var(--bb-line)] bg-[var(--bb-panel)] focus-within:border-[var(--bb-orange)] transition-colors px-3 h-[46px]"
             >
+              <Sparkles size={14} className="text-[var(--bb-grey-4)] shrink-0" aria-hidden />
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={readOnly ? "Historical session — start a NEW SESSION for a new purchase" : phase === "payment" || phase === "receipt" ? "Session is processing a payment — start a new session to continue" : "Describe what you need…"}
                 disabled={busy || phase === "thinking" || readOnly}
-                className="flex-1 h-[42px] font-[var(--font-sans)] text-[0.85rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-4 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors disabled:opacity-50"
+                className="flex-1 font-[var(--font-sans)] text-[0.85rem] bg-transparent border-0 text-[var(--bb-white)] placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-0 disabled:opacity-50"
+                aria-label="Message the seller agent"
               />
               <button
                 type="submit"
                 disabled={busy || phase === "thinking" || readOnly || !input.trim()}
-                className="inline-flex items-center justify-center w-[42px] h-[42px] bg-[var(--bb-orange)] text-[var(--bb-black)] hover:bg-[var(--bb-orange-bright)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                className="inline-flex items-center justify-center w-[34px] h-[34px] bg-[var(--bb-orange)] text-[var(--bb-black)] hover:bg-[var(--bb-orange-bright)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex-shrink-0"
                 aria-label="Send message"
               >
-                <Send size={15} />
+                {busy || phase === "thinking" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
               </button>
             </form>
+            <div className="mt-2 flex items-center justify-between gap-4">
+              <span className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] uppercase text-[var(--bb-grey-4)] truncate">
+                {readOnly
+                  ? "READ-ONLY HISTORY — START A NEW SESSION TO BUY AGAIN"
+                  : "ENTER TO SEND · EVERY QUOTE AND ORDER LANDS IN THE XAI LEDGER"}
+              </span>
+              {phase === "quote" && decision?.trace_id && (
+                <span className="font-[var(--font-mono)] text-[0.48rem] text-[var(--bb-grey-4)] shrink-0">TRACE {decision.trace_id.slice(0, 14)}…</span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1628,7 +1723,7 @@ export default function ChatPageInner() {
 
             {phase === "quote" && decision && cart && (
               <>
-                <CartCard cart={cart} />
+                <CartCard cart={cart} productTitle={decision.selected_product?.title ?? null} />
                 {decision.policy_decision && <PolicyCard decision={decision.policy_decision} />}
 
                 {isDenied ? (
