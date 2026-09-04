@@ -203,6 +203,7 @@ class SellerAgent:
         product = state.get("selected_product")
         cart = state.get("candidate_cart")
         decision = state.get("policy_decision")
+        buyer_offer_paise = state["request"].buyer_offer_paise
         if product is None:
             result = SellerDecision(
                 trace_id=state["trace_id"],
@@ -232,7 +233,10 @@ class SellerAgent:
             result = SellerDecision(
                 trace_id=state["trace_id"],
                 action=SellerAction.NEEDS_HUMAN_APPROVAL,
-                response_message="This valid cart has been held for merchant approval before consent.",
+                response_message=(
+                    "This valid cart has been held for merchant approval before "
+                    f"consent. Current cart total: {self._inr(cart.total_paise)}."
+                ),
                 cart=cart,
                 policy_decision=decision,
                 selected_product=product,
@@ -244,10 +248,8 @@ class SellerAgent:
             result = SellerDecision(
                 trace_id=state["trace_id"],
                 action=action,
-                response_message=(
-                    "Here is the lowest policy-valid counter-offer."
-                    if was_countered
-                    else "Here is a policy-valid candidate cart."
+                response_message=self._quote_message(
+                    cart, was_countered, buyer_offer_paise
                 ),
                 cart=cart,
                 policy_decision=decision,
@@ -265,6 +267,32 @@ class SellerAgent:
         return {
             "result": self._phrase_if_llm(result, state["request"].message, state["trace_id"])
         }
+
+    @staticmethod
+    def _inr(paise: int) -> str:
+        return f"₹{paise / 100:,.2f}"
+
+    def _quote_message(
+        self, cart: CartMandate, was_countered: bool, buyer_offer_paise: int | None
+    ) -> str:
+        """Deterministic, price-bearing transcript text for a valid quote.
+
+        Presentation only: every figure comes from the policy-validated cart,
+        never from a model. The negotiation algorithm itself is untouched.
+        """
+        if buyer_offer_paise is None or not cart.items:
+            return "Here is a policy-valid candidate cart."
+        item = cart.items[0]
+        unit = self._inr(item.offered_price_paise)
+        if was_countered:
+            return (
+                f"I can offer {item.sku} at {unit} per unit — that is the lowest "
+                f"price I can offer within the merchant's pricing rules."
+            )
+        return (
+            f"Accepted {unit} per unit for {item.sku} "
+            f"(discount {self._inr(cart.discount_paise)})."
+        )
 
     def _phrase_if_llm(
         self, result: SellerDecision, buyer_message: str, trace_id: str

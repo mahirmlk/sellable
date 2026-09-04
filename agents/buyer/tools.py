@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
     CatalogSearchRequest,
     Consent,
@@ -31,8 +32,33 @@ class BuyerTools:
         return manifest
 
     def research_catalog(
-        self, *, message: str, allowed_categories: list[str], trace_id: str
+        self,
+        *,
+        message: str,
+        allowed_categories: list[str],
+        trace_id: str,
+        requested_sku: str | None = None,
     ) -> list[str]:
+        # A requested SKU bypasses free-text search but is still verified
+        # against the authoritative catalog — only real SKUs are returned.
+        if requested_sku:
+            try:
+                product = self.gateway.get_catalog_item(requested_sku)
+            except UnknownSkuError:
+                self._record(
+                    trace_id=trace_id,
+                    action="buyer.catalog_researched",
+                    output={"requested_sku": requested_sku, "matching_skus": []},
+                    explanation="The requested SKU does not exist in the merchant catalog.",
+                )
+                return []
+            self._record(
+                trace_id=trace_id,
+                action="buyer.catalog_researched",
+                output={"requested_sku": requested_sku, "matching_skus": [product.sku]},
+                explanation="Verified the requested SKU in the authoritative merchant catalog.",
+            )
+            return [product.sku]
         products = self.gateway.search_catalog(
             CatalogSearchRequest(query=message, categories=allowed_categories)
         )
@@ -74,16 +100,23 @@ class BuyerTools:
     def create_order(
         self, *, decision: object, intent: IntentMandate, trace_id: str
     ) -> Order:
-        """Create the authoritative order only for a policy-ALLOW cart."""
+        """Create the authoritative order for a policy-valid cart.
+
+        ALLOW carts proceed to consent directly. NEEDS_HUMAN_APPROVAL carts
+        are still policy-valid: the order is created in the held state
+        (requires_approval=True, no consent possible) so the merchant's
+        Approvals queue has the real order to act on, and the flow can
+        continue later from that exact order without any duplicate.
+        """
         cart = decision.cart
         if cart is None:
             raise ValueError("Cannot create an order without a candidate cart")
         verdict = decision.policy_decision.verdict if decision.policy_decision else None
-        if verdict is not PolicyVerdict.ALLOW:
+        if verdict is None or verdict is PolicyVerdict.DENY:
             raise ValueError(
-                f"Buyer tool refuses to order a non-ALLOW cart (verdict={verdict}); "
-                "held orders need explicit merchant approval first"
+                f"Buyer tool refuses to order a policy-rejected cart (verdict={verdict})"
             )
+        held = verdict is PolicyVerdict.NEEDS_HUMAN_APPROVAL
         idempotency_key = f"idem_buyer_{trace_id}"
         order = self.gateway.commerce.create_order(
             cart=cart,
@@ -93,11 +126,20 @@ class BuyerTools:
         )
         self._record(
             trace_id=trace_id,
-            action="buyer.order_requested",
-            output={"order_id": order.order_id, "amount_paise": order.amount_paise},
+            action="buyer.order_held" if held else "buyer.order_requested",
+            output={
+                "order_id": order.order_id,
+                "amount_paise": order.amount_paise,
+                "requires_approval": order.requires_approval,
+            },
             explanation=(
-                "Requested an order for the policy-valid cart using a deterministic "
-                "idempotency key derived from the trace."
+                "Requested an order in the held state: above the human-approval "
+                "threshold it waits for explicit merchant approval before consent."
+                if held
+                else (
+                    "Requested an order for the policy-valid cart using a deterministic "
+                    "idempotency key derived from the trace."
+                )
             ),
         )
         return order

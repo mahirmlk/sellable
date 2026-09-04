@@ -157,9 +157,10 @@ def test_buyer_rejects_unknown_sku_cart(buyer: BuyerAgent) -> None:
     assert verdict.reason_code == "UNKNOWN_SKU"
 
 
-def test_buyer_tool_refuses_non_allow_order(
-    buyer: BuyerAgent, seller: SellerAgent
+def test_buyer_tool_creates_held_order_for_hitl_and_refuses_deny(
+    buyer: BuyerAgent, seller: SellerAgent, core_and_engine
 ) -> None:
+    core, _ = core_and_engine
     high = intent(budget=300_000)
     decision = seller.respond(
         SellerRequest(message="gift box", intent=high, requested_sku="GIFT-BOX-01")
@@ -167,8 +168,155 @@ def test_buyer_tool_refuses_non_allow_order(
     assert decision.policy_decision is not None
     assert decision.policy_decision.verdict is PolicyVerdict.NEEDS_HUMAN_APPROVAL
 
-    with pytest.raises(ValueError, match="non-ALLOW"):
-        buyer.tools.create_order(decision=decision, intent=high, trace_id="trc_guards_held")
+    # HITL carts are policy-valid: the order is created in the held state so
+    # the merchant's Approvals queue has a real order to act on.
+    order = buyer.tools.create_order(decision=decision, intent=high, trace_id="trc_guards_held")
+    assert order.requires_approval is True
+    assert order.status.value == "AWAITING_CONSENT"
+    held_actions = [r.action for r in core.ledger.for_trace("trc_guards_held")]
+    assert "buyer.order_held" in held_actions
+    # No consent exists for a held order.
+    with pytest.raises(ValueError, match="requires merchant approval"):
+        core.issue_consent(order.order_id)
+
+    # A policy-DENIED cart is still refused outright.
+    deny_decision = seller.respond(
+        SellerRequest(
+            message="gift box",
+            intent=high.model_copy(update={"budget_ceiling_paise": 1_000}),
+            requested_sku="GIFT-BOX-01",
+        )
+    )
+    with pytest.raises(ValueError, match="policy-rejected"):
+        buyer.tools.create_order(
+            decision=deny_decision, intent=high, trace_id="trc_guards_deny"
+        )
+
+
+def test_buyer_hitl_flow_holds_order_and_continues_after_approval(
+    core_and_engine,
+) -> None:
+    """Full HITL loop: held order → merchant approval → consent, same trace,
+    no duplicate order."""
+    core, _ = core_and_engine
+    gateway = AgentGateway(core, SellerAgent(core))
+    buyer = BuyerAgent(gateway)
+    m = mission(
+        message="I need a workday gift box",
+        budget_ceiling_paise=300_000,
+        requested_sku="GIFT-BOX-01",
+    )
+    result = buyer.run(m, trace_id="trc_guards_hitl_full")
+
+    assert result.action is BuyerAction.NEEDS_HUMAN_APPROVAL
+    assert result.order_id is not None
+    assert result.consent_id is None
+    assert "ORDER" in result.steps
+    assert "CONSENT" not in result.steps
+    order = core.get_order(result.order_id)
+    assert order.requires_approval is True
+    assert order.trace_id == "trc_guards_hitl_full"
+
+    # Merchant approves from the Approvals queue; consent is then issued
+    # against the SAME order — no duplicate is ever created.
+    core.approve_order(order.order_id)
+    consent = core.issue_consent(order.order_id)
+    assert consent.order_id == order.order_id
+    assert consent.amount_paise == order.amount_paise
+    # Exactly one order exists for the whole loop.
+    assert len(core.all_orders()) == 1
+    trace_actions = [r.action for r in core.ledger.for_trace("trc_guards_hitl_full")]
+    assert "buyer.order_held" in trace_actions
+    assert "human.approval_granted" in trace_actions
+    assert "consent.issued" in trace_actions
+
+
+def test_buyer_negotiates_and_grounds_research_in_requested_sku(
+    buyer: BuyerAgent, core_and_engine
+) -> None:
+    core, _ = core_and_engine
+    # SNACK-COFFE-01 list 84_900, floor 74_900, 10% cap minimum 76_410.
+    result = buyer.run(
+        mission(
+            message="coffee for my desk",
+            budget_ceiling_paise=200_000,
+            requested_sku="SNACK-COFFEE-01",
+            quantity=1,
+            buyer_offer_paise=80_000,
+            request_upsell=False,
+        )
+    )
+
+    assert result.action is BuyerAction.READY_FOR_CONSENT
+    cart = result.seller_decision.cart
+    assert cart is not None
+    assert cart.items[0].sku == "SNACK-COFFEE-01"
+    # Offer between the policy minimum and list price is accepted as-is.
+    assert cart.items[0].offered_price_paise == 80_000
+    assert cart.discount_paise == 4_900
+    assert cart.negotiation_round == 1
+    assert result.order_id is not None
+    assert core.get_order(result.order_id).amount_paise == 80_000
+    # Research was grounded on the real requested SKU.
+    research = [
+        r
+        for r in core.ledger.for_trace(result.trace_id)
+        if r.action == "buyer.catalog_researched"
+    ]
+    assert research[-1].output_json.get("requested_sku") == "SNACK-COFFEE-01"
+    assert research[-1].output_json.get("matching_skus") == ["SNACK-COFFEE-01"]
+
+
+def test_buyer_below_floor_offer_is_countered_at_policy_minimum(
+    buyer: BuyerAgent,
+) -> None:
+    result = buyer.run(
+        mission(
+            message="coffee for my desk",
+            budget_ceiling_paise=200_000,
+            requested_sku="SNACK-COFFEE-01",
+            buyer_offer_paise=60_000,
+            request_upsell=False,
+        )
+    )
+
+    assert result.action is BuyerAction.READY_FOR_CONSENT
+    cart = result.seller_decision.cart
+    assert cart is not None
+    # The buyer's ₹600 number is never used: the counter is the policy minimum.
+    assert cart.items[0].offered_price_paise == 76_410
+    assert cart.items[0].offered_price_paise >= cart.items[0].unit_price_paise * 90 // 100
+    assert cart.discount_paise == 84_900 - 76_410
+    assert cart.negotiation_round == 1
+
+
+def test_buyer_unknown_requested_sku_is_no_match(buyer: BuyerAgent) -> None:
+    result = buyer.run(
+        mission(
+            message="hoverboard please",
+            budget_ceiling_paise=200_000,
+            requested_sku="FAKE-SKU-99",
+        )
+    )
+
+    assert result.action is BuyerAction.NO_MATCH
+    assert result.order_id is None
+    assert result.consent_id is None
+
+
+def test_buyer_mission_is_ledgered_for_activity_and_replay(
+    buyer: BuyerAgent, core_and_engine
+) -> None:
+    core, _ = core_and_engine
+    result = buyer.run(mission(message="I need coffee for my desk", budget_ceiling_paise=200_000))
+
+    actions = [r.action for r in core.ledger.for_trace(result.trace_id)]
+    assert "buyer.mission_received" in actions
+    assert "buyer.discovered_merchant" in actions
+    assert "buyer.catalog_researched" in actions
+    # Order, consent, and mission all share the single flow trace.
+    assert "order.created" in actions
+    assert "consent.issued" in actions
 
 
 def test_buyer_consent_requires_matching_trace(

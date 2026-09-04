@@ -82,12 +82,40 @@ class BuyerAgent:
 
     def _route_after_evaluate(self, state: BuyerGraphState) -> str:
         result = state.get("result")
-        if result is not None and result.action is BuyerAction.READY_FOR_CONSENT:
+        if result is not None and result.action in (
+            BuyerAction.READY_FOR_CONSENT,
+            BuyerAction.NEEDS_HUMAN_APPROVAL,
+        ):
             return "order"
         return "end"
 
+    def _route_after_order(self, state: BuyerGraphState) -> str:
+        # Consent is requested only for directly-approved carts; a held order
+        # (HITL) stops here and waits for explicit merchant approval.
+        decision = state.get("seller_decision")
+        if decision is not None and decision.action is SellerAction.NEEDS_HUMAN_APPROVAL:
+            return "end"
+        return "consent"
+
     def _discover(self, state: BuyerGraphState) -> dict[str, object]:
+        mission = state["mission"]
         manifest = self.tools.discover_merchant(trace_id=state["trace_id"])
+        # Real mission persistence: the full request context is ledgered under
+        # the flow trace so Activity and Replay can reconstruct it later.
+        self._record(
+            state["trace_id"],
+            "buyer.mission_received",
+            {
+                "buyer_agent_id": mission.buyer_agent_id,
+                "budget_ceiling_paise": mission.budget_ceiling_paise,
+                "allowed_categories": mission.allowed_categories,
+                "requested_sku": mission.requested_sku,
+                "quantity": mission.quantity,
+                "buyer_offer_paise": mission.buyer_offer_paise,
+                "request_upsell": mission.request_upsell,
+            },
+            f"Received a buyer mission: {mission.message[:500]}",
+        )
         return {"manifest": manifest, "steps": [*state["steps"], "DISCOVER"]}
 
     def _research(self, state: BuyerGraphState) -> dict[str, object]:
@@ -96,6 +124,7 @@ class BuyerAgent:
             message=mission.message,
             allowed_categories=mission.allowed_categories,
             trace_id=state["trace_id"],
+            requested_sku=mission.requested_sku,
         )
         return {"catalog_skus": skus, "steps": [*state["steps"], "RESEARCH"]}
 
@@ -282,12 +311,14 @@ class BuyerAgent:
         order: Order = self.tools.create_order(
             decision=decision, intent=intent, trace_id=state["trace_id"]
         )
+        held = decision.action is SellerAction.NEEDS_HUMAN_APPROVAL
         steps = [*state["steps"], "ORDER"]
         result = state["result"].model_copy(update={"order_id": order.order_id, "steps": steps})
         return {
             "result": result,
             "order_id": order.order_id,
             "steps": steps,
+            "order_held": held,
         }
 
     def _request_consent(self, state: BuyerGraphState) -> dict[str, object]:

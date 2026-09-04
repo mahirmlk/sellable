@@ -5,7 +5,8 @@ transition topology::
 
     DISCOVER -> RESEARCH -> REQUEST_QUOTE -> EVALUATE
        (READY_FOR_CONSENT) -> CREATE_ORDER -> REQUEST_CONSENT -> END
-       (otherwise)                                  -> END
+       (NEEDS_HUMAN_APPROVAL) -> CREATE_ORDER (held) -> END  (awaiting merchant)
+       (otherwise)                                          -> END
 """
 
 from __future__ import annotations
@@ -33,6 +34,10 @@ def build_buyer_graph(agent: Any, state_schema: Any) -> Any:
         agent._route_after_evaluate,
         {"order": "create_order", "end": END},
     )
-    graph.add_edge("create_order", "request_consent")
+    graph.add_conditional_edges(
+        "create_order",
+        agent._route_after_order,
+        {"consent": "request_consent", "end": END},
+    )
     graph.add_edge("request_consent", END)
     return graph.compile()

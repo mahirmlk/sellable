@@ -226,6 +226,10 @@ class OrderCreateRequest(StrictModel):
     )
     requested_sku: str | None = Field(default=None, max_length=64)
     buyer_offer_paise: int | None = Field(default=None, gt=0)
+    # Checkout must re-evaluate the SAME negotiated quote the seller returned:
+    # without quantity the order path silently requotes at quantity 1 / list
+    # price and the persisted order diverges from the displayed cart.
+    quantity: int = Field(default=1, ge=1, le=100)
 
 
 class OrderStatusRequest(StrictModel):
