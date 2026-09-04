@@ -41,6 +41,7 @@ from sellable.contracts import (
     ConsolePolicyUpdate,
     ConsoleTransactionDetail,
     ConsoleTransactionItem,
+    ConsentStatus,
     LedgerActor,
     MerchantPolicy,
     OrderCreateRequest,
@@ -755,11 +756,18 @@ def console_simulate_failure(
 def _summarize_order(
     order: "ConsoleTransactionItem | object",
     events: list,
+    consent_lookup=None,
 ) -> dict[str, object]:
     """Derive merchant-facing policy/consent/payment/item facts from the ledger.
 
     The frontend never computes these states; it renders the backend's
     authoritative summary, which is reconstructed from the XAI Ledger (§9).
+
+    ``consent_lookup`` (consent_id → live Consent) lets the summary consult
+    the authoritative consent record: consent expiry and consume-by-another-
+    path do NOT write ledger events, so an event-only read kept reporting a
+    dead consent as ISSUED — the exact bug behind the stale START PAYMENT
+    button and the "Consent is not available for use" 409 loop.
     """
     order_id = getattr(order, "order_id")
     status = getattr(order, "status")
@@ -815,6 +823,33 @@ def _summarize_order(
         consent_status = "CONSUMED"
     elif consent_issued:
         consent_status = "ISSUED"
+        if consent_id and consent_lookup is not None:
+            try:
+                live = consent_lookup(consent_id)
+            except Exception:  # noqa: BLE001 — summary must not fail on lookup
+                live = None
+            if live is not None:
+                if live.status is ConsentStatus.USED:
+                    consent_status = "CONSUMED"
+                elif live.status is ConsentStatus.EXPIRED:
+                    consent_status = "EXPIRED"
+                elif live.status is ConsentStatus.REVOKED:
+                    consent_status = "REVOKED"
+                elif live.expires_at <= datetime.now(timezone.utc):
+                    consent_status = "EXPIRED"
+        if consent_status == "ISSUED" and consent_expires_at:
+            # Expiry writes NO ledger event, so also check the recorded
+            # expiry truthfully instead of reporting ISSUED forever.
+            try:
+                expires = datetime.fromisoformat(
+                    str(consent_expires_at).replace("Z", "+00:00")
+                )
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                if expires <= datetime.now(timezone.utc):
+                    consent_status = "EXPIRED"
+            except ValueError:
+                pass
     elif status in ("AWAITING_CONSENT",):
         consent_status = "NOT_ISSUED"
     else:
@@ -844,9 +879,10 @@ def _enrich_transaction(
     order: "ConsoleTransactionItem | object",
     ledger: LedgerRepository,
     merchant_id: str | None = None,
+    consent_lookup=None,
 ) -> dict[str, object]:
     events = ledger.for_trace(getattr(order, "trace_id"), merchant_id=merchant_id)
-    return _summarize_order(order, list(events))
+    return _summarize_order(order, list(events), consent_lookup)
 
 
 @app.get("/console/transactions", response_model=list[ConsoleTransactionItem], tags=["console"])
@@ -881,7 +917,12 @@ def console_transactions(
         )
         enriched.append(
             ConsoleTransactionItem.model_validate(
-                {**base.model_dump(), **_summarize_order(o, batched.get(o.trace_id, []))}
+                {
+                    **base.model_dump(),
+                    **_summarize_order(
+                        o, batched.get(o.trace_id, []), core.consent_service.get
+                    ),
+                }
             )
         )
     return enriched
@@ -915,7 +956,9 @@ def console_transaction_detail(
         created_at=order.created_at,
         payment_url=order.provider_payment_url,
     )
-    enriched = _enrich_transaction(order, ledger, session.merchant_id)
+    enriched = _enrich_transaction(
+        order, ledger, session.merchant_id, consent_lookup=core.consent_service.get
+    )
     return ConsoleTransactionDetail.model_validate(
         {
             **base.model_dump(),
@@ -1166,15 +1209,27 @@ def console_approve_order(
         # Buyer mission is resumable as payment-ready after a restart.
         # Money state stays on the order; the continuation endpoint
         # re-derives everything from it.
+        mission_id: str | None = None
         try:
             buyer_mission_service.note_approval(
                 merchant_id=session.merchant_id,
                 order_id=order_id,
                 consent_id=consent.consent_id,
             )
+            mission_row = buyer_mission_service.find_for_order(
+                session.merchant_id, order_id
+            )
+            mission_id = mission_row.mission_id if mission_row else None
         except Exception as exc:  # noqa: BLE001 — pointer refresh is additive
             logger.warning("Buyer mission approval refresh failed: %s", exc)
-        return {"status": "approved", "order_id": order_id, "consent_id": consent.consent_id}
+        return {
+            "status": "approved",
+            "order_id": order_id,
+            "consent_id": consent.consent_id,
+            # Only AI-buyer missions carry a mission_id — the console uses
+            # it to resume the A2A continuation (never the human chat flow).
+            "mission_id": mission_id,
+        }
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

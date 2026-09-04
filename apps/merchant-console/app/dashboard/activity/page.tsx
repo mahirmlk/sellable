@@ -101,7 +101,8 @@ function missionSteps(
     if (detail.status === "PAID" || detail.status === "FULFILLED") done("VERIFIED");
     if (detail.status === "PAYMENT_FAILED" || detail.status === "ABORTED") blocked("STOPPED");
   }
-  if (result.consent_id || detail?.consent_status === "ISSUED" || detail?.consent_status === "CONSUMED") done("CONSENT");
+  if (detail?.consent_status === "EXPIRED") blocked("CONSENT EXPIRED");
+  else if (result.consent_id || detail?.consent_status === "ISSUED" || detail?.consent_status === "CONSUMED") done("CONSENT");
   return out;
 }
 
@@ -191,6 +192,11 @@ export default function ActivityPage() {
   const [missionOrderDetail, setMissionOrderDetail] = useState<ConsoleTransactionDetail | null>(null);
   const missionPollRef = useRef<number | null>(null);
   const missionPollDeadlineRef = useRef<number>(0);
+  // Mission id + auto-continuation guard. The mission id lives in a ref so
+  // the order poll (which must not depend on panel state) can trigger the
+  // backend continuation exactly once when approval unblocks the mission.
+  const missionIdRef = useRef<string | null>(null);
+  const autoContinuedRef = useRef<Set<string>>(new Set());
   const seenIds = useRef<Set<string>>(new Set());
   // Merchant policy context: prefills the mission form's categories and shows
   // the real floor/HITL caps next to it (same source the chat panel uses).
@@ -308,7 +314,36 @@ export default function ActivityPage() {
         try {
           const detail = await getConsoleTransactionDetail(orderId);
           setMissionOrderDetail(detail);
-          if (ORDER_TERMINAL.includes(detail.status)) stopMissionPoll();
+          if (ORDER_TERMINAL.includes(detail.status)) {
+            stopMissionPoll();
+            return;
+          }
+          // HITL must not end the buyer mission: the moment the ledger
+          // shows a live consent (i.e. approval was granted), the backend
+          // continuation runs ONCE — consent reuse/issue + payment start
+          // through the existing PaymentService. Never from the frontend's
+          // own judgement: the server re-derives everything from the order.
+          const missionId = missionIdRef.current;
+          if (
+            missionId &&
+            detail.status === "AWAITING_CONSENT" &&
+            detail.consent_status === "ISSUED" &&
+            detail.consent_id &&
+            !autoContinuedRef.current.has(orderId)
+          ) {
+            autoContinuedRef.current.add(orderId);
+            continueBuyerMission(missionId)
+              .then((mission) => {
+                if (mission.state === "PAYMENT_PENDING") {
+                  setMissionMsg({ kind: "success", text: "Approval unblocked the mission — the buyer continuation started the A2A payment." });
+                }
+              })
+              .catch(() => {
+                // The manual continuation button and the poll still show
+                // the authoritative state; nothing is faked here.
+                autoContinuedRef.current.delete(orderId);
+              });
+          }
         } catch {
           // transient network errors are tolerated while polling
         }
@@ -341,6 +376,8 @@ export default function ActivityPage() {
     setMissionResult(null);
     setMissionOrderDetail(null);
     stopMissionPoll();
+    missionIdRef.current = null;
+    autoContinuedRef.current = new Set();
     const categories = missionForm.categories
       .split(",")
       .map((c) => c.trim().toLowerCase())
@@ -372,6 +409,7 @@ export default function ActivityPage() {
         buyer_offer_paise: offer,
       });
       setMissionResult(result);
+      missionIdRef.current = result.mission_id;
       setMissionMsg(
         result.action === "READY_FOR_CONSENT"
           ? { kind: "success" as const, text: "Buyer mission completed — every step below is real backend state." }
@@ -390,9 +428,12 @@ export default function ActivityPage() {
   const handleMissionPayment = useCallback(async () => {
     const result = missionResult;
     if (!result?.order_id || !missionOrderDetail) return;
-    // Preferred path: the backend continuation re-verifies the order,
-    // reuses/issues consent, and starts payment through the existing
-    // PaymentService — idempotent under repeated clicks/refreshes.
+    // The ONLY continuation for a persisted AI-buyer mission: the backend
+    // re-verifies the order, reuses/issues single-use consent, and starts
+    // payment through the existing PaymentService. The browser never sends
+    // an amount, order id, or consent id to any payment rail — a stale
+    // browser-captured consent id is exactly what produced the old
+    // "Consent is not available for use" 409.
     if (result.mission_id) {
       try {
         const mission = await continueBuyerMission(result.mission_id);
@@ -405,10 +446,15 @@ export default function ActivityPage() {
       } catch (err) {
         const detail = err instanceof Error && err.message ? err.message : "unknown error";
         setMissionMsg({ kind: "error", text: `Mission could not be continued: ${detail}` });
+        // Self-heal the panel from the authoritative state instead of
+        // leaving a stale button behind.
+        pollMissionOrder(result.order_id);
       }
       return;
     }
-    // Legacy fallback for runs persisted before missions existed.
+    // Legacy fallback for runs persisted before missions existed: the
+    // existing order-payment endpoint with the consent the backend itself
+    // reported as live.
     const consentId = missionOrderDetail.consent_id;
     if (!consentId || missionOrderDetail.consent_status !== "ISSUED") return;
     try {
@@ -417,6 +463,7 @@ export default function ActivityPage() {
     } catch (err) {
       const detail = err instanceof Error && err.message ? err.message : "unknown error";
       setMissionMsg({ kind: "error", text: `Payment could not be started: ${detail}` });
+      pollMissionOrder(result.order_id);
     }
   }, [missionResult, missionOrderDetail, pollMissionOrder]);
 
@@ -509,7 +556,10 @@ export default function ActivityPage() {
         try {
           const missions = await listBuyerMissions();
           const match = missions.find((m) => m.order_id === detail.order_id);
-          if (match) resumed.mission_id = match.mission_id;
+          if (match) {
+            resumed.mission_id = match.mission_id;
+            missionIdRef.current = match.mission_id;
+          }
         } catch {}
         setMissionResult(resumed);
         setMissionOfferGiven(false);
@@ -788,20 +838,48 @@ export default function ActivityPage() {
               <Link href="/dashboard/approvals" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-amber-400 hover:underline whitespace-nowrap">OPEN APPROVALS</Link>
             </div>
           )}
+          {missionOrderDetail && missionOrderDetail.status === "AWAITING_CONSENT" && missionOrderDetail.consent_status === "EXPIRED" && (
+            <div className="mt-4 border border-amber-400/30 bg-amber-400/5 px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <ShieldAlert size={14} className="text-amber-400" />
+                <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-400">CONSENT EXPIRED — the single-use authorization timed out; a fresh consent will be issued under the same rules on continue</span>
+              </div>
+              {missionResult.mission_id && (
+                <button
+                  onClick={handleMissionPayment}
+                  className="w-full h-[36px] border border-amber-400/40 bg-amber-400/10 font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-amber-400 hover:bg-amber-400/20 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Wallet size={12} /> CONTINUE MISSION — RE-ISSUE CONSENT
+                </button>
+              )}
+            </div>
+          )}
           {missionOrderDetail && missionOrderDetail.status === "AWAITING_CONSENT" && missionOrderDetail.consent_status === "ISSUED" && missionOrderDetail.consent_id && (
-            <button
-              onClick={handleMissionPayment}
-              className="mt-4 w-full h-[36px] bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Wallet size={12} /> START PAYMENT {formatPaise(missionOrderDetail.amount_paise)}
-            </button>
+            missionResult.mission_id ? (
+              <button
+                onClick={handleMissionPayment}
+                className="mt-4 w-full h-[36px] bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Wallet size={12} /> PAYMENT READY — CONTINUE MISSION {formatPaise(missionOrderDetail.amount_paise)}
+              </button>
+            ) : (
+              <button
+                onClick={handleMissionPayment}
+                className="mt-4 w-full h-[36px] bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Wallet size={12} /> CONTINUE TO PAYMENT {formatPaise(missionOrderDetail.amount_paise)}
+              </button>
+            )
           )}
           {missionOrderDetail && missionOrderDetail.status === "PAYMENT_PENDING" && (
             <div className="mt-4 space-y-2">
-              <div className="border border-[var(--bb-line)] px-4 py-3 flex items-center justify-between">
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-yellow-400">AWAITING SIGNED PROVIDER WEBHOOK</span>
+              <div className="border border-yellow-400/30 bg-yellow-400/5 px-4 py-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-[var(--font-mono)] text-[0.6rem] text-yellow-400">PAYMENT AUTHORIZATION REQUIRED</div>
+                  <div className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-3)] mt-0.5">The buyer&apos;s provider authorization is pending — the order settles ONLY on a signature-verified webhook</div>
+                </div>
                 {missionOrderDetail.payment_url && (
-                  <a href={missionOrderDetail.payment_url} target="_blank" rel="noopener noreferrer" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:underline">REOPEN PAYMENT LINK ↗</a>
+                  <a href={missionOrderDetail.payment_url} target="_blank" rel="noopener noreferrer" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:underline whitespace-nowrap">OPEN PAYMENT LINK ↗</a>
                 )}
               </div>
               {DEMO_MODE && (

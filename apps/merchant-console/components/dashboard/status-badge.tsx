@@ -48,14 +48,16 @@ export function PolicyBadge({ verdict }: { verdict: "ALLOW" | "DENY" | "NEEDS_HU
 
 export function ConsentBadge({ status }: { status: string }) {
   // Consumed (CONSENTED in detail, CONSUMED in lists) reads green, a live
-  // ISSUED consent reads blue, and NOT_ISSUED/NONE stay muted grey — "not
-  // yet issued" must never render as if issued.
+  // ISSUED consent reads blue, EXPIRED reads amber (the single-use window
+  // passed — a stale ISSUED label here is what left dead payment buttons
+  // on screen), and NOT_ISSUED/NONE stay muted grey.
   const isApproved = status === "CONSENTED" || status === "CONSUMED";
   const isIssued = status === "ISSUED";
+  const isExpired = status === "EXPIRED";
   return (
     <span
       className={`inline-flex items-center gap-1 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase ${
-        isApproved ? "text-green-400" : isIssued ? "text-blue-400" : "text-[var(--bb-grey-3)]"
+        isApproved ? "text-green-400" : isIssued ? "text-blue-400" : isExpired ? "text-amber-400" : "text-[var(--bb-grey-3)]"
       }`}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-current" />

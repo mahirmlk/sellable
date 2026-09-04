@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ShieldCheck, CheckCircle, XCircle, RefreshCw, ArrowRight } from "lucide-react";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatTimestamp } from "@/lib/formatters";
-import { getConsoleApprovals, approveConsoleOrder, rejectConsoleOrder, type ConsoleApproval } from "@/lib/api";
+import { getConsoleApprovals, approveConsoleOrder, rejectConsoleOrder, continueBuyerMission, type ConsoleApproval } from "@/lib/api";
 
 function mapApproval(a: ConsoleApproval) {
   return {
@@ -68,8 +68,24 @@ export default function ApprovalsPage() {
     setBusyOrders((prev) => new Set(prev).add(orderId));
     setActionError(null);
     try {
-      if (kind === "approve") await approveConsoleOrder(orderId);
-      else await rejectConsoleOrder(orderId);
+      if (kind === "approve") {
+        const res = await approveConsoleOrder(orderId);
+        // A2A buyer missions resume automatically: approval unblocks the
+        // persisted mission and the backend continuation (consent reuse /
+        // re-issue + payment start through the existing PaymentService)
+        // proceeds without handing the checkout back to the merchant.
+        // Human chat orders carry no mission_id and keep their own flow.
+        if (res.mission_id) {
+          try {
+            await continueBuyerMission(res.mission_id);
+          } catch {
+            // Non-fatal: the mission stays resumable from Activity, and the
+            // backend re-derives its state from the authoritative order.
+          }
+        }
+      } else {
+        await rejectConsoleOrder(orderId);
+      }
       setApprovals((prev) => {
         const acted = prev.find((a) => a.orderId === orderId);
         if (acted) {

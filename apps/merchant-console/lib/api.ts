@@ -694,7 +694,7 @@ export async function getConsoleApprovals(): Promise<ConsoleApproval[]> {
 
 export async function approveConsoleOrder(
   orderId: string
-): Promise<{ status: string; order_id: string; consent_id: string }> {
+): Promise<{ status: string; order_id: string; consent_id: string; mission_id: string | null }> {
   return apiFetch(`/console/approvals/${orderId}/approve`, { method: "POST" });
 }
 

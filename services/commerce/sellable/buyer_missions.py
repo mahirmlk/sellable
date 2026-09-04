@@ -24,6 +24,7 @@ last-known pointer, never trusted over the order.
 from __future__ import annotations
 
 from agents.buyer.agent import BuyerResult
+from sellable.consent import ConsentValidationError
 from sellable.contracts import (
     BuyerMission,
     BuyerMissionState,
@@ -57,19 +58,19 @@ class BuyerMissionService:
     ) -> str | None:
         """Persist a mission pointer after a buyer run that created an order.
 
-        Runs that never produced an order (DENIED / NO_MATCH) have nothing
-        to continue, so they are not persisted. Repeated runs under the same
-        trace update the same row (idempotent — never a second mission).
+        Runs that never produced an order (DENIED / NO_MATCH) are persisted
+        too, as DENIED — the mission lifecycle stays truthful in the console.
+        Repeated runs under the same trace update the same row (idempotent —
+        never a second mission).
         """
-        if not result.order_id:
-            return None
         cart = result.seller_decision.cart if result.seller_decision else None
         negotiated = cart.total_paise if cart is not None else None
-        state = (
-            BuyerMissionState.NEEDS_HUMAN_APPROVAL
-            if result.action == "NEEDS_HUMAN_APPROVAL"
-            else BuyerMissionState.CONSENT_READY
-        )
+        if result.action == "NEEDS_HUMAN_APPROVAL":
+            state = BuyerMissionState.NEEDS_HUMAN_APPROVAL
+        elif result.order_id:
+            state = BuyerMissionState.CONSENT_READY
+        else:
+            state = BuyerMissionState.DENIED
         record = self._repo.save(
             mission_id=result.trace_id.replace("trc_", "bmiss_", 1),
             merchant_id=merchant_id,
@@ -105,6 +106,10 @@ class BuyerMissionService:
             current_state=BuyerMissionState.CONSENT_READY.value,
             consent_id=consent_id,
         )
+
+    def find_for_order(self, merchant_id: str, order_id: str):
+        """The mission row linked to an order, if any (approval wiring)."""
+        return self._repo.for_order(merchant_id, order_id)
 
     # ------------------------------------------------------------------
     # Derived state (order is the source of truth)
@@ -192,6 +197,8 @@ class BuyerMissionService:
         order: Order,
         state: BuyerMissionState,
         required_action: str,
+        *,
+        consent_id: str | None = None,
     ) -> ConsoleBuyerMission:
         return ConsoleBuyerMission(
             mission_id=record.mission_id,
@@ -202,7 +209,9 @@ class BuyerMissionService:
             state=state,
             required_action=required_action,
             order_status=order.status,
-            consent_id=record.consent_id,
+            # The consent actually in force for this continuation — never a
+            # stale pointer left over from before a re-issue.
+            consent_id=consent_id if consent_id is not None else record.consent_id,
             mission_message=record.mission_message,
             budget_paise=record.budget_paise,
             requested_sku=record.requested_sku,
@@ -216,13 +225,14 @@ class BuyerMissionService:
 
     def _refresh_pointer(
         self, record, *, state: BuyerMissionState, consent_id: str | None = None
-    ) -> None:
-        self._repo.touch(
+    ):
+        updated = self._repo.touch(
             record.mission_id,
             record.merchant_id,
             current_state=state.value,
             consent_id=consent_id,
         )
+        return updated or record
 
     # ------------------------------------------------------------------
     # Read model
@@ -244,13 +254,36 @@ class BuyerMissionService:
         reports VERIFIED.
         """
         record = self._owned(mission_id, merchant_id)
+        if record.order_id is None:
+            # A DENIED mission has no order — nothing resumable, and saying
+            # otherwise would be a lie.
+            return ConsoleBuyerMission(
+                mission_id=record.mission_id,
+                merchant_id=record.merchant_id,
+                trace_id=record.trace_id,
+                buyer_agent_id=record.buyer_agent_id,
+                order_id=None,
+                state=BuyerMissionState.DENIED,
+                required_action="none",
+                order_status=None,
+                consent_id=None,
+                mission_message=record.mission_message,
+                budget_paise=record.budget_paise,
+                requested_sku=record.requested_sku,
+                quantity=record.quantity,
+                buyer_offer_paise=record.buyer_offer_paise,
+                negotiated_amount_paise=record.negotiated_amount_paise,
+                payment_url=None,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
         order = self._order_for(core, record)
         verified = self._payment_verified(core, order)
         if not verified and order.status in _PAID_STATUSES and buyer_agent is not None:
             buyer_agent.verify_payment(order.order_id, trace_id=order.trace_id)
             verified = True
         state, required_action = self._derive(core, order, verified=verified)
-        self._refresh_pointer(record, state=state)
+        record = self._refresh_pointer(record, state=state)
         return self._payload(record, order, state, required_action)
 
     def list_snapshots(
@@ -300,6 +333,10 @@ class BuyerMissionService:
         EXISTING PaymentService — which is itself idempotent per order.
         """
         record = self._owned(mission_id, merchant_id)
+        if record.order_id is None:
+            raise ValueError(
+                "This buyer mission was denied by policy — there is no order to continue"
+            )
         order = self._order_for(core, record)
         verified = self._payment_verified(core, order)
         state, required_action = self._derive(core, order, verified=verified)
@@ -316,16 +353,36 @@ class BuyerMissionService:
             # The existing payment service re-checks consent, consumes it
             # exactly once, transitions the order, and reuses any live
             # provider link — repeated calls cannot duplicate a payment.
-            attempt = payments.start_payment(
-                order_id=order.order_id, consent_id=consent_id, commerce=core
-            )
+            try:
+                attempt = payments.start_payment(
+                    order_id=order.order_id, consent_id=consent_id, commerce=core
+                )
+            except ConsentValidationError:
+                # The usable consent vanished between the check and the
+                # consume (expiry raced the click, or another replica
+                # consumed it first). NEVER disable the consent check:
+                # re-derive the truthful state and, only if the order is
+                # still startable, issue one fresh consent and retry once.
+                order = core.get_order(order.order_id)
+                verified = self._payment_verified(core, order)
+                state, required_action = self._derive(core, order, verified=verified)
+                if state is not BuyerMissionState.APPROVED:
+                    record = self._refresh_pointer(record, state=state)
+                    return self._payload(record, order, state, required_action)
+                consent = core.issue_consent(order.order_id)
+                consent_id = consent.consent_id
+                attempt = payments.start_payment(
+                    order_id=order.order_id, consent_id=consent_id, commerce=core
+                )
             order = core.get_order(order.order_id)
             state = BuyerMissionState.PAYMENT_PENDING
             required_action = "await_webhook"
-            self._refresh_pointer(record, state=state, consent_id=consent_id)
-            payload = self._payload(record, order, state, required_action)
+            record = self._refresh_pointer(record, state=state, consent_id=consent_id)
+            payload = self._payload(
+                record, order, state, required_action, consent_id=consent_id
+            )
             payload = payload.model_copy(update={"payment_url": attempt.payment_url})
             return payload
 
-        self._refresh_pointer(record, state=state, consent_id=record.consent_id)
+        record = self._refresh_pointer(record, state=state, consent_id=record.consent_id)
         return self._payload(record, order, state, required_action)

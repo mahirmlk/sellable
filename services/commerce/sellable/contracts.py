@@ -260,6 +260,7 @@ class BuyerMissionState(StrEnum):
     PAYMENT_FAILED = "PAYMENT_FAILED"
     ABORTED = "ABORTED"
     REFUNDED = "REFUNDED"
+    DENIED = "DENIED"
 
 
 class CheckoutSessionStatus(StrEnum):
@@ -499,7 +500,8 @@ class ConsoleBuyerMission(StrictModel):
     merchant_id: str
     trace_id: str
     buyer_agent_id: str
-    order_id: str
+    # None for DENIED missions (policy refused before any order existed).
+    order_id: str | None = None
     state: BuyerMissionState
     required_action: str = "none"
     order_status: OrderStatus | None = None

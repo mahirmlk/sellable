@@ -21,6 +21,7 @@ from sellable.buyer_missions import (
     BuyerMissionService,
     UnknownBuyerMissionError,
 )
+from sellable.consent import ConsentValidationError
 from sellable.contracts import (
     BuyerMission,
     BuyerMissionState,
@@ -193,18 +194,32 @@ def test_hitl_run_persists_mission_pointing_at_same_order(
     assert snapshot.trace_id == trace
 
 
-def test_non_order_run_is_not_persisted(core_and_engine, buyer, mission_service) -> None:
+def test_denied_run_is_persisted_as_denied_and_cannot_continue(
+    core_and_engine, buyer, mission_service
+) -> None:
     core, _ = core_and_engine
     result = buyer.run(
         hitl_mission(budget_ceiling_paise=1_000, requested_sku=None), trace_id=new_trace()
     )
     assert result.action is BuyerAction.DENIED
-    assert (
-        mission_service.record_run(
-            merchant_id=core.merchant_scope, mission=hitl_mission(), result=result
-        )
-        is None
+    mission_id = mission_service.record_run(
+        merchant_id=core.merchant_scope, mission=hitl_mission(), result=result
     )
+    assert mission_id is not None
+
+    snapshot = mission_service.snapshot(
+        core=core, mission_id=mission_id, merchant_id=core.merchant_scope
+    )
+    assert snapshot.state is BuyerMissionState.DENIED
+    assert snapshot.order_id is None
+
+    with pytest.raises(ValueError, match="no order to continue"):
+        mission_service.continue_mission(
+            core=core,
+            payments=payments,
+            mission_id=mission_id,
+            merchant_id=core.merchant_scope,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +349,7 @@ def test_continue_reuses_valid_consent_without_reissue(
     assert core.consent_service.get(consent.consent_id).status is ConsentStatus.USED
 
 
-def test_continue_reissues_expired_consent(
+def test_continue_reissues_expired_consent_and_reports_fresh_consent_id(
     core_and_engine, buyer, mission_service, payments
 ) -> None:
     core, _ = core_and_engine
@@ -358,11 +373,96 @@ def test_continue_reissues_expired_consent(
     )
 
     assert snapshot.state is BuyerMissionState.PAYMENT_PENDING
+    # The payload must name the consent ACTUALLY consumed — never the stale
+    # pointer (the exact bug that left the UI showing a dead consent_id).
     assert snapshot.consent_id != stale.consent_id
+    assert snapshot.consent_id is not None
+    assert core.consent_service.get(snapshot.consent_id).status is ConsentStatus.USED
     events = core.ledger.for_trace(result.trace_id)
     issued = [e for e in events if e.action == "consent.issued"]
     assert len(issued) == 2  # the expired one + the fresh valid one
     assert core.get_order(order_id).status is OrderStatus.PAYMENT_PENDING
+
+
+def test_continue_self_heals_when_consent_dies_mid_start(
+    core_and_engine, buyer, mission_service, payments
+) -> None:
+    """The reported 409 race: the usable consent dies between the
+    availability check and consume. The continuation must re-derive the
+    truthful state, issue ONE fresh consent, and retry — never surface the
+    consent error or disable the check."""
+    core, _ = core_and_engine
+    result = buyer.run(hitl_mission(), trace_id=new_trace())
+    mission_id = mission_service.record_run(
+        merchant_id=core.merchant_scope, mission=hitl_mission(), result=result
+    )
+    order_id = result.order_id
+
+    core.approve_order(order_id)
+    first = core.issue_consent(order_id)
+
+    class ConsentDiesDuringStart:
+        """First start_payment flips the consent EXPIRED and raises — the
+        exact failure mode behind 'Consent is not available for use'."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def start_payment(self, *, order_id: str, consent_id: str, commerce=None):
+            self.calls += 1
+            if self.calls == 1:
+                current = core.consent_service.get(consent_id)
+                core.consent_service._consents[consent_id] = current.model_copy(
+                    update={"status": ConsentStatus.EXPIRED}
+                )
+                raise ConsentValidationError("Consent has expired")
+            return payments.start_payment(
+                order_id=order_id, consent_id=consent_id, commerce=commerce
+            )
+
+    flaky = ConsentDiesDuringStart()
+    snapshot = mission_service.continue_mission(
+        core=core,
+        payments=flaky,  # type: ignore[arg-type]
+        mission_id=mission_id,
+        merchant_id=core.merchant_scope,
+        buyer_agent=buyer,
+    )
+
+    assert flaky.calls == 2
+    assert snapshot.state is BuyerMissionState.PAYMENT_PENDING
+    assert snapshot.consent_id != first.consent_id
+    assert core.get_order(order_id).status is OrderStatus.PAYMENT_PENDING
+    # Still exactly one live payment attempt for the SAME order.
+    assert core.ledger.count_actions(result.trace_id, "payment.attempted") == 1
+
+
+def test_transaction_summary_reports_consent_expiry_truthfully(
+    core_and_engine, buyer, mission_service
+) -> None:
+    """consent.issued with no consent.used but a passed expiry must read
+    EXPIRED — reporting ISSUED forever is what kept the dead START PAYMENT
+    button visible while the backend rejected every click."""
+    from datetime import datetime, timedelta, timezone
+
+    from sellable import main as main_module
+
+    core, _ = core_and_engine
+    result = buyer.run(hitl_mission(), trace_id=new_trace())
+    core.approve_order(result.order_id)
+    consent = core.issue_consent(result.order_id)
+    order = core.get_order(result.order_id)
+    events = list(core.ledger.for_trace(result.trace_id))
+
+    live = main_module._summarize_order(order, events, core.consent_service.get)
+    assert live["consent_status"] == "ISSUED"
+    assert live["consent_id"] == consent.consent_id
+
+    core.consent_service._consents[consent.consent_id] = consent.model_copy(
+        update={"expires_at": datetime.now(timezone.utc) - timedelta(seconds=1)}
+    )
+    expired = main_module._summarize_order(order, events, core.consent_service.get)
+    assert expired["consent_status"] == "EXPIRED"
 
 
 def test_rejected_mission_never_pays(
