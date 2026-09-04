@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
-import { RefreshCw, Radio, Play, X, Wallet, ShieldAlert, ExternalLink } from "lucide-react";
+import { RefreshCw, Radio, Play, X, Wallet, ShieldAlert, ExternalLink, History } from "lucide-react";
 import { ActorBadge, ActorIcon } from "@/components/dashboard/actor-badge";
 import { formatTimestamp, formatPaise } from "@/lib/formatters";
 import { type ActorType, type LedgerEvent } from "@/lib/types/domain";
@@ -13,8 +13,12 @@ import {
   getConsoleTransactionDetail,
   consoleStartPayment,
   simulatePaymentCapture,
+  getConsolePolicy,
+  getConsoleCatalogItem,
   type BuyerResultPayload,
   type ConsoleTransactionDetail,
+  type ConsolePolicySettings,
+  type Product,
 } from "@/lib/api";
 
 const actorFilters: { label: string; value: ActorType | "all" }[] = [
@@ -115,6 +119,51 @@ function mapEvent(e: { event_id: string; trace_id: string; timestamp: string; ac
   };
 }
 
+interface MissionHistoryItem {
+  traceId: string;
+  mission: string;
+  budgetPaise: number | null;
+  timestamp: string;
+  orderId: string | null;
+  held: boolean;
+  amountPaise: number | null;
+}
+
+/**
+ * Derive recent buyer missions from the ledger events already loaded in the
+ * feed: one entry per `buyer.mission_received` trace, joined with the order
+ * the mission produced (`buyer.order_requested` / `buyer.order_held`).
+ * Newest-first, matching the feed order.
+ */
+function deriveMissionHistory(events: LedgerEvent[]): MissionHistoryItem[] {
+  const byTrace = new Map<string, MissionHistoryItem>();
+  for (const e of events) {
+    if (e.action === "buyer.mission_received") {
+      const out = (e.output ?? {}) as Record<string, unknown>;
+      byTrace.set(e.traceId, {
+        traceId: e.traceId,
+        mission:
+          (e.reasoningSummary ?? "").replace(/^Received a buyer mission:\s*/, "").trim() || "—",
+        budgetPaise: typeof out.budget_ceiling_paise === "number" ? out.budget_ceiling_paise : null,
+        timestamp: e.timestamp,
+        orderId: null,
+        held: false,
+        amountPaise: null,
+      });
+    } else if (
+      (e.action === "buyer.order_requested" || e.action === "buyer.order_held") &&
+      byTrace.has(e.traceId)
+    ) {
+      const item = byTrace.get(e.traceId)!;
+      const out = (e.output ?? {}) as Record<string, unknown>;
+      if (typeof out.order_id === "string") item.orderId = out.order_id;
+      if (typeof out.amount_paise === "number") item.amountPaise = out.amount_paise;
+      item.held = e.action === "buyer.order_held";
+    }
+  }
+  return [...byTrace.values()];
+}
+
 export default function ActivityPage() {
   const [actorFilter, setActorFilter] = useState<ActorType | "all">("all");
   const [typeFilter, setTypeFilter] = useState("All Events");
@@ -133,6 +182,16 @@ export default function ActivityPage() {
   const missionPollRef = useRef<number | null>(null);
   const missionPollDeadlineRef = useRef<number>(0);
   const seenIds = useRef<Set<string>>(new Set());
+  // Merchant policy context: prefills the mission form's categories and shows
+  // the real floor/HITL caps next to it (same source the chat panel uses).
+  const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
+  const [resumingTrace, setResumingTrace] = useState<string | null>(null);
+
+  useEffect(() => {
+    getConsolePolicy().then(setPolicy).catch(() => {
+      // Policy context is additive — the form still works with defaults.
+    });
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -279,12 +338,22 @@ export default function ActivityPage() {
     const quantity = Math.max(1, Math.round(parseFloat(missionForm.quantity) || 1));
     const offer = parsePaise(missionForm.offer);
     setMissionOfferGiven(offer !== null);
+    // Empty categories now mean the merchant's real policy categories —
+    // the old hardcoded trio only applies when the policy is unreachable.
+    const policyCategories = (policy?.allowed_categories ?? [])
+      .map((c) => c.toLowerCase())
+      .filter(Boolean);
     try {
       const result = await consoleRunBuyerMission({
         buyer_agent_id: missionForm.buyer.trim() || "buyer_demo_01",
         message: missionText,
         budget_ceiling_paise: budget,
-        allowed_categories: categories.length > 0 ? categories : ["accessories", "gifting", "snacks"],
+        allowed_categories:
+          categories.length > 0
+            ? categories
+            : policyCategories.length > 0
+              ? policyCategories
+              : ["accessories", "gifting", "snacks"],
         purpose: missionForm.purpose.trim() || missionText.slice(0, 280),
         expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
         request_upsell: missionForm.upsell,
@@ -306,7 +375,7 @@ export default function ActivityPage() {
     } finally {
       setRunningMission(false);
     }
-  }, [fetchData, runningMission, missionForm, pollMissionOrder, stopMissionPoll]);
+  }, [fetchData, runningMission, missionForm, pollMissionOrder, stopMissionPoll, policy]);
 
   const handleMissionPayment = useCallback(async () => {
     const result = missionResult;
@@ -332,6 +401,95 @@ export default function ActivityPage() {
       // backend may reject the simulation; polling reflects real state
     }
   }, [missionResult, pollMissionOrder]);
+
+  const missionHistory = useMemo(() => deriveMissionHistory(events), [events]);
+
+  /**
+   * Resume a past mission to its order: rebuild the result panel from the
+   * authoritative order + the trace's own ledger events, then continue the
+   * lifecycle exactly where it stopped (payment, approval, replay).
+   */
+  const handleResumeMission = useCallback(
+    async (item: MissionHistoryItem) => {
+      if (!item.orderId || resumingTrace) return;
+      setResumingTrace(item.traceId);
+      try {
+        const detail = await getConsoleTransactionDetail(item.orderId);
+        const evs = detail.events ?? [];
+        const has = (action: string) => evs.some((e) => e.action === action);
+        const steps: string[] = [];
+        if (has("buyer.mission_received") || has("buyer.discovered_merchant")) steps.push("DISCOVER");
+        if (has("buyer.catalog_researched")) steps.push("RESEARCH");
+        if (has("quote.created") || has("quote.received")) steps.push("REQUEST_QUOTE");
+        const items = detail.items ?? [];
+        const cart = items.length > 0
+          ? {
+              mandate_id: "",
+              intent_ref: "",
+              items: items.map((it) => ({
+                sku: it.sku,
+                quantity: it.quantity,
+                unit_price_paise: it.unit_price_paise,
+                offered_price_paise: it.offered_price_paise,
+                line_total_paise: it.line_total_paise,
+              })),
+              subtotal_paise: detail.amount_paise,
+              discount_paise: 0,
+              total_paise: detail.amount_paise,
+              upsell_offered: false,
+              upsell_rationale: null,
+              negotiation_round: 0,
+            }
+          : null;
+        // Product title for the resumed card (best-effort; SKU already shows).
+        let selectedProduct: Product | null = null;
+        try {
+          if (items[0]?.sku) selectedProduct = await getConsoleCatalogItem(items[0].sku);
+        } catch {}
+        const action: BuyerResultPayload["action"] =
+          detail.status === "ABORTED" || detail.status === "PAYMENT_FAILED"
+            ? "DENIED"
+            : detail.policy_verdict === "NEEDS_HUMAN_APPROVAL" && !detail.consent_id
+              ? "NEEDS_HUMAN_APPROVAL"
+              : "READY_FOR_CONSENT";
+        const resumed: BuyerResultPayload = {
+          trace_id: detail.trace_id,
+          action,
+          buyer_summary: `Resumed from the ledger — mission restored for trace ${detail.trace_id}. The lifecycle continues from the authoritative order.`,
+          merchant_manifest: {},
+          seller_decision: cart
+            ? {
+                trace_id: detail.trace_id,
+                action: "QUOTE_READY",
+                response_message: "",
+                cart,
+                policy_decision: null,
+                selected_product: selectedProduct,
+                upsell_product: null,
+                tool_calls: [],
+              }
+            : null,
+          order_id: detail.order_id,
+          consent_id: detail.consent_id ?? null,
+          steps,
+        };
+        setMissionResult(resumed);
+        setMissionOfferGiven(false);
+        setMissionOrderDetail(detail);
+        if (!ORDER_TERMINAL.includes(detail.status)) pollMissionOrder(detail.order_id);
+        setMissionMsg({
+          kind: "success",
+          text: `Mission resumed — order ${detail.order_id} restored from the ledger (${detail.status}).`,
+        });
+      } catch (err) {
+        const detailText = err instanceof Error && err.message ? err.message : "unknown error";
+        setMissionMsg({ kind: "error", text: `Mission could not be resumed: ${detailText}` });
+      } finally {
+        setResumingTrace(null);
+      }
+    },
+    [pollMissionOrder, resumingTrace]
+  );
 
   const filtered = events.filter((e) => {
     if (actorFilter !== "all" && e.actor !== actorFilter) return false;
@@ -413,7 +571,11 @@ export default function ActivityPage() {
               <input
                 value={missionForm.categories}
                 onChange={(e) => setMissionForm((f) => ({ ...f, categories: e.target.value }))}
-                placeholder="accessories, snacks — defaults to all"
+                placeholder={
+                  policy && policy.allowed_categories.length > 0
+                    ? `${policy.allowed_categories.join(", ")} — empty = your policy`
+                    : "accessories, snacks — defaults to all"
+                }
                 className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
               />
             </label>
@@ -448,6 +610,28 @@ export default function ActivityPage() {
                   className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 tabular-nums placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
                 />
               </label>
+            </div>
+            {/* Real policy context — same source the chat panel uses, so a
+                mission can be framed against the merchant's actual caps. */}
+            <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-3 border border-[var(--bb-line-soft)] bg-[var(--bb-black)] px-3 py-2.5">
+              <div>
+                <div className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)] mb-0.5">ALLOWED CATEGORIES</div>
+                <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)] truncate" title={policy?.allowed_categories.join(", ")}>
+                  {policy && policy.allowed_categories.length > 0 ? policy.allowed_categories.join(", ") : "—"}
+                </div>
+              </div>
+              <div>
+                <div className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)] mb-0.5">HITL THRESHOLD</div>
+                <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)] tabular-nums">
+                  {policy ? `${formatPaise(policy.human_approval_threshold_paise)} — held for approval above this` : "—"}
+                </div>
+              </div>
+              <div>
+                <div className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)] mb-0.5">MAX ITEM VALUE</div>
+                <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)] tabular-nums">
+                  {policy ? formatPaise(policy.max_single_item_value_paise) : "—"}
+                </div>
+              </div>
             </div>
             <div className="flex items-end justify-between gap-3 md:col-span-2">
               <button
@@ -501,7 +685,11 @@ export default function ActivityPage() {
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Product</span>
-              <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)]">{missionResult.seller_decision?.cart?.items?.[0]?.sku ?? "—"}</span>
+              <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)] text-right truncate max-w-[70%]" title={missionResult.seller_decision?.selected_product?.title ?? undefined}>
+                {missionResult.seller_decision?.selected_product
+                  ? `${missionResult.seller_decision.selected_product.title} · ${missionResult.seller_decision.selected_product.sku}`
+                  : missionResult.seller_decision?.cart?.items?.[0]?.sku ?? "—"}
+              </span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Final price</span>
@@ -530,6 +718,12 @@ export default function ActivityPage() {
               <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-2)]">Consent ID</span>
               <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-2)]">{missionResult.consent_id ?? missionOrderDetail?.consent_id ?? "—"}</span>
             </div>
+            {missionResult.seller_decision?.response_message && (
+              <div className="md:col-span-2 border-l-2 border-[var(--bb-orange)]/40 pl-3 py-1">
+                <div className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)] mb-0.5">SELLER REPLY</div>
+                <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-1)] leading-relaxed">{missionResult.seller_decision.response_message}</div>
+              </div>
+            )}
             {missionResult.buyer_summary && (
               <div className="md:col-span-2 border-l-2 border-[var(--bb-line-soft)] pl-3 py-1">
                 <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-2)] leading-relaxed">{missionResult.buyer_summary}</div>
@@ -577,6 +771,50 @@ export default function ActivityPage() {
               VIEW REPLAY
             </Link>
           )}
+        </div>
+      )}
+
+      {/* Recent missions — derived from buyer.mission_received ledger events;
+          resume-to-order restores the lifecycle from the authoritative order. */}
+      {missionHistory.length > 0 && (
+        <div className="border border-[var(--bb-line)] overflow-hidden stagger-child">
+          <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center gap-2">
+            <History size={13} className="text-[var(--bb-grey-3)]" />
+            <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">RECENT MISSIONS</span>
+            <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">DERIVED FROM buyer.mission_received LEDGER EVENTS · RESUME REBUILDS THE PANEL FROM THE ORDER</span>
+          </div>
+          {missionHistory.slice(0, 8).map((m, i) => (
+            <div key={m.traceId} className={`px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 hover:bg-[var(--bb-panel)] transition-colors ${i < Math.min(missionHistory.length, 8) - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
+              <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] w-[58px] shrink-0">{formatTimestamp(m.timestamp)}</span>
+              <div className="flex-1 min-w-0">
+                <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-2)] truncate" title={m.mission}>{m.mission}</div>
+                <div className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)] mt-0.5 truncate">
+                  {m.budgetPaise !== null ? `budget ${formatPaise(m.budgetPaise)} · ` : ""}trace {m.traceId}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {m.orderId ? (
+                  <>
+                    <span className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase px-1.5 py-0.5 border ${m.held ? "border-amber-400/40 text-amber-400" : "border-green-400/40 text-green-400"}`}>
+                      {m.held ? "HELD" : "ORDER"}
+                    </span>
+                    <button
+                      onClick={() => void handleResumeMission(m)}
+                      disabled={resumingTrace !== null}
+                      className="inline-flex items-center gap-1 h-[28px] px-2.5 border border-[var(--bb-orange)]/40 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <Play size={10} /> {resumingTrace === m.traceId ? "RESUMING…" : "RESUME"}
+                    </button>
+                    <Link href={`/dashboard/transactions/${m.orderId}`} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all">
+                      <ExternalLink size={10} /> ORDER
+                    </Link>
+                  </>
+                ) : (
+                  <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase text-[var(--bb-grey-4)] px-1.5 py-0.5 border border-[var(--bb-line)]">NO ORDER</span>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

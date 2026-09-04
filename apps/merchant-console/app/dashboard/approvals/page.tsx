@@ -19,7 +19,13 @@ function mapApproval(a: ConsoleApproval) {
 }
 
 export default function ApprovalsPage() {
-  const [approvals, setApprovals] = useState<Array<{ orderId: string; buyerId: string; amountPaise: number; reason: string; requestedAt: string; status: string }>>([]);
+  type ApprovalRow = { orderId: string; buyerId: string; amountPaise: number; reason: string; requestedAt: string; status: string };
+  // `approvals` mirrors the backend queue (always PENDING rows); `reviewed`
+  // is this session's acted-upon record — the approval/rejection itself is
+  // persisted on the order backend-side, and the refetch below reconciles
+  // the pending list with backend truth.
+  const [approvals, setApprovals] = useState<ApprovalRow[]>([]);
+  const [reviewed, setReviewed] = useState<ApprovalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -27,24 +33,34 @@ export default function ApprovalsPage() {
   // request twice (the second call 400s after the first one lands).
   const [busyOrders, setBusyOrders] = useState<Set<string>>(new Set());
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (silent = false) => {
+    // Polls run silently: only the opening fetch may flip the full-page
+    // loading state, otherwise the queue flickers every 12 seconds.
+    if (!silent) setLoading(true);
     setLoadError(null);
     try {
       const data = await getConsoleApprovals();
       setApprovals(data.map(mapApproval));
     } catch (err) {
+      if (silent) return; // keep the last good list on background failures
       setLoadError(
         err instanceof TypeError
           ? "Backend unreachable — approvals could not be loaded."
           : "Approvals could not be loaded from the backend."
       );
-    } finally { setLoading(false); }
+    } finally { if (!silent) setLoading(false); }
   }, []);
 
   useEffect(() => {
     const t = window.setTimeout(() => void fetchData(), 0);
     return () => window.clearTimeout(t);
+  }, [fetchData]);
+
+  // Lightweight poll while the page is open: buyer missions held for HITL
+  // appear here without a manual refresh (12s, silent, single interval).
+  useEffect(() => {
+    const timer = window.setInterval(() => void fetchData(true), 12_000);
+    return () => window.clearInterval(timer);
   }, [fetchData]);
 
   const runAction = async (orderId: string, kind: "approve" | "reject") => {
@@ -54,13 +70,19 @@ export default function ApprovalsPage() {
     try {
       if (kind === "approve") await approveConsoleOrder(orderId);
       else await rejectConsoleOrder(orderId);
-      setApprovals((prev) =>
-        prev.map((a) =>
-          a.orderId === orderId
-            ? { ...a, status: kind === "approve" ? "APPROVED" : "REJECTED" }
-            : a
-        )
-      );
+      setApprovals((prev) => {
+        const acted = prev.find((a) => a.orderId === orderId);
+        if (acted) {
+          setReviewed((r) => [
+            { ...acted, status: kind === "approve" ? "APPROVED" : "REJECTED" },
+            ...r.filter((x) => x.orderId !== orderId),
+          ]);
+        }
+        return prev.filter((a) => a.orderId !== orderId);
+      });
+      // The decision is persisted on the order — refresh immediately so the
+      // pending queue reflects backend truth without waiting for the poll.
+      await fetchData(true);
     } catch (err) {
       const unreachable = err instanceof TypeError;
       setActionError(
@@ -80,8 +102,7 @@ export default function ApprovalsPage() {
   const handleApprove = (orderId: string) => void runAction(orderId, "approve");
   const handleReject = (orderId: string) => void runAction(orderId, "reject");
 
-  const pending = approvals.filter((a) => a.status === "PENDING");
-  const reviewed = approvals.filter((a) => a.status !== "PENDING");
+  const pending = approvals;
 
   return (
     <div className="p-6 space-y-6">
@@ -90,7 +111,7 @@ export default function ApprovalsPage() {
           <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">Approvals</h1>
           <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">HUMAN APPROVAL REQUIRED</p>
         </div>
-        <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
+        <button onClick={() => void fetchData()} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
         </button>
       </div>

@@ -16,19 +16,25 @@ interface ReplayStage {
 }
 
 const replayStages: ReplayStage[] = [
+  { key: "mission", label: "Mission received", match: (a) => a === "buyer.mission_received" },
   { key: "intent", label: "Buyer intent", match: (a) => a.includes("intent") || a === "buyer.mission_evaluated" },
   { key: "discovery", label: "Discovery", match: (a) => a.includes("discover") },
   { key: "search", label: "Catalog search", match: (a) => a === "catalog.search" || a === "catalog.get" },
+  { key: "research", label: "Catalog research", match: (a) => a === "buyer.catalog_researched" },
   { key: "selection", label: "Product selection", match: (a) => a === "product.selected" || a === "quote.received" },
   { key: "quote", label: "Quote created", match: (a) => a === "quote.created" },
   { key: "negotiation", label: "Negotiation", match: (a) => a.includes("negotiat") },
   { key: "upsell", label: "Upsell", match: (a) => a.includes("upsell") },
   { key: "policy", label: "Policy evaluation", match: (a) => a === "policy.checked" },
-  { key: "consent", label: "Consent", match: (a) => a.includes("consent") },
+  { key: "buyer_response", label: "Buyer response", match: (a) => a === "buyer.response_phrased" },
+  { key: "order_request", label: "Order requested", match: (a) => a === "buyer.order_requested" },
   { key: "order", label: "Order created", match: (a) => a === "order.created" },
+  { key: "order_held", label: "Order held for approval", match: (a) => a === "buyer.order_held" },
+  { key: "consent", label: "Consent", match: (a) => a.includes("consent") },
   { key: "payment", label: "Payment attempted", match: (a) => a.includes("payment.attempted") || a === "payment.pending" },
   { key: "webhook", label: "Webhook verified", match: (a) => a.includes("webhook") },
   { key: "captured", label: "Payment captured", match: (a) => a === "payment.captured" || a === "order.paid" || a === "payment.failed" },
+  { key: "verified", label: "Payment verified by buyer", match: (a) => a === "buyer.payment_verified" },
   { key: "settled", label: "Order settled / ledger", match: (a) => a.includes("settled") || a === "seller.response_ready" },
 ];
 
