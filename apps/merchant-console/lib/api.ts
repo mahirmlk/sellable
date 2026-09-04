@@ -733,23 +733,64 @@ export interface StreamHandlers {
   onError: (error: unknown) => void;
 }
 
-export function streamConsoleEvents(handlers: StreamHandlers): () => void {
-  const controller = new AbortController();
-  let stopped = false;
+export interface StreamOptions {
+  // Bounded reconnects before giving up to the caller's polling fallback.
+  // Delays back off as baseDelayMs * 2^attempt (2s, 4s, 8s … capped at 10s).
+  maxReconnects?: number;
+  baseDelayMs?: number;
+}
 
-  async function read() {
+export function streamConsoleEvents(
+  handlers: StreamHandlers,
+  opts: StreamOptions = {}
+): () => void {
+  const maxReconnects = opts.maxReconnects ?? 3;
+  const baseDelayMs = opts.baseDelayMs ?? 2000;
+  let stopped = false;
+  let attempt = 0;
+  let timer: number | null = null;
+  let controller: AbortController | null = null;
+
+  const clearTimer = () => {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (stopped) return;
+    if (attempt >= maxReconnects) {
+      // Bounded: hand over to the caller's polling fallback exactly once
+      // instead of storming the backend with reconnects.
+      handlers.onError(new Error("Event stream unavailable after retries"));
+      return;
+    }
+    const delay = Math.min(baseDelayMs * 2 ** attempt, 10_000);
+    attempt += 1;
+    timer = window.setTimeout(() => {
+      timer = null;
+      void connect();
+    }, delay);
+  };
+
+  async function connect() {
+    if (stopped) return;
+    controller = new AbortController();
+    const signal = controller.signal;
     let buffer = "";
     try {
       const res = await fetch(`${API_BASE}/activity/stream`, {
-        signal: controller.signal,
+        signal,
         headers: await buildHeaders(),
       });
       if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
+      attempt = 0; // successful handshake resets the backoff
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       for (;;) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done || stopped) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
@@ -765,15 +806,29 @@ export function streamConsoleEvents(handlers: StreamHandlers): () => void {
           }
         }
       }
+      try {
+        reader.cancel();
+      } catch {
+        // Already closed — nothing to release.
+      }
+      // Server closed the stream (idle timeout or deploy): reconnect within
+      // the same bounded budget, do not treat as a fatal error yet.
+      if (!stopped) scheduleReconnect();
     } catch (error) {
-      if (!stopped) handlers.onError(error);
+      // Intentional close (unmount/navigation): stay silent so React
+      // StrictMode remounts and failed handshakes surface honestly.
+      if (stopped || signal.aborted) return;
+      scheduleReconnect();
+      // NOTE: onError fires only from scheduleReconnect after the budget is
+      // spent — exactly once per stream lifetime.
     }
   }
 
-  read();
+  void connect();
   return () => {
     stopped = true;
-    controller.abort();
+    clearTimer();
+    controller?.abort();
   };
 }
 

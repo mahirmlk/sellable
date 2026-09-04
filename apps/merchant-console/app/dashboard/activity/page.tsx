@@ -62,7 +62,9 @@ export default function ActivityPage() {
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await getConsoleEvents(200);
+      // Bounded initial window (backend pagination intact): the feed shows
+      // the recent operational slice; the live stream appends from there.
+      const data = await getConsoleEvents(100);
       if (data.events) {
         const mapped = data.events.map(mapEvent);
         for (const e of mapped) seenIds.current.add(e.eventId);
@@ -77,15 +79,43 @@ export default function ActivityPage() {
     } finally { setLoading(false); }
   }, []);
 
-  // Live SSE with graceful fallback to polling.
+  // Strictly sequenced lifecycle: bounded initial load FIRST (rendered),
+  // then exactly one live stream. The stream client owns bounded reconnects;
+  // this page owns at most one 5s polling fallback, started only after the
+  // initial load has settled and only when the stream reports failure.
+  const streamLiveRef = useRef(false);
+  const initialDoneRef = useRef(false);
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => {
-      void fetchData();
-    }, 0);
+    let cancelled = false;
     let pollTimer: number | null = null;
     let stopStream: (() => void) | null = null;
 
-    const startStream = () => {
+    const startPolling = () => {
+      // Single-poller invariant: never a second interval while one exists,
+      // never before the initial load settles, never after unmount.
+      if (pollTimer !== null || cancelled || !initialDoneRef.current) return;
+      pollTimer = window.setInterval(async () => {
+        try {
+          const data = await getConsoleEvents(20);
+          if (cancelled) return;
+          if (data.events) {
+            // Backend is newest-first: filter unseen, then prepend in the
+            // same order. (Reversing here used to flip fresh batches
+            // oldest-first after every reconnect.)
+            const fresh = data.events.map(mapEvent).filter((e) => !seenIds.current.has(e.eventId));
+            for (const e of fresh) seenIds.current.add(e.eventId);
+            if (fresh.length > 0) setEvents((prev) => [...fresh, ...prev].slice(0, 500));
+          }
+        } catch {}
+      }, 5000);
+    };
+
+    (async () => {
+      await fetchData();
+      if (cancelled) return;
+      initialDoneRef.current = true;
+      if (streamLiveRef.current) return; // never two concurrent streams
+      streamLiveRef.current = true;
       stopStream = streamConsoleEvents({
         onEvent: (event) => {
           setStreamMode("live");
@@ -95,29 +125,19 @@ export default function ActivityPage() {
         },
         onError: () => {
           setStreamMode("polling");
-          if (pollTimer) window.clearInterval(pollTimer);
-          pollTimer = window.setInterval(async () => {
-            try {
-              const data = await getConsoleEvents(20);
-              if (data.events) {
-                // Backend is newest-first: filter unseen, then prepend in the
-                // same order. (Reversing here used to flip fresh batches
-                // oldest-first after every reconnect.)
-                const fresh = data.events.map(mapEvent).filter((e) => !seenIds.current.has(e.eventId));
-                for (const e of fresh) seenIds.current.add(e.eventId);
-                if (fresh.length > 0) setEvents((prev) => [...fresh, ...prev].slice(0, 500));
-              }
-            } catch {}
-          }, 5000);
+          startPolling();
         },
       });
-    };
+    })();
 
-    startStream();
     return () => {
-      window.clearTimeout(initialLoad);
+      cancelled = true;
+      streamLiveRef.current = false;
       if (stopStream) stopStream();
-      if (pollTimer) window.clearInterval(pollTimer);
+      if (pollTimer !== null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
     };
   }, [fetchData]);
 
