@@ -258,20 +258,20 @@ def _ledger_status(ledger: Any) -> dict[str, object]:
 
 
 def _webhook_last_verified_at(ledger: Any) -> str | None:
-    """Latest verified Razorpay webhook reconciliation time from the ledger."""
+    """Latest verified Razorpay webhook reconciliation time from the ledger.
+
+    Single indexed row (was: newest 500 events with full JSON payloads).
+    """
     if ledger is None:
         return None
     try:
-        events = ledger.all_events(limit=500)
+        ts = ledger.last_webhook_time()
     except Exception:  # noqa: BLE001
         return None
-    for record in events:
-        if record.action in ("webhook.reconciled", "payment.captured", "payment.failed"):
-            ts = record.timestamp
-            if isinstance(ts, datetime):
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                return ts.isoformat()
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts.isoformat()
     return None
 
 
@@ -323,13 +323,15 @@ def build_status(
     ledger_status = _ledger_status(ledger)
     payment = _payment_rail_status(ledger)
 
-    orders = []
+    # Counts, not rows: the summary needs totals, so one GROUP BY replaces
+    # loading every order into memory on each status poll.
+    counts: dict[str, int] = {}
     if commerce is not None:
         try:
-            orders = commerce.all_orders()
+            counts = commerce.order_repo.status_counts(commerce.merchant_scope)
         except Exception:  # noqa: BLE001
-            orders = []
-    paid = sum(1 for o in orders if getattr(o, "status", None) is not None and getattr(o, "status").value in ("PAID", "FULFILLED"))
+            counts = {}
+    paid = counts.get("PAID", 0) + counts.get("FULFILLED", 0)
 
     return {
         "seller_agent": seller,
@@ -340,7 +342,7 @@ def build_status(
         "payment_rail": payment,
         "llm": llm,
         "summary": {
-            "total_orders": len(orders),
+            "total_orders": sum(counts.values()),
             "paid_orders": paid,
         },
     }

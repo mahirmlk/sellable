@@ -291,7 +291,7 @@ def test_upsell_disabled_when_cap_is_zero(core_and_engine) -> None:
 class _HallucinatingLLM:
     model = "unit-test-hallucinator"
 
-    def complete(self, messages, *, temperature=None, tools=None) -> str:
+    def complete(self, messages, *, temperature=None, tools=None, timeout=90) -> str:
         return "Grab FAKE-SKU-99 right now for just a hundred rupees!"
 
 

@@ -78,6 +78,50 @@ class LedgerRepository:
         with Session(self._engine) as session:
             return session.scalar(select(func.max(LedgerEventRecord.sequence))) or 0
 
+    def events_for_traces(
+        self, trace_ids: Sequence[str], *, merchant_id: str | None = None
+    ) -> dict[str, list[LedgerEventRecord]]:
+        """All events for many traces in ONE query, grouped by trace.
+
+        Replaces the per-order for_trace loop behind transaction lists and
+        approval queues (N+1 round-trips, the slowest dashboard read).
+        """
+        grouped: dict[str, list[LedgerEventRecord]] = {t: [] for t in trace_ids}
+        if not trace_ids:
+            return grouped
+        with Session(self._engine) as session:
+            query = select(LedgerEventRecord).where(
+                LedgerEventRecord.trace_id.in_(trace_ids)
+            )
+            if merchant_id is not None:
+                query = query.where(LedgerEventRecord.merchant_id == merchant_id)
+            rows = session.scalars(query.order_by(LedgerEventRecord.sequence)).all()
+            for record in rows:
+                grouped.setdefault(record.trace_id, []).append(record)
+            return grouped
+
+    def last_webhook_time(self) -> datetime | None:
+        """Timestamp of the latest provider-webhook event (single row).
+
+        The status endpoint used to scan the newest 500 events with full JSON
+        payloads on every call; this reads one indexed row instead.
+        """
+        with Session(self._engine) as session:
+            query = (
+                select(LedgerEventRecord.timestamp)
+                .where(
+                    LedgerEventRecord.action.in_(
+                        ("webhook.reconciled", "payment.captured", "payment.failed")
+                    )
+                )
+                .order_by(LedgerEventRecord.sequence.desc())
+                .limit(1)
+            )
+            value = session.scalar(query)
+            if value is not None and value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value
+
     def last_provider_ref(self, trace_id: str, *, action: str = "order.paid") -> str | None:
         """Latest provider ref recorded for one trace/action pair.
 

@@ -19,6 +19,7 @@ class MockAdapter(LLMAdapter):
         *,
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        timeout: int = 90,
     ) -> str:
         last_user = next(
             (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""

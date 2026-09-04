@@ -17,6 +17,7 @@ class _OpenAICompatibleAdapter(LLMAdapter):
         *,
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        timeout: int = 90,
     ) -> str:
         self._require_key()
         payload: dict[str, Any] = {
@@ -27,7 +28,7 @@ class _OpenAICompatibleAdapter(LLMAdapter):
         if tools:
             payload["tools"] = tools
         headers = {"Authorization": f"Bearer {self.config.api_key}", **self.default_headers}
-        data = post_json(f"{self.base_url}/chat/completions", payload, headers)
+        data = post_json(f"{self.base_url}/chat/completions", payload, headers, timeout=timeout)
         message = data["choices"][0]["message"]
         return message.get("content") or ""
 

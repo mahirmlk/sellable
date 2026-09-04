@@ -238,6 +238,98 @@ class RefundStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class CheckoutSessionStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    ORDER_PLACED = "ORDER_PLACED"
+    COMPLETED = "COMPLETED"
+    ABANDONED = "ABANDONED"
+
+
+class ChatMessage(StrictModel):
+    role: str = Field(min_length=1, max_length=16)
+    text: str = Field(min_length=1, max_length=2000)
+    status: str | None = Field(default=None, max_length=16)
+    # Tool chips shown under seller messages (e.g. catalog.search). Display
+    # metadata only — restored verbatim, never re-executed.
+    tool_calls: list[str] | None = Field(default=None, max_length=32)
+
+
+class CheckoutSessionUpsert(StrictModel):
+    session_id: str | None = Field(default=None, max_length=64)
+    buyer_ref: str = Field(default="human_chat", min_length=1, max_length=128)
+    budget_paise: int | None = Field(default=None, ge=0)
+    message: str | None = Field(default=None, max_length=2000)
+    trace_id: str | None = Field(
+        default=None, max_length=128, pattern=r"^trc_[0-9a-f]{32}$"
+    )
+    cart: dict[str, Any] | None = None
+    decision: dict[str, Any] | None = None
+    order_id: str | None = Field(default=None, max_length=128)
+    messages: list[ChatMessage] | None = None
+    status: CheckoutSessionStatus | None = None
+
+
+class CheckoutSession(StrictModel):
+    session_id: str = Field(default_factory=lambda: new_id("sess"))
+    merchant_id: str
+    buyer_ref: str = "human_chat"
+    trace_id: str | None = None
+    status: CheckoutSessionStatus = CheckoutSessionStatus.ACTIVE
+    budget_paise: int | None = None
+    message: str | None = None
+    cart: dict[str, Any] | None = None
+    decision: dict[str, Any] | None = None
+    order_id: str | None = None
+    messages: list[ChatMessage] = Field(default_factory=list)
+    # Chat-history label, derived deterministically server-side from the first
+    # user message when absent (never LLM-generated). Merchants may override.
+    title: str | None = Field(default=None, max_length=160)
+    # Soft-archive flag: archived rows hide from the default history list but
+    # are never hard-deleted.
+    archived: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class CheckoutSessionPatch(StrictModel):
+    """Ownership-checked partial update for one chat-history row.
+
+    ``title=None`` means "not provided, leave unchanged"; an empty/blank
+    title clears the label back to NULL. ``archived`` toggles soft-archive in
+    either direction (unarchiving restores the row to the default list).
+    """
+
+    title: str | None = Field(default=None, max_length=160)
+    archived: bool | None = None
+
+
+class CheckoutSessionListItem(StrictModel):
+    """Lightweight chat-history row: metadata only, never the transcript.
+
+    No ``messages``/``cart``/``decision`` blobs — the console fetches the full
+    session by id only when the merchant opens it. ``order_status`` and
+    ``amount_paise`` come from the linked order via one batched lookup;
+    ``approval_pending`` is a display hint (linked order requires approval and
+    is still awaiting consent).
+    """
+
+    session_id: str
+    title: str | None = None
+    status: CheckoutSessionStatus = CheckoutSessionStatus.ACTIVE
+    archived: bool = False
+    created_at: datetime
+    updated_at: datetime
+    order_id: str | None = None
+    trace_id: str | None = None
+    budget_paise: int | None = None
+    # Last buyer request text (real context for the history row, not a blob).
+    message: str | None = None
+    message_count: int = 0
+    order_status: OrderStatus | None = None
+    amount_paise: int | None = None
+    approval_pending: bool = False
+
+
 class RefundCreateRequest(StrictModel):
     order_id: str = Field(min_length=1, max_length=128)
     reason: str = Field(default="merchant_initiated", min_length=1, max_length=500)
@@ -355,6 +447,7 @@ class ConsoleTransactionItem(StrictModel):
     payment_status: str | None = None
     payment_order_id: str | None = None
     payment_id: str | None = None
+    payment_url: str | None = None
 
 
 class ConsoleTransactionDetail(ConsoleTransactionItem):

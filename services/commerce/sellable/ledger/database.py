@@ -5,10 +5,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, UniqueConstraint, create_engine
+import threading
+
+from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, UniqueConstraint, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from sellable.config import Settings, settings
+
+# One shared engine per database URL: repositories and auth helpers call
+# make_engine() per request, and every fresh Engine builds its own pool
+# (TCP/TLS handshakes on Postgres). In-memory SQLite URLs are never shared
+# — each caller keeps an isolated database.
+_engine_cache: dict[str, object] = {}
+_engine_cache_lock = threading.Lock()
 
 
 class Base(DeclarativeBase):
@@ -136,6 +145,58 @@ class AgentNonceRecord(Base):
     seen_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class CheckoutSessionRecord(Base):
+    """Durable checkout sessions (chat continuity across reload/navigation).
+
+    The session row is a *pointer*, not a second state machine: money state
+    always comes from the linked order, approval state from the order's
+    requires_approval/status, policy from the policy row. The row persists
+    the conversation transcript, the last backend-issued quote snapshot, the
+    applied session budget, and the active order link so the console can
+    restore exactly where the merchant left off.
+
+    At most one ACTIVE session per (merchant, buyer_ref): enforced by a
+    partial unique index so concurrent creates collapse to one row instead
+    of forking the conversation.
+    """
+
+    __tablename__ = "checkout_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    buyer_ref: Mapped[str] = mapped_column(String(128), nullable=False, default="human_chat")
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    budget_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    cart_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    decision_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    order_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    messages_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    # Human-readable chat-history label, derived deterministically server-side
+    # from the first user message (never LLM-generated). NULL until a user
+    # message exists or the merchant sets one explicitly.
+    title: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # Soft-archive flag for chat history. Archived rows are hidden from the
+    # default list but never hard-deleted (orders/ledger/consents untouched).
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        # Partial unique index (supported by both SQLite and Postgres):
+        # only one ACTIVE row per merchant+buyer can exist.
+        Index(
+            "uq_active_checkout_session",
+            "merchant_id",
+            "buyer_ref",
+            unique=True,
+            sqlite_where=(status == "ACTIVE"),
+            postgresql_where=(status == "ACTIVE"),
+        ),
+    )
+
+
 class PolicyRecord(Base):
     __tablename__ = "policy"
 
@@ -177,6 +238,18 @@ class CatalogProductRecord(Base):
 
 
 def make_engine(config: Settings = settings):
+    url = config.database_url
+    if ":memory:" not in url:
+        with _engine_cache_lock:
+            cached = _engine_cache.get(url)
+            if cached is None:
+                cached = _build_engine(config)
+                _engine_cache[url] = cached
+            return cached
+    return _build_engine(config)
+
+
+def _build_engine(config: Settings = settings):
     if config.database_url.startswith("sqlite"):
         connect_args: dict[str, object] = {"check_same_thread": False}
     elif "pooler.supabase.com" in config.database_url or "pgbouncer=true" in config.database_url:
@@ -230,6 +303,29 @@ def _migrate_sqlite(engine) -> None:
                 )
             except OperationalError as error:
                 log.warning("Skipping orders idempotency unique index: %s", error)
+        if "checkout_sessions" in tables:
+            session_cols = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(checkout_sessions)"))
+            }
+            if "title" not in session_cols:
+                connection.execute(text("ALTER TABLE checkout_sessions ADD COLUMN title VARCHAR(160)"))
+            if "archived" not in session_cols:
+                connection.execute(
+                    text("ALTER TABLE checkout_sessions ADD COLUMN archived BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+            # Partial unique index: exactly one ACTIVE row per merchant+buyer.
+            # Tolerant like the orders index above — legacy duplicates keep
+            # the application-level guard instead of crashing startup.
+            try:
+                connection.execute(
+                    text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_active_checkout_session "
+                        "ON checkout_sessions (merchant_id, buyer_ref) "
+                        "WHERE status = 'ACTIVE'"
+                    )
+                )
+            except OperationalError as error:
+                log.warning("Skipping active-session unique index: %s", error)
 
 
 def _migrate(engine) -> None:
@@ -248,6 +344,20 @@ def _migrate(engine) -> None:
         exists = connection.execute(
             text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'orders')")
         ).scalar()
+        sessions_exists = connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'checkout_sessions')")
+        ).scalar()
+        if sessions_exists:
+            session_cols = {
+                row[0]
+                for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'checkout_sessions'"))
+            }
+            if "title" not in session_cols:
+                connection.execute(text("ALTER TABLE checkout_sessions ADD COLUMN title VARCHAR(160)"))
+            if "archived" not in session_cols:
+                connection.execute(
+                    text("ALTER TABLE checkout_sessions ADD COLUMN archived BOOLEAN NOT NULL DEFAULT FALSE")
+                )
         if not exists:
             return
         cols = {
@@ -315,6 +425,19 @@ def _migrate(engine) -> None:
     except Exception as error:  # noqa: BLE001 — startup must survive legacy data
         logging.getLogger("sellable.migrate").warning(
             "Skipping orders idempotency unique index: %s", error
+        )
+
+    # Same tolerance for the single-ACTIVE-session invariant.
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_active_checkout_session "
+                "ON checkout_sessions (merchant_id, buyer_ref) "
+                "WHERE status = 'ACTIVE'"
+            ))
+    except Exception as error:  # noqa: BLE001 — startup must survive legacy data
+        logging.getLogger("sellable.migrate").warning(
+            "Skipping active-session unique index: %s", error
         )
 
 

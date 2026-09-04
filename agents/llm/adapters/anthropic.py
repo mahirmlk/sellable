@@ -18,6 +18,7 @@ class AnthropicAdapter(LLMAdapter):
         *,
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        timeout: int = 90,
     ) -> str:
         self._require_key()
         system = "\n".join(
@@ -38,6 +39,6 @@ class AnthropicAdapter(LLMAdapter):
             "x-api-key": str(self.config.api_key),
             "anthropic-version": "2023-06-01",
         }
-        data = post_json(f"{self.base_url}/messages", payload, headers)
+        data = post_json(f"{self.base_url}/messages", payload, headers, timeout=timeout)
         blocks = data.get("content", [])
         return "".join(block.get("text", "") for block in blocks if block.get("type") == "text")

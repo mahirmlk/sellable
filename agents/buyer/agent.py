@@ -251,7 +251,8 @@ class BuyerAgent:
                         ),
                     },
                     {"role": "user", "content": payload},
-                ]
+                ],
+                timeout=10,
             ).strip()
             if reply and len(reply) <= 1_000 and reply_skus_known(reply, known_skus):
                 self._record(

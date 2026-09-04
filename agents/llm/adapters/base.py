@@ -52,6 +52,7 @@ class LLMAdapter:
         *,
         temperature: float | None = None,
         tools: list[dict[str, Any]] | None = None,
+        timeout: int = 90,
     ) -> str:
         """Return the assistant's textual reply for the given conversation."""
         raise NotImplementedError

@@ -285,6 +285,8 @@ class SellerAgent:
         known_skus = {item.sku for item in result.cart.items}
         summary = self._decision_summary(result, buyer_message)
         try:
+            # Phrasing is cosmetic: bound it well below the provider default
+            # so a slow model delays — but never hangs — the quote path.
             reply = self.llm.complete(
                 [
                     {
@@ -300,7 +302,8 @@ class SellerAgent:
                         "role": "user",
                         "content": summary,
                     },
-                ]
+                ],
+                timeout=10,
             ).strip()
             if reply and len(reply) <= 1_000 and reply_skus_known(reply, known_skus):
                 self.tools._record(

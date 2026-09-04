@@ -24,6 +24,11 @@ from sellable.contracts import (
     BuyerMission,
     CatalogGetRequest,
     CatalogSearchRequest,
+    CheckoutSession,
+    CheckoutSessionListItem,
+    CheckoutSessionPatch,
+    CheckoutSessionStatus,
+    CheckoutSessionUpsert,
     ConsentRequest,
     ConsoleApprovalRequest,
     ConsoleGrowthMetrics,
@@ -71,7 +76,12 @@ from sellable.registry import (
     MerchantRegistry,
     save_policy_for,
 )
-from sellable.repositories import CatalogRepository, MerchantRepository
+from sellable.repositories import (
+    CatalogRepository,
+    CheckoutSessionRepository,
+    MerchantRepository,
+    OrderRepository,
+)
 from sellable.status import build_status
 
 logging.basicConfig(
@@ -826,8 +836,13 @@ def console_transactions(
 ) -> list[ConsoleTransactionItem]:
     core = merchant_core(session)
     orders = core.all_orders()
+    sorted_orders = sorted(orders, key=lambda x: x.created_at, reverse=True)
+    # ONE ledger query for all traces (was one query per order).
+    batched = ledger.events_for_traces(
+        [o.trace_id for o in sorted_orders], merchant_id=session.merchant_id
+    )
     enriched: list[ConsoleTransactionItem] = []
-    for o in sorted(orders, key=lambda x: x.created_at, reverse=True):
+    for o in sorted_orders:
         base = ConsoleTransactionItem(
             order_id=o.order_id,
             trace_id=o.trace_id,
@@ -838,8 +853,13 @@ def console_transactions(
             quote_id=o.quote_id,
             idempotency_key=o.idempotency_key,
             created_at=o.created_at,
+            payment_url=o.provider_payment_url,
         )
-        enriched.append(ConsoleTransactionItem.model_validate({**base.model_dump(), **_enrich_transaction(o, ledger, session.merchant_id)}))
+        enriched.append(
+            ConsoleTransactionItem.model_validate(
+                {**base.model_dump(), **_summarize_order(o, batched.get(o.trace_id, []))}
+            )
+        )
     return enriched
 
 
@@ -869,6 +889,7 @@ def console_transaction_detail(
         quote_id=order.quote_id,
         idempotency_key=order.idempotency_key,
         created_at=order.created_at,
+        payment_url=order.provider_payment_url,
     )
     enriched = _enrich_transaction(order, ledger, session.merchant_id)
     return ConsoleTransactionDetail.model_validate(
@@ -904,16 +925,23 @@ async def activity_stream(
     session: MerchantSession = Depends(get_merchant_session),
 ):
     """Server-Sent Events stream of new ledger activity (§46), scoped to the merchant."""
+    import anyio
     import asyncio
     import json
 
     async def event_generator():
-        last_sequence = ledger.max_sequence()
+        # Blocking SQLAlchemy calls must not run on the event loop: offload
+        # them to worker threads (one stream polls per connected client).
+        last_sequence = await anyio.to_thread.run_sync(ledger.max_sequence)
         while True:
             if await request.is_disconnected():
                 break
             try:
-                events = ledger.events_after(last_sequence, limit=100, merchant_id=session.merchant_id)
+                events = await anyio.to_thread.run_sync(
+                    lambda: ledger.events_after(
+                        last_sequence, limit=100, merchant_id=session.merchant_id
+                    )
+                )
                 for record in events:
                     yield "data: " + json.dumps(
                         {
@@ -993,30 +1021,37 @@ def console_approvals(
 
     core = merchant_core(session)
     orders = core.all_orders()
+    held = [
+        order
+        for order in orders
+        if order.requires_approval
+        and order.status in (OrderStatus.AWAITING_CONSENT,)
+    ]
+    # ONE ledger query for all held traces (was one query per order).
+    batched = ledger.events_for_traces(
+        [order.trace_id for order in held], merchant_id=session.merchant_id
+    )
     approvals: list[ConsoleApprovalRequest] = []
-    for order in orders:
-        if order.requires_approval and order.status in (
-            OrderStatus.AWAITING_CONSENT,
-        ):
-            events = ledger.for_trace(order.trace_id, merchant_id=session.merchant_id)
-            policy_event = None
-            for e in events:
-                if e.action == "policy.checked":
-                    policy_event = e
-                    break
-            reason = "NEEDS_HUMAN_APPROVAL"
-            if policy_event and policy_event.output_json.get("reason_code"):
-                reason = policy_event.output_json["reason_code"]
-            approvals.append(
-                ConsoleApprovalRequest(
-                    order_id=order.order_id,
-                    buyer_agent_id=order.buyer_agent_id,
-                    amount_paise=order.amount_paise,
-                    reason=reason,
-                    requested_at=order.created_at,
-                    status="PENDING",
-                )
+    for order in held:
+        events = batched.get(order.trace_id, [])
+        policy_event = None
+        for e in events:
+            if e.action == "policy.checked":
+                policy_event = e
+                break
+        reason = "NEEDS_HUMAN_APPROVAL"
+        if policy_event and policy_event.output_json.get("reason_code"):
+            reason = policy_event.output_json["reason_code"]
+        approvals.append(
+            ConsoleApprovalRequest(
+                order_id=order.order_id,
+                buyer_agent_id=order.buyer_agent_id,
+                amount_paise=order.amount_paise,
+                reason=reason,
+                requested_at=order.created_at,
+                status="PENDING",
             )
+        )
     return approvals
 
 
@@ -1660,3 +1695,225 @@ def console_retry_payment(
         raise HTTPException(status_code=502, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+# ---------------------------------------------------------------------------
+# Durable checkout sessions (chat continuity across reload/navigation)
+#
+# The session row is a pointer, never a second state machine: money state
+# comes from the linked order, approval state from the order, policy from
+# the policy row. The row persists the transcript, the last backend-issued
+# quote snapshot, the applied budget, and the active order link.
+# ---------------------------------------------------------------------------
+
+
+def get_checkout_repo() -> CheckoutSessionRepository:
+    return CheckoutSessionRepository()
+
+
+def get_order_repo() -> OrderRepository:
+    return OrderRepository()
+
+
+@app.get("/console/checkout/session", response_model=CheckoutSession, tags=["console"])
+@limiter.limit("30/minute")
+def console_checkout_session_get(
+    request: Request,
+    buyer_ref: str = "human_chat",
+    session: MerchantSession = Depends(get_merchant_session),
+    repo: CheckoutSessionRepository = Depends(get_checkout_repo),
+) -> CheckoutSession:
+    """Return the merchant's active checkout session, if one exists.
+
+    A missing session is a 404 the console treats as a fresh start — never
+    an error, and refresh must not create a session implicitly.
+    """
+    found = repo.active_for(session.merchant_id, buyer_ref)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no_active_session")
+    return found
+
+
+@app.post("/console/checkout/session", response_model=CheckoutSession, tags=["console"])
+@limiter.limit("30/minute")
+def console_checkout_session_save(
+    request: Request,
+    body: CheckoutSessionUpsert,
+    session: MerchantSession = Depends(get_merchant_session),
+    repo: CheckoutSessionRepository = Depends(get_checkout_repo),
+) -> CheckoutSession:
+    """Create or update the merchant's checkout session snapshot.
+
+    Without a session_id this upserts the single ACTIVE row (creating it on
+    the first user action — never on plain page loads). With a session_id it
+    updates that row after an ownership check; closed sessions reject writes.
+    Linking an order advances the lifecycle to ORDER_PLACED.
+    """
+    now = datetime.now(timezone.utc)
+    if body.session_id:
+        existing = repo.get(body.session_id)
+        if existing is None or existing.merchant_id != session.merchant_id:
+            raise HTTPException(status_code=404, detail="Checkout session not found")
+        if existing.status in (
+            CheckoutSessionStatus.COMPLETED,
+            CheckoutSessionStatus.ABANDONED,
+        ):
+            raise HTTPException(status_code=409, detail="Checkout session is closed")
+        patch = body.model_dump(exclude_none=True)
+        patch.pop("session_id", None)
+        # model_validate (not model_copy): nested message dicts must be
+        # re-coerced into ChatMessage models.
+        data = CheckoutSession.model_validate(
+            {**existing.model_dump(), **patch, "updated_at": now}
+        )
+    else:
+        base = repo.active_for(session.merchant_id, body.buyer_ref) or CheckoutSession(
+            merchant_id=session.merchant_id,
+            buyer_ref=body.buyer_ref,
+            created_at=now,
+        )
+        patch = body.model_dump(exclude_none=True)
+        patch.pop("session_id", None)
+        patch.pop("buyer_ref", None)
+        data = CheckoutSession.model_validate(
+            {**base.model_dump(), **patch, "updated_at": now}
+        )
+    if data.order_id and data.status is CheckoutSessionStatus.ACTIVE:
+        data = data.model_copy(update={"status": CheckoutSessionStatus.ORDER_PLACED})
+    return repo.save(data)
+
+
+@app.post(
+    "/console/checkout/session/{session_id}/close", response_model=CheckoutSession, tags=["console"]
+)
+@limiter.limit("30/minute")
+def console_checkout_session_close(
+    request: Request,
+    session_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+    repo: CheckoutSessionRepository = Depends(get_checkout_repo),
+) -> CheckoutSession:
+    """Abandon a checkout session (the NEW SESSION action)."""
+    closed = repo.close(session_id, session.merchant_id)
+    if closed is None:
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    return closed
+
+
+@app.get("/console/checkout/sessions", response_model=list[CheckoutSessionListItem], tags=["console"])
+@limiter.limit("30/minute")
+def console_checkout_sessions_list(
+    request: Request,
+    buyer_ref: str = "human_chat",
+    include_archived: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    session: MerchantSession = Depends(get_merchant_session),
+    repo: CheckoutSessionRepository = Depends(get_checkout_repo),
+    orders: OrderRepository = Depends(get_order_repo),
+) -> list[CheckoutSessionListItem]:
+    """Newest-first lightweight chat history for this merchant+buyer.
+
+    Items carry metadata only (no transcript/cart/decision blobs). Linked
+    orders are enriched in ONE batched lookup — never one query per session.
+    Read-only: listing never creates or mutates a session.
+    """
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    items = repo.list_sessions(
+        session.merchant_id,
+        buyer_ref,
+        include_archived=include_archived,
+        limit=limit,
+        offset=offset,
+    )
+    linked = orders.get_many(
+        [item.order_id for item in items if item.order_id],
+        merchant_id=session.merchant_id,
+    )
+    enriched: list[CheckoutSessionListItem] = []
+    for item in items:
+        order = linked.get(item.order_id) if item.order_id else None
+        if order is None:
+            enriched.append(item)
+            continue
+        enriched.append(
+            item.model_copy(
+                update={
+                    "order_status": order.status,
+                    "amount_paise": order.amount_paise,
+                    # Display hint: the linked order is held for a human.
+                    "approval_pending": bool(
+                        order.requires_approval
+                        and order.status is OrderStatus.AWAITING_CONSENT
+                    ),
+                }
+            )
+        )
+    return enriched
+
+
+@app.get("/console/checkout/session/{session_id}", response_model=CheckoutSession, tags=["console"])
+@limiter.limit("30/minute")
+def console_checkout_session_open(
+    request: Request,
+    session_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+    repo: CheckoutSessionRepository = Depends(get_checkout_repo),
+) -> CheckoutSession:
+    """Open one full session by id. Unknown ids AND other merchants' rows
+    are both 404 (no cross-tenant existence oracle). Read-only: opening
+    never creates or mutates a session."""
+    found = repo.get(session_id)
+    if found is None or found.merchant_id != session.merchant_id:
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    return found
+
+
+@app.patch("/console/checkout/session/{session_id}", response_model=CheckoutSession, tags=["console"])
+@limiter.limit("30/minute")
+def console_checkout_session_patch(
+    request: Request,
+    session_id: str,
+    body: CheckoutSessionPatch,
+    session: MerchantSession = Depends(get_merchant_session),
+    repo: CheckoutSessionRepository = Depends(get_checkout_repo),
+) -> CheckoutSession:
+    """Ownership-checked partial update: rename (title) and/or (un)archive.
+
+    An explicit title — including an empty one, which clears the label back
+    to NULL — is stored exactly as given and never re-derived. Unarchiving
+    (``archived=false``) restores the row to the default history list.
+    """
+    existing = repo.get(session_id)
+    if existing is None or existing.merchant_id != session.merchant_id:
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    updates: dict[str, object] = {"updated_at": datetime.now(timezone.utc)}
+    if body.title is not None:
+        # Overlong titles never reach here: CheckoutSessionPatch caps at 160
+        # and FastAPI answers 422. A blank title clears the label to NULL.
+        updates["title"] = body.title.strip() or None
+    if body.archived is not None:
+        updates["archived"] = body.archived
+    if len(updates) == 1:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    return repo.save(existing.model_copy(update=updates), derive_title=False)
+
+
+@app.delete("/console/checkout/session/{session_id}", response_model=CheckoutSession, tags=["console"])
+@limiter.limit("30/minute")
+def console_checkout_session_delete(
+    request: Request,
+    session_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+    repo: CheckoutSessionRepository = Depends(get_checkout_repo),
+) -> CheckoutSession:
+    """Archive a history row (abandoning it first if still ACTIVE).
+
+    Soft-delete only: the row stays in the database and linked commerce
+    records (orders, ledger events, refunds, consents) are never touched.
+    """
+    removed = repo.delete(session_id, session.merchant_id)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    return removed

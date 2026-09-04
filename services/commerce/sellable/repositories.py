@@ -5,12 +5,17 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import Engine, delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from sellable.contracts import (
+    ChatMessage,
+    CheckoutSession,
+    CheckoutSessionListItem,
+    CheckoutSessionStatus,
     Consent,
     ConsentStatus,
     Order,
@@ -22,6 +27,7 @@ from sellable.contracts import (
 from sellable.ledger.database import (
     AgentNonceRecord,
     CatalogProductRecord,
+    CheckoutSessionRecord,
     ConsentRecord,
     MerchantRecord,
     OrderRecord,
@@ -196,12 +202,13 @@ class OrderRepository:
                     created_at=record.created_at,
             )
 
-    def all(self, merchant_id: str | None = None) -> list[Order]:
+    def all(self, merchant_id: str | None = None, *, limit: int = 500) -> list[Order]:
+        """Newest-first orders, bounded so dashboards never full-scan history."""
         with Session(self._engine) as session:
-            query = select(OrderRecord)
+            query = select(OrderRecord).order_by(OrderRecord.created_at.desc())
             if merchant_id is not None:
                 query = query.where(OrderRecord.merchant_id == merchant_id)
-            records = session.scalars(query).all()
+            records = session.scalars(query.limit(max(1, limit))).all()
             return [
                 Order(
                     order_id=r.order_id,
@@ -216,10 +223,63 @@ class OrderRepository:
                     approved_at=r.approved_at,
                     provider_link_id=r.provider_link_id,
                     provider_order_id=r.provider_order_id,
+                    provider_payment_url=r.provider_payment_url,
                     created_at=r.created_at,
                 )
                 for r in records
             ]
+
+    def status_counts(self, merchant_id: str | None = None) -> dict[str, int]:
+        """Count orders per status in ONE grouped query.
+
+        The status endpoint needs totals, not rows — loading every order to
+        count them was its slowest read.
+        """
+        from sqlalchemy import func
+
+        with Session(self._engine) as session:
+            query = select(OrderRecord.status, func.count(OrderRecord.order_id))
+            if merchant_id is not None:
+                query = query.where(OrderRecord.merchant_id == merchant_id)
+            query = query.group_by(OrderRecord.status)
+            return {status: count for status, count in session.execute(query).all()}
+
+    @staticmethod
+    def _to_order(record: OrderRecord) -> Order:
+        return Order(
+            order_id=record.order_id,
+            trace_id=record.trace_id,
+            quote_id=record.quote_id,
+            buyer_agent_id=record.buyer_agent_id,
+            merchant_id=record.merchant_id,
+            amount_paise=record.amount_paise,
+            status=OrderStatus(record.status),
+            idempotency_key=record.idempotency_key,
+            requires_approval=record.requires_approval,
+            approved_at=record.approved_at,
+            provider_link_id=record.provider_link_id,
+            provider_order_id=record.provider_order_id,
+            provider_payment_url=record.provider_payment_url,
+            created_at=record.created_at,
+        )
+
+    def get_many(
+        self, order_ids: Sequence[str], merchant_id: str | None = None
+    ) -> dict[str, Order]:
+        """Fetch several orders in ONE query (chat-history enrichment path).
+
+        Keys are de-duplicated and blanks dropped before the query. When
+        ``merchant_id`` is given, foreign orders are excluded so a caller can
+        never enrich another tenant's sessions.
+        """
+        ids = [oid for oid in dict.fromkeys(order_ids) if oid]
+        if not ids:
+            return {}
+        with Session(self._engine) as session:
+            query = select(OrderRecord).where(OrderRecord.order_id.in_(ids))
+            if merchant_id is not None:
+                query = query.where(OrderRecord.merchant_id == merchant_id)
+            return {r.order_id: self._to_order(r) for r in session.scalars(query).all()}
 
 
 class RefundRepository:
@@ -316,6 +376,259 @@ class NonceRepository:
                 session.rollback()
                 return False
             return True
+
+
+class CheckoutSessionRepository:
+    """Persists checkout sessions; at most one ACTIVE per (merchant, buyer)."""
+
+    MAX_MESSAGES = 200
+    #: Chat-history titles derive from the first user message, truncated here.
+    TITLE_MAX_CHARS = 48
+
+    def __init__(self, engine: object | None = None) -> None:
+        self._engine = engine or make_engine()
+
+    @staticmethod
+    def derive_title(messages: Sequence[ChatMessage | dict[str, Any]]) -> str | None:
+        """Deterministic chat-history label: first user message, stripped,
+        truncated to ~48 chars. No LLM, no hardcoding — pure transcript text."""
+        for message in messages:
+            if isinstance(message, ChatMessage):
+                role, text = message.role, message.text
+            else:
+                role, text = message.get("role"), message.get("text", "")
+            if role == "user" and text and text.strip():
+                return text.strip()[:CheckoutSessionRepository.TITLE_MAX_CHARS] or None
+        return None
+
+    @staticmethod
+    def _to_session(record: CheckoutSessionRecord) -> CheckoutSession:
+        return CheckoutSession(
+            session_id=record.session_id,
+            merchant_id=record.merchant_id,
+            buyer_ref=record.buyer_ref,
+            trace_id=record.trace_id,
+            status=CheckoutSessionStatus(record.status),
+            budget_paise=record.budget_paise,
+            message=record.message,
+            cart=record.cart_json,
+            decision=record.decision_json,
+            order_id=record.order_id,
+            messages=[ChatMessage.model_validate(m) for m in (record.messages_json or [])],
+            title=record.title,
+            archived=bool(record.archived),
+            created_at=_as_aware_utc(record.created_at),
+            updated_at=_as_aware_utc(record.updated_at),
+        )
+
+    def get(self, session_id: str) -> CheckoutSession | None:
+        with Session(self._engine) as session:
+            record = session.get(CheckoutSessionRecord, session_id)
+            return self._to_session(record) if record else None
+
+    def active_for(self, merchant_id: str, buyer_ref: str) -> CheckoutSession | None:
+        """Newest visible ACTIVE session for this merchant+buyer, if any.
+
+        Archived rows are excluded: archiving abandons the row (see
+        set_archived), so an archived session never answers the active
+        lookup and never blocks a fresh session via the partial index.
+        """
+        with Session(self._engine) as session:
+            query = (
+                select(CheckoutSessionRecord)
+                .where(CheckoutSessionRecord.merchant_id == merchant_id)
+                .where(CheckoutSessionRecord.buyer_ref == buyer_ref)
+                .where(CheckoutSessionRecord.status == CheckoutSessionStatus.ACTIVE.value)
+                .where(CheckoutSessionRecord.archived.is_(False))
+                .order_by(CheckoutSessionRecord.updated_at.desc())
+                .limit(1)
+            )
+            record = session.scalars(query).first()
+            return self._to_session(record) if record else None
+
+    @staticmethod
+    def _is_unique_violation(error: IntegrityError) -> bool:
+        """True only for unique-constraint violations (never mask other DB errors)."""
+        orig = error.orig
+        if getattr(orig, "pgcode", None) == "23505":
+            return True
+        message = str(orig if orig is not None else error).lower()
+        return "unique constraint failed" in message or "duplicate key" in message
+
+    def save(self, data: CheckoutSession, *, derive_title: bool = True) -> CheckoutSession:
+        """Insert or update. A concurrent second ACTIVE collapses onto the
+        existing one via the partial unique index (no forked sessions).
+
+        Titles derive only for brand-new rows: updates never resurrect a
+        PATCH-cleared title. An explicit merchant title is preserved as-is.
+        Pass ``derive_title=False`` for explicit merchant edits (PATCH).
+        """
+        with Session(self._engine) as session:
+            existing = session.get(CheckoutSessionRecord, data.session_id)
+            if existing is None and derive_title and not (data.title and data.title.strip()):
+                derived = self.derive_title(data.messages)
+                if derived:
+                    data = data.model_copy(update={"title": derived})
+            if existing:
+                existing.trace_id = data.trace_id
+                existing.status = data.status.value
+                existing.budget_paise = data.budget_paise
+                existing.message = data.message
+                existing.cart_json = data.cart
+                existing.decision_json = data.decision
+                existing.order_id = data.order_id
+                existing.messages_json = [m.model_dump() for m in data.messages[-self.MAX_MESSAGES:]]
+                existing.title = data.title
+                existing.archived = data.archived
+                existing.updated_at = data.updated_at
+            else:
+                session.add(
+                    CheckoutSessionRecord(
+                        session_id=data.session_id,
+                        merchant_id=data.merchant_id,
+                        buyer_ref=data.buyer_ref,
+                        trace_id=data.trace_id,
+                        status=data.status.value,
+                        budget_paise=data.budget_paise,
+                        message=data.message,
+                        cart_json=data.cart,
+                        decision_json=data.decision,
+                        order_id=data.order_id,
+                        messages_json=[m.model_dump() for m in data.messages[-self.MAX_MESSAGES:]],
+                        title=data.title,
+                        archived=data.archived,
+                        created_at=data.created_at,
+                        updated_at=data.updated_at,
+                    )
+                )
+            try:
+                session.commit()
+            except IntegrityError as error:
+                # Lost a race: another request created the ACTIVE row first.
+                # Fall through to return the winner instead of forking — but
+                # only for unique violations; any other DB error re-raises.
+                session.rollback()
+                if not self._is_unique_violation(error):
+                    raise
+                winner = self.active_for(data.merchant_id, data.buyer_ref)
+                if winner is not None:
+                    return winner
+                raise
+            return data
+
+    def close(self, session_id: str, merchant_id: str) -> CheckoutSession | None:
+        """Mark a session ABANDONED. Foreign ids return None (404 upstream)."""
+        with Session(self._engine) as session:
+            record = session.get(CheckoutSessionRecord, session_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            if record.status == CheckoutSessionStatus.COMPLETED.value:
+                return self._to_session(record)
+            record.status = CheckoutSessionStatus.ABANDONED.value
+            record.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return self._to_session(record)
+
+    def list_sessions(
+        self,
+        merchant_id: str,
+        buyer_ref: str,
+        *,
+        include_archived: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[CheckoutSessionListItem]:
+        """Newest-first lightweight history rows for one merchant+buyer.
+
+        Projects metadata only (transcript/cart/decision blobs stay in the
+        database) plus a message count. Read-only: never inserts or mutates.
+        """
+        # json_array_length exists on both SQLite (JSON1) and Postgres
+        # (json type) — the transcript blob itself is never fetched here.
+        from sqlalchemy import func
+
+        with Session(self._engine) as session:
+            query = (
+                select(
+                    CheckoutSessionRecord.session_id,
+                    CheckoutSessionRecord.title,
+                    CheckoutSessionRecord.status,
+                    CheckoutSessionRecord.archived,
+                    CheckoutSessionRecord.created_at,
+                    CheckoutSessionRecord.updated_at,
+                    CheckoutSessionRecord.order_id,
+                    CheckoutSessionRecord.trace_id,
+                    CheckoutSessionRecord.budget_paise,
+                    CheckoutSessionRecord.message,
+                    func.coalesce(
+                        func.json_array_length(CheckoutSessionRecord.messages_json), 0
+                    ),
+                )
+                .where(CheckoutSessionRecord.merchant_id == merchant_id)
+                .where(CheckoutSessionRecord.buyer_ref == buyer_ref)
+                .order_by(CheckoutSessionRecord.updated_at.desc())
+            )
+            if not include_archived:
+                query = query.where(CheckoutSessionRecord.archived.is_(False))
+            rows = session.execute(
+                query.limit(max(1, limit)).offset(max(0, offset))
+            ).all()
+            return [
+                CheckoutSessionListItem(
+                    session_id=row[0],
+                    title=row[1],
+                    status=CheckoutSessionStatus(row[2]),
+                    archived=bool(row[3]),
+                    created_at=_as_aware_utc(row[4]),
+                    updated_at=_as_aware_utc(row[5]),
+                    order_id=row[6],
+                    trace_id=row[7],
+                    budget_paise=row[8],
+                    message=row[9],
+                    message_count=int(row[10] or 0),
+                )
+                for row in rows
+            ]
+
+    def set_archived(
+        self, session_id: str, merchant_id: str, archived: bool
+    ) -> CheckoutSession | None:
+        """Toggle the soft-archive flag. Foreign ids return None (404 upstream).
+
+        Archiving also abandons an ACTIVE row (same as delete): an archived
+        row must never answer ``active_for`` and must never collide with a
+        fresh session via the partial unique index. Unarchiving restores
+        visibility; the row stays ABANDONED, i.e. read-only history.
+        """
+        with Session(self._engine) as session:
+            record = session.get(CheckoutSessionRecord, session_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            record.archived = archived
+            if archived and record.status == CheckoutSessionStatus.ACTIVE.value:
+                record.status = CheckoutSessionStatus.ABANDONED.value
+            record.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return self._to_session(record)
+
+    def delete(self, session_id: str, merchant_id: str) -> CheckoutSession | None:
+        """Soft-delete a chat-history row: archive it, and abandon it if still
+        ACTIVE so it can never be resumed or receive further writes.
+
+        HARD-DELETES NOTHING: the row stays in the database (archived), and
+        linked commerce records — orders, ledger events, refunds, consents —
+        are never touched. Foreign ids return None (404 upstream).
+        """
+        with Session(self._engine) as session:
+            record = session.get(CheckoutSessionRecord, session_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            record.archived = True
+            if record.status == CheckoutSessionStatus.ACTIVE.value:
+                record.status = CheckoutSessionStatus.ABANDONED.value
+            record.updated_at = datetime.now(timezone.utc)
+            session.commit()
+            return self._to_session(record)
 
 
 class CatalogRepository:
