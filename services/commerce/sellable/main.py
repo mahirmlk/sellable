@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -924,6 +925,18 @@ def console_transaction_detail(
     )
 
 
+# Live SSE stream registry: stream id -> connected epoch seconds. Lets
+# operators (and tests) observe how many streams are actually open; the
+# registry never holds sessions, engines, or credentials.
+_active_sse_streams: dict[str, float] = {}
+_active_sse_lock = threading.Lock()
+
+#: Streams close themselves after this long so zombies cannot accumulate
+#: across deploys and proxy hiccups; clients reconnect within their bounded
+#: budget (the console falls back to polling).
+SSE_MAX_LIFETIME_SECONDS = 15 * 60
+
+
 @app.get("/activity/stream", tags=["console"])
 @limiter.limit("30/minute")
 async def activity_stream(
@@ -931,44 +944,81 @@ async def activity_stream(
     ledger: LedgerRepository = Depends(get_ledger),
     session: MerchantSession = Depends(get_merchant_session),
 ):
-    """Server-Sent Events stream of new ledger activity (§46), scoped to the merchant."""
+    """Server-Sent Events stream of new ledger activity (§46), scoped to the merchant.
+
+    Execution model (deliberate, non-blocking):
+    - the handler itself is async and never occupies a sync worker thread;
+    - every DB read is a short-lived session offloaded to a worker thread;
+    - the loop idles 1s between polls and self-terminates on disconnect or
+      after SSE_MAX_LIFETIME_SECONDS, so one stream can neither starve other
+      requests nor live forever.
+    """
     import anyio
     import asyncio
     import json
+    import time as _time
+    import uuid as _uuid
+
+    stream_id = f"sse_{_uuid.uuid4().hex[:12]}"
+    with _active_sse_lock:
+        _active_sse_streams[stream_id] = _time.time()
+        active_count = len(_active_sse_streams)
+    logger.info(
+        "SSE stream connected id=%s merchant=%s active=%d",
+        stream_id,
+        session.merchant_id,
+        active_count,
+    )
 
     async def event_generator():
-        # Blocking SQLAlchemy calls must not run on the event loop: offload
-        # them to worker threads (one stream polls per connected client).
-        last_sequence = await anyio.to_thread.run_sync(ledger.max_sequence)
-        while True:
-            if await request.is_disconnected():
-                break
-            try:
-                events = await anyio.to_thread.run_sync(
-                    lambda: ledger.events_after(
-                        last_sequence, limit=100, merchant_id=session.merchant_id
+        try:
+            # Blocking SQLAlchemy calls must not run on the event loop:
+            # offload them to worker threads (one stream polls per client).
+            last_sequence = await anyio.to_thread.run_sync(ledger.max_sequence)
+            # Immediate handshake byte: a client that never receives a first
+            # frame cannot distinguish "healthy idle stream" from "hung
+            # backend", and readers/tests would block indefinitely.
+            yield ": connected\n\n"
+            deadline = _time.time() + SSE_MAX_LIFETIME_SECONDS
+            while True:
+                if await request.is_disconnected():
+                    break
+                if _time.time() >= deadline:
+                    logger.info("SSE stream closing at max lifetime id=%s", stream_id)
+                    break
+                try:
+                    events = await anyio.to_thread.run_sync(
+                        lambda: ledger.events_after(
+                            last_sequence, limit=100, merchant_id=session.merchant_id
+                        )
                     )
-                )
-                for record in events:
-                    yield "data: " + json.dumps(
-                        {
-                            "event_id": record.event_id,
-                            "trace_id": record.trace_id,
-                            "timestamp": record.timestamp.isoformat(),
-                            "actor": record.actor,
-                            "action": record.action,
-                            "inputs": record.inputs_json,
-                            "output": record.output_json,
-                            "reasoning_summary": record.reasoning_summary,
-                            "policy_refs": record.policy_refs_json,
-                            "provider_ref": record.provider_ref,
-                            "flags": record.flags_json,
-                        }
-                    ) + "\n\n"
-                    last_sequence = record.sequence
-            except Exception:
-                yield ": keep-alive\n\n"
-            await asyncio.sleep(1)
+                    for record in events:
+                        yield "data: " + json.dumps(
+                            {
+                                "event_id": record.event_id,
+                                "trace_id": record.trace_id,
+                                "timestamp": record.timestamp.isoformat(),
+                                "actor": record.actor,
+                                "action": record.action,
+                                "inputs": record.inputs_json,
+                                "output": record.output_json,
+                                "reasoning_summary": record.reasoning_summary,
+                                "policy_refs": record.policy_refs_json,
+                                "provider_ref": record.provider_ref,
+                                "flags": record.flags_json,
+                            }
+                        ) + "\n\n"
+                        last_sequence = record.sequence
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(1)
+        finally:
+            with _active_sse_lock:
+                _active_sse_streams.pop(stream_id, None)
+                remaining = len(_active_sse_streams)
+            logger.info("SSE stream disconnected id=%s active=%d", stream_id, remaining)
 
     return StreamingResponse(
         event_generator(),

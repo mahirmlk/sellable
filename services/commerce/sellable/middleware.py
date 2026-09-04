@@ -38,8 +38,15 @@ class RequestBodyCaptureMiddleware:
         async def wrapped_receive() -> dict[str, Any]:
             nonlocal sent
             if not sent:
+                # Replay the buffered body exactly once so downstream body
+                # parsing is unchanged.
                 sent = True
                 return {"type": "http.request", "body": body, "more_body": False}
-            return {"type": "http.request", "body": b"", "more_body": False}
+            # Afterwards proxy the REAL channel. Returning a synthetic empty
+            # request here (as this code used to) swallows http.disconnect
+            # forever: request.is_disconnected() can never fire, Starlette
+            # can never cancel SSE responses, and closed browser connections
+            # leak server-side streams that poll the database indefinitely.
+            return await receive()
 
         await self.app(scope, wrapped_receive, send)
