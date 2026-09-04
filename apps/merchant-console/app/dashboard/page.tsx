@@ -83,6 +83,15 @@ export default function OverviewPage() {
         growthData.status === "rejected"
       ) {
         setLoadError("The backend could not be reached — showing the last loaded state.");
+      } else if (
+        txData.status === "rejected" ||
+        approvalData.status === "rejected" ||
+        eventData.status === "rejected" ||
+        growthData.status === "rejected"
+      ) {
+        // Partial failure: render what succeeded, but never present
+        // missing sections as genuine zeros.
+        setLoadError("Some sections failed to load — figures below may be incomplete.");
       }
       if (txData.status === "fulfilled") setTransactions(txData.value.map(mapTx));
       if (approvalData.status === "fulfilled") {

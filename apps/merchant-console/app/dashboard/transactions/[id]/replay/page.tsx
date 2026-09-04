@@ -197,7 +197,10 @@ export default function ReplayPage() {
   };
 
   const status = tx?.status || "";
-  const isDenied = status === "ABORTED" || status === "DENIED" || txEvents.some((e) => e.action === "policy.checked" && e.output?.verdict === "DENY");
+  // ABORTED is a merchant abort, not a policy deny — it already renders the
+  // FAILED banner below. (There is no DENIED order status; denials surface
+  // through the policy.checked → DENY event branch.)
+  const isDenied = txEvents.some((e) => e.action === "policy.checked" && e.output?.verdict === "DENY");
   const isFailed = status === "PAYMENT_FAILED" || status === "ABORTED";
   const isRefunded = status === "REFUNDED";
   const isPaid = (status === "PAID" || status === "FULFILLED") && !isRefunded;

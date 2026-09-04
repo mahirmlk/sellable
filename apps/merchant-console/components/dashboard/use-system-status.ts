@@ -51,11 +51,11 @@ export function useSystemStatus(initialLoad = true): SystemStatusState {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
     try {
-      const result = await getAgentsStatus();
+      const result = await getAgentsStatus(force);
       setData(result);
       setLastUpdated(Date.now());
     } catch (err) {
@@ -72,7 +72,12 @@ export function useSystemStatus(initialLoad = true): SystemStatusState {
     return () => window.clearTimeout(t);
   }, [initialLoad, load, tick]);
 
-  const reload = useCallback(() => setTick((t) => t + 1), []);
+  // Manual refresh bypasses the shared cache; the tick re-runs the effect,
+  // which then hits the (just refreshed) cache instead of the network.
+  const reload = useCallback(() => {
+    setTick((t) => t + 1);
+    void load(true);
+  }, [load]);
 
   return { data, loading, error, lastUpdated, reload };
 }

@@ -61,6 +61,7 @@ function mapTxDetail(tx: ConsoleTransactionDetail): Transaction {
           provider: "razorpay",
           orderId: tx.payment_order_id || undefined,
           paymentId: tx.payment_id || undefined,
+          paymentUrl: tx.payment_url || undefined,
           status: tx.payment_status,
           verifiedByWebhook: tx.payment_status === "CAPTURED",
         }
@@ -385,6 +386,16 @@ export default function TransactionDetailPage() {
                     <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-4)]">Confirmed by</span>
                     <span className="font-[var(--font-mono)] text-[0.65rem] text-green-400">Verified webhook</span>
                   </div>
+                )}
+                {tx.payment.paymentUrl && (tx.status === "PAYMENT_PENDING" || tx.status === "CONSENTED") && (
+                  <a
+                    href={tx.payment.paymentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-flex items-center justify-center w-full h-[36px] border border-[var(--bb-orange)]/50 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-colors"
+                  >
+                    REOPEN PAYMENT LINK ↗
+                  </a>
                 )}
                 {tx.payment.status === "PAYMENT_PENDING" && (
                   <div className="mt-3 pt-3 border-t border-[var(--bb-line-soft)] font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-3)] leading-relaxed">

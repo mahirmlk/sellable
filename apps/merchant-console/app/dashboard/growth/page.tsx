@@ -20,10 +20,11 @@ async function computeSavedDeals(txs: ConsoleTransaction[]): Promise<SavedDealRo
   const bySku = new Map<string, SavedDealRow>();
   for (const d of details) {
     if (!d) continue;
-    // Converted = money actually captured (or refunded after capture).
-    // Unpaid quotes must never inflate this — the backend counts revenue
-    // from PAID only.
-    const converted = d.status === "PAID" || d.status === "FULFILLED" || d.status === "REFUNDED";
+    // Converted = money actually captured and kept. Unpaid quotes must never
+    // inflate this, and refunded orders sit in neither bucket (they paid,
+    // then the money went back) rather than posing as conversions or walks.
+    const converted = d.status === "PAID" || d.status === "FULFILLED";
+    const refunded = d.status === "REFUNDED";
     for (const e of d.events || []) {
       // Substring match, same as the backend insights counter: any
       // negotiation.* variant counts, not just one literal action.
@@ -38,7 +39,7 @@ async function computeSavedDeals(txs: ConsoleTransaction[]): Promise<SavedDealRo
     for (const item of d.items || []) {
       const row = bySku.get(item.sku) || { sku: item.sku, requests: 0, converted: 0, walkedAway: 0, floorPaise: null, pricePaise: null };
       if (converted) row.converted += 1;
-      else row.walkedAway += 1;
+      else if (!refunded) row.walkedAway += 1;
       bySku.set(item.sku, row);
     }
   }
@@ -87,6 +88,8 @@ export default function GrowthPage() {
       }
       if (growthData.status === "rejected" && txData.status === "rejected") {
         setLoadError("Growth data could not be loaded from the backend.");
+      } else if (growthData.status === "rejected" || txData.status === "rejected") {
+        setLoadError("Part of the growth data failed to load — figures below may be incomplete.");
       }
     } catch {
       if (alive()) setLoadError("Growth data could not be loaded from the backend.");
@@ -183,7 +186,7 @@ export default function GrowthPage() {
         <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between">
           <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">SAVED DEAL & PRICING INSIGHT</div>
           <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">
-            {insightsLoading ? "DERIVING FROM LEDGER…" : "TRACEABLE TO TRANSACTIONS"}
+            {insightsLoading ? "DERIVING FROM LEDGER…" : "TRACEABLE TO TRANSACTIONS · NEWEST 20"}
           </div>
         </div>
         {savedDeals.length === 0 ? (

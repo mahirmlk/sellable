@@ -55,6 +55,7 @@ interface Transaction {
     provider: string;
     orderId?: string;
     paymentId?: string;
+    paymentUrl?: string;
     status: string;
     verifiedByWebhook?: boolean;
   };

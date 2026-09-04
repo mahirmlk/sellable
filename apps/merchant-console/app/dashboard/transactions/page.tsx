@@ -23,12 +23,16 @@ function mapTx(tx: ConsoleTransaction): Transaction {
     FULFILLED: "FULFILLED",
   };
   const channel = tx.channel === "human_chat" ? "human_chat" : "agent_to_agent";
+  // Same vocabulary as the detail view: NOT_ISSUED stays visible instead
+  // of collapsing into NONE.
   const consentStatus =
     tx.consent_status === "CONSUMED"
       ? "CONSENTED"
       : tx.consent_status === "ISSUED"
         ? "ISSUED"
-        : "NONE";
+        : tx.consent_status === "NOT_ISSUED"
+          ? "NOT_ISSUED"
+          : "NONE";
   return {
     id: tx.order_id,
     traceId: tx.trace_id,

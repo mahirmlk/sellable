@@ -100,9 +100,12 @@ export default function ActivityPage() {
             try {
               const data = await getConsoleEvents(20);
               if (data.events) {
+                // Backend is newest-first: filter unseen, then prepend in the
+                // same order. (Reversing here used to flip fresh batches
+                // oldest-first after every reconnect.)
                 const fresh = data.events.map(mapEvent).filter((e) => !seenIds.current.has(e.eventId));
                 for (const e of fresh) seenIds.current.add(e.eventId);
-                if (fresh.length > 0) setEvents((prev) => [...fresh.reverse(), ...prev].slice(0, 500));
+                if (fresh.length > 0) setEvents((prev) => [...fresh, ...prev].slice(0, 500));
               }
             } catch {}
           }, 5000);

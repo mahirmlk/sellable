@@ -12,7 +12,13 @@ const statusConfig: Record<TransactionStatus, { label: string; color: string; bg
 };
 
 export function StatusBadge({ status }: { status: TransactionStatus }) {
-  const cfg = statusConfig[status] || statusConfig.AWAITING_CONSENT;
+  // Unknown future statuses render under their own name — never mislabeled
+  // as an existing state.
+  const cfg = statusConfig[status] || {
+    label: String(status).replace(/_/g, " "),
+    color: "text-[var(--bb-grey-2)]",
+    bg: "bg-[var(--bb-panel-2)]",
+  };
   return (
     <span
       className={`inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 ${cfg.color} ${cfg.bg} rounded-sm`}
@@ -41,11 +47,15 @@ export function PolicyBadge({ verdict }: { verdict: "ALLOW" | "DENY" | "NEEDS_HU
 }
 
 export function ConsentBadge({ status }: { status: string }) {
-  const isApproved = status === "APPROVED" || status === "CONSENTED";
+  // Consumed (CONSENTED in detail, CONSUMED in lists) reads green, a live
+  // ISSUED consent reads blue, and NOT_ISSUED/NONE stay muted grey — "not
+  // yet issued" must never render as if issued.
+  const isApproved = status === "CONSENTED" || status === "CONSUMED";
+  const isIssued = status === "ISSUED";
   return (
     <span
       className={`inline-flex items-center gap-1 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase ${
-        isApproved ? "text-green-400" : "text-[var(--bb-grey-3)]"
+        isApproved ? "text-green-400" : isIssued ? "text-blue-400" : "text-[var(--bb-grey-3)]"
       }`}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-current" />

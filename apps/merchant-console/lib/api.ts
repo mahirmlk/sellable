@@ -80,6 +80,221 @@ export interface ConsoleTransaction {
   payment_status?: string | null;
   payment_order_id?: string | null;
   payment_id?: string | null;
+  payment_url?: string | null;
+}
+
+// --- Checkout sessions (durable chat state; the order stays authoritative) ---
+
+export type CheckoutSessionStatus = "ACTIVE" | "ORDER_PLACED" | "COMPLETED" | "ABANDONED";
+
+export interface CheckoutSessionMessage {
+  role: string;
+  text: string;
+  status?: string | null;
+  toolCalls?: string[] | null;
+}
+
+export interface CheckoutSession {
+  session_id: string;
+  merchant_id: string;
+  buyer_ref: string;
+  trace_id: string | null;
+  status: CheckoutSessionStatus;
+  budget_paise: number | null;
+  message: string | null;
+  cart: Record<string, unknown> | null;
+  decision: Record<string, unknown> | null;
+  order_id: string | null;
+  messages: CheckoutSessionMessage[];
+  title?: string | null;
+  archived?: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CheckoutSessionUpsert {
+  session_id?: string;
+  buyer_ref?: string;
+  budget_paise?: number | null;
+  message?: string | null;
+  trace_id?: string | null;
+  cart?: Record<string, unknown> | null;
+  decision?: Record<string, unknown> | null;
+  order_id?: string | null;
+  messages?: CheckoutSessionMessage[];
+  status?: CheckoutSessionStatus;
+}
+
+export async function getCheckoutSession(
+  buyerRef = "human_chat"
+): Promise<CheckoutSession | null> {
+  try {
+    return await apiFetch<CheckoutSession>(
+      `/console/checkout/session?buyer_ref=${encodeURIComponent(buyerRef)}`
+    );
+  } catch (err) {
+    // No active session is a normal fresh start, not an error.
+    if (err instanceof ApiError && err.isNotFound) return null;
+    throw err;
+  }
+}
+
+export async function saveCheckoutSession(
+  body: CheckoutSessionUpsert
+): Promise<CheckoutSession> {
+  return apiFetch<CheckoutSession>("/console/checkout/session", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function closeCheckoutSession(
+  sessionId: string
+): Promise<CheckoutSession> {
+  return apiFetch<CheckoutSession>(
+    `/console/checkout/session/${encodeURIComponent(sessionId)}/close`,
+    { method: "POST" }
+  );
+}
+
+// --- Checkout session history (multi-session sidebar) ---
+//
+// TODO(history-backend): the endpoints below are owned by a parallel backend
+// agent and may not be deployed yet. Expected shapes (lightweight list rows;
+// full rows match CheckoutSession):
+//   GET    /console/checkout/sessions         -> CheckoutSessionListItem[]
+//   GET    /console/checkout/session/{id}     -> CheckoutSession
+//   PATCH  /console/checkout/session/{id}     -> CheckoutSession (title/archived)
+//   DELETE /console/checkout/session/{id}     -> archive, never destroys commerce rows
+// Until they ship, every helper here degrades gracefully: listCheckoutSessions
+// returns null (the history panel hides and single-session behavior is intact),
+// getCheckoutSessionById returns null for unknown ids, and archive/delete fall
+// back to the existing close endpoint (ABANDONED rows drop out of the active
+// set). Do NOT add backend routes here — that work belongs to the backend agent.
+
+export interface CheckoutSessionListItem {
+  session_id: string;
+  title?: string | null;
+  status: CheckoutSessionStatus;
+  archived?: boolean | null;
+  order_id?: string | null;
+  trace_id?: string | null;
+  order_status?: string | null;
+  amount_paise?: number | null;
+  budget_paise?: number | null;
+  message?: string | null;
+  message_count?: number | null;
+  approval_pending?: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 404/405/501 from a history route means "not deployed yet", not an error. */
+function isHistoryUnsupported(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    (err.status === 404 || err.status === 405 || err.status === 501)
+  );
+}
+
+/**
+ * Lightweight session list for the history sidebar.
+ * Returns null when the endpoint is not deployed yet (panel hides) — an
+ * empty array means "deployed, but no sessions".
+ */
+export async function listCheckoutSessions(
+  opts: { buyer_ref?: string; include_archived?: boolean; limit?: number; offset?: number } = {}
+): Promise<CheckoutSessionListItem[] | null> {
+  const params = new URLSearchParams();
+  if (opts.buyer_ref) params.set("buyer_ref", opts.buyer_ref);
+  if (opts.include_archived) params.set("include_archived", "true");
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  const query = params.toString();
+  try {
+    return await apiFetch<CheckoutSessionListItem[]>(
+      `/console/checkout/sessions${query ? `?${query}` : ""}`
+    );
+  } catch (err) {
+    if (isHistoryUnsupported(err)) return null;
+    throw err;
+  }
+}
+
+/** Full session by id. Null on unknown/foreign id or missing endpoint. */
+export async function getCheckoutSessionById(
+  sessionId: string
+): Promise<CheckoutSession | null> {
+  try {
+    return await apiFetch<CheckoutSession>(
+      `/console/checkout/session/${encodeURIComponent(sessionId)}`
+    );
+  } catch (err) {
+    if (isHistoryUnsupported(err)) return null;
+    if (err instanceof ApiError && err.isNotFound) return null;
+    throw err;
+  }
+}
+
+export interface CheckoutSessionPatch {
+  title?: string;
+  archived?: boolean;
+}
+
+/** Null when the endpoint is missing or the id is unknown/foreign. */
+export async function patchCheckoutSession(
+  sessionId: string,
+  patch: CheckoutSessionPatch
+): Promise<CheckoutSession | null> {
+  try {
+    return await apiFetch<CheckoutSession>(
+      `/console/checkout/session/${encodeURIComponent(sessionId)}`,
+      { method: "PATCH", body: JSON.stringify(patch) }
+    );
+  } catch (err) {
+    if (isHistoryUnsupported(err)) return null;
+    if (err instanceof ApiError && err.isNotFound) return null;
+    throw err;
+  }
+}
+
+/**
+ * Archive a session (hide from history). Prefers PATCH archived:true; falls
+ * back to the existing close endpoint when the history routes are missing.
+ */
+export async function archiveCheckoutSession(sessionId: string): Promise<void> {
+  const patched = await patchCheckoutSession(sessionId, { archived: true }).catch(
+    () => null
+  );
+  if (patched) return;
+  // Fallback: ABANDONED rows drop out of the active set. Closing a COMPLETED
+  // row is a no-op server-side, so this never harms commerce state.
+  try {
+    await closeCheckoutSession(sessionId);
+  } catch (err) {
+    // Close also 404s on foreign ids — surface that honestly.
+    if (err instanceof ApiError && err.isNotFound) {
+      throw new ApiError(404, "Not Found", "Checkout session not found");
+    }
+    throw err;
+  }
+}
+
+/**
+ * Delete a session from history. The DELETE route archives (never destroys
+ * commerce rows); falls back to close when the route is missing.
+ */
+export async function deleteCheckoutSession(sessionId: string): Promise<void> {
+  try {
+    await apiFetch<unknown>(
+      `/console/checkout/session/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" }
+    );
+    return;
+  } catch (err) {
+    if (!isHistoryUnsupported(err)) throw err;
+  }
+  await archiveCheckoutSession(sessionId);
 }
 
 export interface ConsoleTransactionDetail extends ConsoleTransaction {
@@ -486,8 +701,29 @@ export async function getHealthPublic(): Promise<HealthResponse> {
 
 // --- Agents / system status ---
 
-export async function getAgentsStatus(): Promise<AgentsStatusResponse> {
-  return apiFetch<AgentsStatusResponse>("/agents/status");
+// Shared status cache: overview, sidebar, and topbar each mount the status
+// hook, which tripled /agents/status traffic per dashboard render. One
+// in-flight request is shared and fresh responses are reused for 15s;
+// manual refresh passes force=true to bypass.
+let statusCache: { data: AgentsStatusResponse; at: number } | null = null;
+let statusInflight: Promise<AgentsStatusResponse> | null = null;
+const STATUS_TTL_MS = 15_000;
+
+export async function getAgentsStatus(force = false): Promise<AgentsStatusResponse> {
+  if (!force && statusCache && Date.now() - statusCache.at < STATUS_TTL_MS) {
+    return statusCache.data;
+  }
+  if (!force && statusInflight) return statusInflight;
+  const pending = apiFetch<AgentsStatusResponse>("/agents/status").then((data) => {
+    statusCache = { data, at: Date.now() };
+    return data;
+  });
+  if (!force) statusInflight = pending;
+  try {
+    return await pending;
+  } finally {
+    if (statusInflight === pending) statusInflight = null;
+  }
 }
 
 // --- Console commerce flow (merchant JWT, never agent keys) ---
