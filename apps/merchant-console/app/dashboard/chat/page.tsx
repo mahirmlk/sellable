@@ -92,11 +92,11 @@ function CartCard({ cart }: { cart: CartPayload }) {
           <div key={item.sku} className="flex items-center justify-between gap-3">
             <div>
               <div className="font-[var(--font-mono)] text-[0.72rem] text-[var(--bb-white)]">{item.sku}</div>
-              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] tabular-nums">
+              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)] tabular-nums">
                 {item.quantity} × {formatPaise(item.offered_price_paise)}
               </div>
             </div>
-            <div className="font-[var(--font-mono)] text-[0.78rem] text-[var(--bb-grey-1)] tabular-nums">
+            <div className="font-[var(--font-mono)] text-[0.78rem] text-[var(--bb-white)] tabular-nums">
               {formatPaise(item.line_total_paise ?? item.quantity * item.offered_price_paise)}
             </div>
           </div>
@@ -106,7 +106,7 @@ function CartCard({ cart }: { cart: CartPayload }) {
         <div className="border-l-2 border-[var(--bb-orange)] pl-3 py-1 mb-3">
           <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] mb-1">UPSELL</div>
           {cart.upsell_rationale && (
-            <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-2)] leading-relaxed">{cart.upsell_rationale}</div>
+            <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-1)] leading-relaxed">{cart.upsell_rationale}</div>
           )}
         </div>
       )}
@@ -136,13 +136,13 @@ function PolicyCard({ decision }: { decision: PolicyDecisionPayload }) {
         </span>
       </div>
       {decision.reason_code && (
-        <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-1)] mb-1">{decision.reason_code}</div>
+        <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-white)] mb-1">{decision.reason_code}</div>
       )}
-      <div className="font-[var(--font-sans)] text-[0.74rem] text-[var(--bb-grey-2)] leading-relaxed mb-3">{decision.reasoning_summary}</div>
+      <div className="font-[var(--font-sans)] text-[0.74rem] text-[var(--bb-grey-1)] leading-relaxed mb-3">{decision.reasoning_summary}</div>
       {decision.policy_refs.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {decision.policy_refs.map((ref) => (
-            <span key={ref} className="font-[var(--font-mono)] text-[0.46rem] tracking-[0.06em] px-1.5 py-0.5 border border-[var(--bb-line-soft)] text-[var(--bb-grey-3)]">{ref}</span>
+            <span key={ref} className="font-[var(--font-mono)] text-[0.46rem] tracking-[0.06em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]">{ref}</span>
           ))}
         </div>
       )}
@@ -235,6 +235,11 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [phase, setPhase] = useState<ChatPhase>("idle");
   const [budgetPaise, setBudgetPaise] = useState(600000);
+  // Draft vs applied: typing must never silently move the session ceiling.
+  // Only Apply validates and commits the draft into budgetPaise, which is
+  // what buildIntent sends as the buyer-side budget_ceiling_paise.
+  const [budgetDraft, setBudgetDraft] = useState("6000");
+  const [budgetMsg, setBudgetMsg] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [categories, setCategories] = useState<string[]>(["accessories", "gifting", "snacks"]);
   const [upsellOn, setUpsellOn] = useState(true);
   const [decision, setDecision] = useState<SellerDecisionPayload | null>(null);
@@ -280,6 +285,7 @@ export default function ChatPage() {
 
   const resetSession = useCallback(() => {
     stopPolling();
+    setBudgetMsg(null);
     setMessages([]);
     setDecision(null);
     setIntent(null);
@@ -317,6 +323,22 @@ export default function ChatPage() {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
   }, [messages, phase]);
+
+  const applyBudget = useCallback(() => {
+    const rupees = parseFloat(budgetDraft);
+    if (!Number.isFinite(rupees) || rupees <= 0) {
+      setBudgetMsg({ kind: "error", text: "Enter a positive budget amount." });
+      return;
+    }
+    const paise = Math.round(rupees * 100);
+    if (!Number.isSafeInteger(paise) || paise <= 0) {
+      setBudgetMsg({ kind: "error", text: "Enter a positive budget amount." });
+      return;
+    }
+    setBudgetPaise(paise);
+    setBudgetDraft(String(Math.round(paise / 100)));
+    setBudgetMsg({ kind: "ok", text: `Budget updated to ${formatPaise(paise)}.` });
+  }, [budgetDraft]);
 
   const buildIntent = useCallback(
     (message: string): IntentMandate => ({
@@ -505,8 +527,13 @@ export default function ChatPage() {
     setBusy(true);
     setPhase("checkout");
     try {
+      // Rebuild the intent at checkout time so an Apply-after-quote is
+      // honored: the stored intent was minted when the quote was requested
+      // and would otherwise carry a stale budget ceiling to order creation.
+      const freshIntent = buildIntent(sessionMessageRef.current);
+      setIntent(freshIntent);
       const result = await consoleCreateOrder({
-        intent,
+        intent: freshIntent,
         message: sessionMessageRef.current,
         idempotency_key: `idem_chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         request_upsell: upsellOn,
@@ -535,7 +562,7 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [intent, decision, busy, upsellOn, pollOrder]);
+  }, [intent, decision, busy, upsellOn, pollOrder, buildIntent]);
 
   const handlePay = useCallback(async () => {
     if (!order || !consent || busy) return;
@@ -824,18 +851,34 @@ export default function ChatPage() {
           <div className="overflow-y-auto p-5 space-y-4 max-h-[50vh] lg:max-h-none lg:flex-1">
             {/* Session settings — always visible */}
             <div className="space-y-2.5 pb-4 border-b border-[var(--bb-line-soft)]">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">Session budget</span>
                 <div className="flex items-center gap-1.5">
-                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">₹</span>
+                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">₹</span>
                   <input
                     type="number"
-                    value={Math.round(budgetPaise / 100)}
-                    onChange={(e) => setBudgetPaise(Math.max(1, Math.round((parseFloat(e.target.value) || 0) * 100)))}
-                    className="w-[76px] font-[var(--font-mono)] text-[0.68rem] text-right bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-2 py-1 tabular-nums focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
-                    aria-label="Session budget in rupees"
+                    min="1"
+                    value={budgetDraft}
+                    onChange={(e) => { setBudgetDraft(e.target.value); setBudgetMsg(null); }}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyBudget(); } }}
+                    className="w-[84px] font-[var(--font-mono)] text-[0.68rem] text-right bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-2 py-1 tabular-nums focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+                    aria-label="Session budget in rupees (press Apply to confirm)"
                   />
+                  <button
+                    onClick={applyBudget}
+                    className="h-[26px] px-2.5 border border-[var(--bb-orange)]/50 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-colors cursor-pointer"
+                  >
+                    APPLY
+                  </button>
                 </div>
+              </div>
+              {budgetMsg && (
+                <div className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.06em] text-right ${budgetMsg.kind === "ok" ? "text-green-400" : "text-red-400"}`}>
+                  {budgetMsg.text}
+                </div>
+              )}
+              <div className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)] leading-relaxed">
+                Buyer-side session ceiling ({formatPaise(budgetPaise)} applied) — merchant caps below still apply.
               </div>
               <div className="flex items-center justify-between">
                 <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">Upsells</span>
@@ -849,9 +892,21 @@ export default function ChatPage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">HITL threshold</span>
-                <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)] tabular-nums">
+                <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)] tabular-nums">
                   {policy ? formatPaise(policy.human_approval_threshold_paise) : "—"}
                 </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">Max item value</span>
+                <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)] tabular-nums">
+                  {policy ? formatPaise(policy.max_single_item_value_paise) : "—"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)] leading-relaxed">Merchant caps live in Settings</span>
+                <Link href="/dashboard/settings" className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:text-[var(--bb-orange-bright)] transition-colors">
+                  EDIT IN SETTINGS →
+                </Link>
               </div>
             </div>
 
@@ -862,7 +917,7 @@ export default function ChatPage() {
               </div>
             )}
             {phase === "thinking" && (
-              <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-4)]">Evaluating request…</div>
+              <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)]">Evaluating request…</div>
             )}
 
             {phase === "quote" && decision && cart && (
