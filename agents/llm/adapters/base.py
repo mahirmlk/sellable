@@ -29,6 +29,35 @@ def reply_skus_known(reply: str, known_skus: set[str]) -> bool:
     return True
 
 
+def reply_amounts_known(reply: str, allowed_paise: set[int]) -> bool:
+    """Fail-closed check that an LLM reply invents no money amounts.
+
+    Every money-shaped token — ``₹24,999``, ``Rs. 24999.00``, ``INR 4,650.50``,
+    or ``499900 paise`` — is normalized to paise and must exactly match one of
+    the authoritative amounts supplied by the commerce core. A model that
+    converts, rounds, reformats, or simply hallucinates a figure (the classic
+    paise-vs-rupees slip) produces a value outside the set and the whole reply
+    is rejected so the caller can fall back to its deterministic message.
+    Replies that name no money amount pass trivially. Fail-closed by design:
+    a false positive only costs the LLM phrasing, never correctness.
+    """
+    import re
+
+    matches = re.findall(
+        r"(?:(?:₹|Rs\.?|INR)\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*)\s*paise)",
+        reply,
+        flags=re.IGNORECASE,
+    )
+    for rupees, paise in matches:
+        if paise:
+            amount = int(paise.replace(",", ""))
+        else:
+            amount = round(float(rupees.replace(",", "")) * 100)
+        if amount not in allowed_paise:
+            return False
+    return True
+
+
 class LLMError(RuntimeError):
     """Raised when a provider cannot satisfy a completion request."""
 

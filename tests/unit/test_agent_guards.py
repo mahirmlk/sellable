@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import create_engine
 
 from agents.buyer.policies import BuyerPolicy
-from agents.llm.adapters.base import reply_skus_known
+from agents.llm.adapters.base import reply_amounts_known, reply_skus_known
 from sellable.agents.buyer import BuyerAction, BuyerAgent
 from sellable.agents.seller import SellerAction, SellerAgent, SellerRequest
 from sellable.catalog import CatalogService
@@ -469,6 +469,28 @@ def test_reply_skus_known() -> None:
     # "1-2" and lowercase hyphenations are not SKU-shaped.
     assert reply_skus_known("Options 1-2 look good.", set()) is True
     assert reply_skus_known("A well-known great pick.", set()) is True
+
+
+def test_reply_amounts_known() -> None:
+    authoritative = {2_499_900}  # ₹24,999.00 in paise
+    # Exact copies of the authoritative amount pass, in any faithful format.
+    assert reply_amounts_known("That desk is priced at ₹24,999.", authoritative) is True
+    assert reply_amounts_known("That desk is priced at ₹24,999.00.", authoritative) is True
+    assert reply_amounts_known("Rs. 24999, within budget.", authoritative) is True
+    assert reply_amounts_known("INR 24,999.00 total.", authoritative) is True
+    assert reply_amounts_known("Total 2499900 paise.", authoritative) is True
+    # No money amounts at all passes trivially.
+    assert reply_amounts_known("Would you like to continue?", authoritative) is True
+    # The classic paise/rupee slips: converted, rounded, or 10x figures fail.
+    assert reply_amounts_known("That desk is priced at ₹249,999.", authoritative) is False
+    assert reply_amounts_known("That desk is priced at ₹2,49,990.", authoritative) is False
+    assert reply_amounts_known("Priced at 24999900 paise.", authoritative) is False
+    assert reply_amounts_known("₹24,999.50 — a fair deal.", authoritative) is False
+    # A mix of one correct and one invented amount fails closed.
+    assert reply_amounts_known("₹24,999 total, shipping ₹500 extra.", authoritative) is False
+    # The buyer budget echo is only allowed when it is itself authoritative.
+    assert reply_amounts_known("within your ₹30,000 budget.", {3_000_000}) is True
+    assert reply_amounts_known("within your ₹30,000 budget.", {2_499_900}) is False
 
 
 def test_buyer_policy_evaluate_covers_expiry_and_budget() -> None:

@@ -13,7 +13,7 @@ import logging
 from agents.buyer.graph import build_buyer_graph
 from agents.buyer.policies import BuyerPolicy, BuyerPolicyVerdict
 from agents.buyer.tools import BuyerTools
-from agents.llm.adapters.base import LLMAdapter, reply_skus_known
+from agents.llm.adapters.base import LLMAdapter, reply_amounts_known, reply_skus_known
 from agents.seller.agent import SellerAction, SellerDecision, SellerRequest
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
@@ -230,7 +230,7 @@ class BuyerAgent:
             summary,
         )
         summary = self._phrase_summary(
-            summary, decision, state["mission"].message, state["trace_id"]
+            summary, decision, state["mission"], state["trace_id"]
         )
         return {
             "result": BuyerResult(
@@ -248,27 +248,44 @@ class BuyerAgent:
         self,
         deterministic_summary: str,
         decision: SellerDecision,
-        mission: str,
+        mission: BuyerMission,
         trace_id: str,
     ) -> str:
         """Rephrase the buyer-facing summary with the LLM when available.
 
         The model only rephrases the deterministic evaluation outcome from the
         grounded seller decision; it cannot alter the action, cart, or budget
-        verdict. The reply is validated against the known cart SKUs — a reply
-        naming an unknown SKU is rejected — and every outcome (llm phrasing
+        verdict. The reply is validated against the known cart SKUs and every
+        money amount it mentions must exactly match an authoritative figure
+        from the cart or the mission's own budget ceiling — a reply that
+        converts, rounds, reformats, or invents a price is rejected — and the
+        deterministic summary is kept instead. Every outcome (llm phrasing
         vs deterministic fallback) is ledgered so replay shows the provenance.
         On any failure the deterministic summary is kept.
         """
         if self.llm is None or decision.cart is None:
             return deterministic_summary
-        known_skus = {item.sku for item in decision.cart.items}
+        cart = decision.cart
+        known_skus = {item.sku for item in cart.items}
+        allowed_paise = {
+            mission.budget_ceiling_paise,
+            cart.subtotal_paise,
+            cart.discount_paise,
+            cart.total_paise,
+        }
+        for item in cart.items:
+            allowed_paise.update(
+                {item.unit_price_paise, item.offered_price_paise, item.line_total_paise}
+            )
+        total_inr = f"₹{cart.total_paise / 100:,.2f}"
         payload = (
-            f"Buyer mission: {mission}\n"
+            f"Buyer mission: {mission.message}\n"
             f"Evaluation result: {deterministic_summary}\n"
             f"Seller action: {decision.action}\n"
-            f"Cart total: {decision.cart.total_paise} paise\n"
-            f"Items: {', '.join(f'{i.sku} x{i.quantity}' for i in decision.cart.items)}\n"
+            f"Buyer budget ceiling: ₹{mission.budget_ceiling_paise / 100:,.2f} "
+            f"({mission.budget_ceiling_paise} paise)\n"
+            f"Cart total: {total_inr} ({cart.total_paise} paise)\n"
+            f"Items: {', '.join(f'{i.sku} x{i.quantity} at ₹{i.offered_price_paise / 100:,.2f}' for i in cart.items)}\n"
             f"Policy verdict: {decision.policy_decision.verdict if decision.policy_decision else 'n/a'}"
         )
         try:
@@ -279,24 +296,32 @@ class BuyerAgent:
                         "content": (
                             "You are an AI purchasing agent summarizing a completed evaluation for "
                             "your human buyer. Use ONLY the facts in the payload. Never invent SKUs, "
-                            "prices, or outcomes. Reply in 1-2 concise sentences."
+                            "prices, or outcomes. Every money amount in your reply must be copied "
+                            "exactly from the payload — never convert, round, reformat, or compute "
+                            "amounts. Reply in 1-2 concise sentences."
                         ),
                     },
                     {"role": "user", "content": payload},
                 ],
                 timeout=10,
             ).strip()
-            if reply and len(reply) <= 1_000 and reply_skus_known(reply, known_skus):
+            if (
+                reply
+                and len(reply) <= 1_000
+                and reply_skus_known(reply, known_skus)
+                and reply_amounts_known(reply, allowed_paise)
+            ):
                 self._record(
                     trace_id,
                     "buyer.response_phrased",
                     {"llm_used": True, "model": getattr(self.llm, "model", "unknown")},
-                    "Rephrased the buyer summary with the LLM; SKUs validated against the cart.",
+                    "Rephrased the buyer summary with the LLM; SKUs and money amounts validated against the cart.",
                 )
                 return reply
             if reply:
                 logger.warning(
-                    "buyer summary rephrase rejected (length or unknown SKU); using deterministic text"
+                    "buyer summary rephrase rejected (length, unknown SKU, or non-authoritative "
+                    "amount); using deterministic text"
                 )
         except Exception as error:
             logger.warning("buyer summary rephrase failed; using deterministic text: %s", error)

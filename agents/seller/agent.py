@@ -15,7 +15,7 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 from pydantic import Field
 
-from agents.llm.adapters.base import LLMAdapter, reply_skus_known
+from agents.llm.adapters.base import LLMAdapter, reply_amounts_known, reply_skus_known
 from agents.seller.tools import SellerTools
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
@@ -265,7 +265,9 @@ class SellerAgent:
             explanation="Produced a structured seller response from catalog and policy tool results.",
         )
         return {
-            "result": self._phrase_if_llm(result, state["request"].message, state["trace_id"])
+            "result": self._phrase_if_llm(
+                result, state["request"].message, state["request"].intent, state["trace_id"]
+            )
         }
 
     @staticmethod
@@ -295,7 +297,11 @@ class SellerAgent:
         )
 
     def _phrase_if_llm(
-        self, result: SellerDecision, buyer_message: str, trace_id: str
+        self,
+        result: SellerDecision,
+        buyer_message: str,
+        intent: IntentMandate,
+        trace_id: str,
     ) -> SellerDecision:
         """Rephrase the response message in natural language when an LLM is wired.
 
@@ -303,7 +309,10 @@ class SellerAgent:
         tool-grounded decision. It can never invent SKUs, prices, stock, or
         policy outcomes: it is handed the exact decision payload and asked to
         write a concise buyer-facing reply. The reply is validated against the
-        known cart SKUs — a reply naming an unknown SKU is rejected — and the
+        known cart SKUs, and every money amount it mentions must exactly match
+        an authoritative figure from the policy-validated cart or the buyer's
+        intent budget — a reply that converts, rounds, reformats, or invents a
+        price is rejected and the deterministic message is used instead. The
         outcome is ledgered so replay distinguishes LLM phrasing from the
         deterministic fallback. Any failure falls back to the deterministic
         message so the commerce flow never breaks.
@@ -311,7 +320,8 @@ class SellerAgent:
         if self.llm is None or result.cart is None:
             return result
         known_skus = {item.sku for item in result.cart.items}
-        summary = self._decision_summary(result, buyer_message)
+        allowed_paise = self._authoritative_paise(result, intent)
+        summary = self._decision_summary(result, buyer_message, intent)
         try:
             # Phrasing is cosmetic: bound it well below the provider default
             # so a slow model delays — but never hangs — the quote path.
@@ -322,7 +332,9 @@ class SellerAgent:
                         "content": (
                             "You are SELLABLE's merchant seller assistant replying to an AI buyer. "
                             "Use ONLY the facts in the structured payload. Never invent SKUs, prices, "
-                            "stock, discounts, or policy outcomes. Reply in 1-3 concise, friendly "
+                            "stock, discounts, or policy outcomes. Every money amount in your reply "
+                            "must be copied exactly from the payload — never convert, round, "
+                            "reformat, or compute amounts. Reply in 1-3 concise, friendly "
                             "sentences, addressing what the buyer asked."
                         ),
                     },
@@ -333,18 +345,24 @@ class SellerAgent:
                 ],
                 timeout=10,
             ).strip()
-            if reply and len(reply) <= 1_000 and reply_skus_known(reply, known_skus):
+            if (
+                reply
+                and len(reply) <= 1_000
+                and reply_skus_known(reply, known_skus)
+                and reply_amounts_known(reply, allowed_paise)
+            ):
                 self.tools._record(
                     trace_id=trace_id,
                     action="seller.response_phrased",
                     inputs={"tool_calls": result.tool_calls},
                     output={"llm_used": True, "model": getattr(self.llm, "model", "unknown")},
-                    explanation="Rephrased the seller message with the LLM; SKUs validated against the cart.",
+                    explanation="Rephrased the seller message with the LLM; SKUs and money amounts validated against the cart.",
                 )
                 return result.model_copy(update={"response_message": reply})
             if reply:
                 logger.warning(
-                    "seller rephrase rejected (length or unknown SKU); using deterministic text"
+                    "seller rephrase rejected (length, unknown SKU, or non-authoritative amount); "
+                    "using deterministic text"
                 )
         except Exception as error:
             logger.warning("seller rephrase failed; using deterministic text: %s", error)
@@ -357,19 +375,43 @@ class SellerAgent:
         )
         return result
 
-    def _decision_summary(self, result: SellerDecision, buyer_message: str) -> str:
+    @staticmethod
+    def _authoritative_paise(result: SellerDecision, intent: IntentMandate) -> set[int]:
+        """Every paise value the reply is allowed to state.
+
+        Built only from the policy-validated cart and the buyer's intent
+        budget — the same figures the deterministic message renders — so the
+        LLM can quote the deal in rupees or paise but can never introduce a
+        different amount.
+        """
+        amounts: set[int] = {intent.budget_ceiling_paise}
+        cart = result.cart
+        if cart:
+            for item in cart.items:
+                amounts.update({item.unit_price_paise, item.offered_price_paise, item.line_total_paise})
+            amounts.update({cart.subtotal_paise, cart.discount_paise, cart.total_paise})
+        return amounts
+
+    def _decision_summary(
+        self, result: SellerDecision, buyer_message: str, intent: IntentMandate
+    ) -> str:
         cart = result.cart
         lines = [
             f"Buyer request: {buyer_message}",
+            f"Buyer budget ceiling: {self._inr(intent.budget_ceiling_paise)} "
+            f"({intent.budget_ceiling_paise} paise)",
             f"Action: {result.action}",
         ]
         if cart:
             for item in cart.items:
                 lines.append(
-                    f"- {item.sku} x{item.quantity} at {item.offered_price_paise} paise "
-                    f"(unit {item.unit_price_paise} paise)"
+                    f"- {item.sku} x{item.quantity} at {self._inr(item.offered_price_paise)} per unit "
+                    f"({item.offered_price_paise} paise; list {self._inr(item.unit_price_paise)})"
                 )
-            lines.append(f"Cart total: {cart.total_paise} paise")
+            lines.append(
+                f"Cart total: {self._inr(cart.total_paise)} ({cart.total_paise} paise; "
+                f"discount {self._inr(cart.discount_paise)})"
+            )
             if cart.upsell_rationale:
                 lines.append(f"Upsell rationale: {cart.upsell_rationale}")
         if result.policy_decision:
