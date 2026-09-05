@@ -14,10 +14,13 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2-143C5D.svg)](https://langchain-ai.github.io/langgraph/)
+[![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063.svg?logo=pydantic&logoColor=white)](https://docs.pydantic.dev/)
+[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.0-D71F00.svg)](https://www.sqlalchemy.org/)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000.svg?logo=next.js&logoColor=white)](https://nextjs.org/)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4.svg?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS-4-06B6D4.svg?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Supabase](https://img.shields.io/badge/Supabase-Auth%20%2F%20Postgres-3FCF8E.svg?logo=supabase&logoColor=white)](https://supabase.com/)
 [![Razorpay](https://img.shields.io/badge/Razorpay-Test%20Mode-07263E.svg?logo=razorpay&logoColor=white)](https://razorpay.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-Dev-003B57.svg?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
@@ -33,12 +36,11 @@
 
 ## What Is SELLABLE?
 
-The commerce landscape is shifting. AI buyers -- Perplexity, OpenAI shopping agents, Google Procurement -- are beginning to **discover, negotiate, and purchase** products autonomously. Merchants today are built for human eyeballs: HTML storefronts, coupon codes, manual carts. They are **invisible and unusable to AI buyers**.
+**SELLABLE** is a commerce layer built for AI buyers.
 
-**SELLABLE** solves this. It makes any merchant:
-- **Discoverable** -- via machine-readable `agents.json`, `llms.txt`, and a product catalog API
-- **Negotiable** -- bounded, policy-governed agent-to-agent price negotiation
-- **Safely transactable** -- deterministic policy engine, single-use consent, real Razorpay payments, full audit trail
+It gives agents a machine-readable way to discover products, request and negotiate quotes, get transaction-bound consent, complete payments, and track what happened along the way.
+
+The important part is what stays outside the LLM: pricing rules, spend limits, consent, order state, payment verification, and audit logging are handled deterministically. The model can propose an action, but it doesn't get to decide whether that action is allowed.
 
 > **The LLM proposes, the policy engine disposes -- and every action leaves an explanation.**
 
@@ -73,218 +75,23 @@ The commerce landscape is shifting. AI buyers -- Perplexity, OpenAI shopping age
 
 ### High-Level System Architecture
 
-```mermaid
-graph TB
-    subgraph HumanLayer["Human Layer"]
-        BUYER_HUMAN["Buyer Human"]
-        MERCHANT_HUMAN["Merchant Operator"]
-    end
-
-    subgraph Frontend["Frontend"]
-        MERCHANT_CONSOLE["Merchant Console\nNext.js 16 / React 19 / Tailwind 4"]
-    end
-
-    subgraph AgentLayer["Agent Layer"]
-        BUYER_AGENT["Buyer Agent\nLangGraph State Machine"]
-        SELLER_AGENT["Seller Agent\nLangGraph State Machine"]
-    end
-
-    subgraph Gateway["Gateway & Discovery"]
-        AGENT_GATEWAY["Agent Gateway\nagents.json / llms.txt / catalog.ai.json"]
-        AUTH["HMAC Signed-Key Auth"]
-    end
-
-    subgraph CommerceCore["Commerce Core"]
-        CATALOG["Catalog Service"]
-        QUOTE["Quote Engine"]
-        ORDERS["Order State Machine"]
-        CONSENT["Consent Service"]
-        REFUNDS["Refund Service"]
-    end
-
-    subgraph PolicyTrust["Policy & Trust"]
-        POLICY_ENGINE["Policy Engine\nDeterministic / LLM-Independent"]
-        XAI_LEDGER["XAI Ledger\nAppend-Only Audit Trail"]
-    end
-
-    subgraph PaymentRail["Payment Rail"]
-        RAZORPAY["Razorpay Adapter\nTest Mode / Webhooks / HMAC Verification"]
-    end
-
-    subgraph Infrastructure["Infrastructure"]
-        DB[("PostgreSQL / SQLite")]
-        DOCKER["Docker"]
-        CI["GitHub Actions CI"]
-    end
-
-    BUYER_HUMAN -->|"talks to"| BUYER_AGENT
-    MERCHANT_HUMAN -->|"manages via"| MERCHANT_CONSOLE
-
-    BUYER_AGENT <-->|"A2A Protocol"| AGENT_GATEWAY
-    AGENT_GATEWAY --> AUTH
-    AUTH --> SELLER_AGENT
-
-    SELLER_AGENT --> CATALOG
-    SELLER_AGENT --> QUOTE
-    QUOTE --> POLICY_ENGINE
-
-    ORDERS --> CONSENT
-    CONSENT --> RAZORPAY
-    RAZORPAY -->|"webhook"| ORDERS
-
-    ORDERS --> XAI_LEDGER
-    POLICY_ENGINE --> XAI_LEDGER
-    CONSENT --> XAI_LEDGER
-    SELLER_AGENT --> XAI_LEDGER
-
-    CATALOG --> DB
-    ORDERS --> DB
-    CONSENT --> DB
-    XAI_LEDGER --> DB
-
-    MERCHANT_CONSOLE -->|"API calls"| ORDERS
-    MERCHANT_CONSOLE -->|"reads"| XAI_LEDGER
-```
+![High-Level System Architecture](docs/images/01-high-level-system-architecture.png)
 
 ### Transaction Lifecycle
 
-```mermaid
-sequenceDiagram
-    participant Buyer as Buyer Agent
-    participant Gateway as Agent Gateway
-    participant Seller as Seller Agent
-    participant Policy as Policy Engine
-    participant Consent as Consent Service
-    participant Razorpay as Razorpay
-    participant Ledger as XAI Ledger
-
-    Buyer->>Gateway: Discover merchant (agents.json)
-    Gateway-->>Buyer: Merchant manifest + catalog
-    Buyer->>Gateway: Search catalog
-    Gateway->>Seller: Forward request
-    Seller->>Policy: Evaluate quote
-    Policy-->>Seller: ALLOW / DENY / NEEDS_HUMAN
-    Seller->>Ledger: Record quote event
-    Seller-->>Buyer: Quote + cart
-
-    opt Bounded Negotiation (max 5 rounds)
-        Buyer->>Gateway: Counter-offer
-        Gateway->>Seller: Forward negotiation
-        Seller->>Policy: Re-evaluate
-        Policy-->>Seller: Decision
-        Seller->>Ledger: Record negotiation event
-        Seller-->>Buyer: Updated quote
-    end
-
-    Buyer->>Gateway: Accept quote
-    Gateway->>Consent: Issue single-use consent
-    Consent->>Ledger: Record consent event
-    Consent-->>Buyer: Consent token
-
-    Buyer->>Gateway: Initiate payment
-    Gateway->>Razorpay: Create order + payment link
-    Razorpay-->>Buyer: Payment URL
-
-    Buyer->>Razorpay: Complete payment
-    Razorpay->>Razorpay: HMAC webhook
-    Razorpay->>Gateway: Signed webhook
-    Gateway->>Razorpay: Verify signature
-    Gateway->>Consent: Mark consent consumed
-    Gateway->>Ledger: Record payment event
-
-    opt Refund
-        Buyer->>Gateway: Request refund
-        Gateway->>Razorpay: Process refund
-        Razorpay-->>Gateway: Refund confirmed
-        Gateway->>Ledger: Record refund event
-    end
-```
+![Transaction Lifecycle](docs/images/02-transaction-lifecycle.png)
 
 ### Core Transaction State Machine
 
-```mermaid
-stateDiagram-v2
-    [*] --> QUOTED
-    QUOTED --> AWAITING_CONSENT : buyer accepts quote
-    AWAITING_CONSENT --> CONSENTED : consent issued
-    CONSENTED --> PAYMENT_PENDING : payment initiated
-    PAYMENT_PENDING --> PAID : webhook confirmed
-    PAYMENT_PENDING --> PAYMENT_FAILED : webhook failure
-    PAYMENT_FAILED --> PAYMENT_PENDING : retry
-    PAID --> FULFILLED : order complete
-    CONSENTED --> ABORTED : buyer cancels
-    PAID --> REFUNDED : refund processed
-    AWAITING_CONSENT --> ABORTED : timeout/cancel
-```
+![Core Transaction State Machine](docs/images/03-core-transaction-state-machine.png)
 
 ### Agent Interaction Flow
 
-```mermaid
-graph LR
-    subgraph BuyerAgent["Buyer Agent"]
-        B1[Discover] --> B2[Research]
-        B2 --> B3[Request Quote]
-        B3 --> B4[Evaluate]
-        B4 -->|counter| B3
-        B4 -->|accept| B5[Pay]
-    end
-
-    subgraph SellerAgent["Seller Agent"]
-        S1[Search Catalog] --> S2[Create Quote]
-        S2 --> S3[Consider Upsell]
-        S3 --> S4[Format Response]
-    end
-
-    subgraph PolicyEngine["Policy Engine"]
-        P1[Budget Check] --> P2[Floor Price]
-        P2 --> P3[Category Check]
-        P3 --> P4[Stock Check]
-        P4 --> P5[Decision]
-    end
-
-    B3 <-->|"A2A Protocol"| S1
-    S2 --> P1
-    S3 --> P1
-```
+![Agent Interaction Flow](docs/images/04-agent-interaction-flow.png)
 
 ### Merchant Console Dashboard
 
-```mermaid
-graph TB
-    subgraph DashboardPages["Dashboard Pages"]
-        HOME["Home"]
-        ACTIVITY["Activity Feed"]
-        TRANSACTIONS["Transactions"]
-        APPROVALS["Approvals"]
-        CATALOG["Catalog"]
-        GROWTH["Growth"]
-        SETTINGS["Settings"]
-        STOREFRONT["Storefront"]
-    end
-
-    subgraph Components["Components"]
-        SIDEBAR["Sidebar Navigation"]
-        TOPBAR["Top Bar"]
-        ORDER_FEED["Order Feed"]
-        LEDGER_VIEW["Ledger View"]
-        METRIC_CARDS["Metric Cards"]
-        POLICY_PANEL["Policy Panel"]
-        HEALTH["Health Indicator"]
-    end
-
-    HOME --> ACTIVITY
-    HOME --> TRANSACTIONS
-    HOME --> APPROVALS
-    HOME --> CATALOG
-    HOME --> GROWTH
-    HOME --> SETTINGS
-    HOME --> STOREFRONT
-
-    ACTIVITY --> ORDER_FEED
-    TRANSACTIONS --> LEDGER_VIEW
-    APPROVALS --> POLICY_PANEL
-    GROWTH --> METRIC_CARDS
-```
+![Merchant Console Dashboard](docs/images/05-merchant-console-dashboard.png)
 
 ---
 
@@ -571,7 +378,6 @@ python -m evals.runner.scenario_runner
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues & fixes |
 | [SECURITY.md](SECURITY.md) | Security policy & vulnerability reporting |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
-| [WORKFLOW.md](WORKFLOW.md) | AI buyer workflow documentation |
 
 ---
 
@@ -583,6 +389,7 @@ python -m evals.runner.scenario_runner
 - LangGraph
 - Pydantic v2
 - SQLAlchemy 2.0
+- PyJWT (ES256 merchant auth)
 - SlowAPI (rate limiting)
 - Uvicorn
 
@@ -594,8 +401,12 @@ python -m evals.runner.scenario_runner
 - Lucide Icons
 - Geist Font
 
-**Data & Payments**
-- SQLite (dev) / PostgreSQL 16 (prod)
+**Auth & Data**
+- Supabase Auth (ES256 JWTs) + `@supabase/ssr` / `supabase-js`
+- Supabase Postgres (prod) / SQLite (dev)
+- psycopg 3 (PostgreSQL driver)
+
+**Payments**
 - Razorpay SDK (test mode)
 - HMAC webhook verification
 
