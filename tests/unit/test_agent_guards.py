@@ -452,7 +452,9 @@ def test_seller_rephrase_rejects_unknown_sku(core_and_engine) -> None:
     )
 
     assert "FAKE-SKU-99" not in decision.response_message
-    assert decision.response_message == "Here is a policy-valid candidate cart."
+    assert decision.response_message == (
+        "SNACK-COFFEE-01 is ₹849.00 per unit — a policy-valid candidate cart."
+    )
     phrased = [
         r
         for r in core.ledger.for_trace("trc_guards_phrase")

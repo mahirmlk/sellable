@@ -52,6 +52,7 @@ class SellerTools:
         buyer_offer_paise: int | None,
         intent_ref: str,
         trace_id: str,
+        negotiation_round: int | None = None,
     ) -> tuple[CartMandate, bool]:
         """Build one catalog-grounded quote (single-shot counter-offer).
 
@@ -60,7 +61,10 @@ class SellerTools:
         discount caps enforced); there is no multi-turn concession loop inside
         this tool. A buyer that wants to bid again makes a new request, which
         is re-evaluated from scratch — so ``max_negotiation_rounds`` bounds
-        the cart's round counter rather than an in-tool loop.
+        the cart's round counter rather than an in-tool loop. The round
+        counter itself accumulates from the caller (prior ``negotiation.
+        countered`` events on the same trace), so repeated offers on one
+        trace eventually trip the policy's round limit.
         """
         offered_price, countered = self._safe_offer(product, buyer_offer_paise)
         item = CartItem(
@@ -75,7 +79,11 @@ class SellerTools:
             subtotal_paise=product.price_paise * quantity,
             discount_paise=(product.price_paise - offered_price) * quantity,
             total_paise=offered_price * quantity,
-            negotiation_round=1 if buyer_offer_paise is not None else 0,
+            negotiation_round=(
+                negotiation_round
+                if negotiation_round is not None
+                else (1 if buyer_offer_paise is not None else 0)
+            ),
         )
         self._record(
             trace_id=trace_id,
@@ -90,12 +98,37 @@ class SellerTools:
         )
         return cart, countered
 
+    def best_price(self, *, product: Product, trace_id: str) -> int:
+        """The lowest policy-valid unit price for a SKU, deterministically.
+
+        Answers "what's your best price?" / "any discount?" from the same
+        floor + discount-cap rules the negotiation engine uses — never from
+        the LLM. Informational only: no cart is created.
+        """
+        minimum, _ = self._safe_offer(product, buyer_offer_paise=0)
+        self._record(
+            trace_id=trace_id,
+            action="quote.best_price",
+            inputs={"sku": product.sku, "list_price_paise": product.price_paise},
+            output={"best_price_paise": minimum},
+            explanation="Quoted the lowest policy-valid unit price from the merchant floor and discount caps.",
+        )
+        return minimum
+
     def upsell_suggest(
-        self, *, cart: CartMandate, trace_id: str, session_upsells: int = 0
+        self, *, cart: CartMandate, trace_id: str, session_upsells: int = 0,
+        accept: bool = False,
     ) -> tuple[CartMandate, Product | None]:
-        # The merchant's per-session upsell cap is enforced here, not just in
-        # the policy engine: a max of 0 disables upsells entirely instead of
-        # still offering once per cart.
+        """Suggest one compatible add-on; only explicit acceptance mutates cart.
+
+        With ``accept=False`` (the default) the cart is returned untouched and
+        the add-on is recorded as a suggestion awaiting explicit buyer
+        acceptance. With ``accept=True`` the add-on is appended and the
+        enriched cart is returned for policy re-evaluation by the caller.
+        The merchant's per-session upsell cap is enforced here, not just in
+        the policy engine: a max of 0 disables upsells entirely instead of
+        still offering once per cart.
+        """
         if cart.upsell_offered or session_upsells >= self.commerce.policy.max_upsells_per_session:
             return cart, None
         primary = self.commerce.catalog.get(cart.items[0].sku)
@@ -103,6 +136,17 @@ class SellerTools:
         if not isinstance(upsell_sku, str):
             return cart, None
         upsell = self.commerce.catalog.get(upsell_sku)
+        if not accept:
+            # Suggestion only: the cart the buyer is quoting on stays exactly
+            # as it is until the buyer explicitly says "add it".
+            self._record(
+                trace_id=trace_id,
+                action="upsell.offered",
+                inputs={"primary_sku": primary.sku},
+                output={"upsell_sku": upsell.sku, "upsell_price_paise": upsell.price_paise},
+                explanation=f"Suggested {upsell.title} because it is compatible with {primary.title}; awaiting explicit buyer acceptance.",
+            )
+            return cart, upsell
         upsell_item = CartItem(
             sku=upsell.sku,
             quantity=1,
@@ -123,8 +167,8 @@ class SellerTools:
         )
         self._record(
             trace_id=trace_id,
-            action="upsell.offered",
-            inputs={"primary_sku": primary.sku},
+            action="upsell.accepted",
+            inputs={"primary_sku": primary.sku, "accepted_by_buyer": True},
             output={"upsell_sku": upsell.sku, "total_paise": enriched.total_paise},
             explanation=enriched.upsell_rationale,
         )

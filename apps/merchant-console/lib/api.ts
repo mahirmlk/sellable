@@ -438,6 +438,8 @@ export interface SellerRequestPayload {
   quantity?: number;
   buyer_offer_paise?: number | null;
   request_upsell?: boolean;
+  price_query?: boolean;
+  accept_upsell?: boolean;
 }
 
 export interface CartItemPayload {

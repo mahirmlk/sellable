@@ -56,4 +56,6 @@ def test_seller_endpoint_returns_a_candidate_cart_without_order_creation() -> No
 
     assert response.status_code == 200
     assert response.json()["action"] == "QUOTE_READY"
-    assert response.json()["cart"]["total_paise"] == 194_800
+    # Upsell is suggestion-only until accepted (accept_upsell) — the cart
+    # carries the primary item alone.
+    assert response.json()["cart"]["total_paise"] == 84_900

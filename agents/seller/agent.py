@@ -40,6 +40,7 @@ class SellerAction(StrEnum):
     NEEDS_HUMAN_APPROVAL = "NEEDS_HUMAN_APPROVAL"
     DENIED = "DENIED"
     NO_MATCH = "NO_MATCH"
+    PRICE_QUERY = "PRICE_QUERY"
 
 
 class SellerRequest(StrictModel):
@@ -49,6 +50,11 @@ class SellerRequest(StrictModel):
     quantity: int = Field(default=1, ge=1, le=100)
     buyer_offer_paise: int | None = Field(default=None, gt=0)
     request_upsell: bool = True
+    # "What's your best price?" — reply with the policy-derived floor, no cart.
+    price_query: bool = False
+    # Explicit buyer acceptance of a suggested add-on; only this mutates the
+    # cart with the upsell item (policy re-checked).
+    accept_upsell: bool = False
 
 
 class SellerDecision(StrictModel):
@@ -71,6 +77,7 @@ class SellerGraphState(TypedDict):
     policy_decision: NotRequired[PolicyDecision | None]
     upsell_product: NotRequired[Product | None]
     countered: NotRequired[bool]
+    best_price_paise: NotRequired[int | None]
     tool_calls: NotRequired[list[str]]
     result: NotRequired[SellerDecision]
 
@@ -134,15 +141,34 @@ class SellerAgent:
         if product is None:
             return {"candidate_cart": None, "policy_decision": None}
         request = state["request"]
+        trace_id = state["trace_id"]
+        if request.price_query:
+            # Informational: the lowest policy-valid price, no cart mutation.
+            best = self.tools.best_price(product=product, trace_id=trace_id)
+            return {
+                "best_price_paise": best,
+                "candidate_cart": None,
+                "policy_decision": None,
+                "tool_calls": [*state["tool_calls"], "quote.best_price"],
+            }
+        # Negotiation rounds accumulate across one trace: every prior
+        # countered offer on this trace counts, so a buyer hammering offers
+        # eventually trips the merchant's max_negotiation_rounds policy.
+        prior_rounds = sum(
+            1
+            for event in self.commerce.ledger.for_trace(trace_id)
+            if event.action == "negotiation.countered"
+        )
         cart, countered = self.tools.quote_create(
             product=product,
             quantity=request.quantity,
             buyer_offer_paise=request.buyer_offer_paise,
             intent_ref=request.intent.mandate_id,
-            trace_id=state["trace_id"],
+            trace_id=trace_id,
+            negotiation_round=(prior_rounds + 1) if request.buyer_offer_paise is not None else None,
         )
         decision = self.commerce.evaluate_quote(
-            cart=cart, intent=request.intent, trace_id=state["trace_id"]
+            cart=cart, intent=request.intent, trace_id=trace_id
         )
         return {
             "candidate_cart": cart,
@@ -163,14 +189,19 @@ class SellerAgent:
             cart is None
             or decision is None
             or decision.verdict is not PolicyVerdict.ALLOW
-            or not request.request_upsell
         ):
+            return {"upsell_product": None}
+        # Negotiation discipline: while the buyer is negotiating (an explicit
+        # offer is on the table) or asking for the best price, upsells are
+        # disabled — no accessories while the primary price is contested.
+        if request.buyer_offer_paise is not None or request.price_query:
             return {"upsell_product": None}
         # Single-shot respond(): at most one upsell per session here, so the
         # session count is 0 and the merchant cap is enforced both in the
         # tool (max == 0 disables upsells) and in the policy evaluation.
+        accept = request.accept_upsell
         enriched, upsell = self.tools.upsell_suggest(
-            cart=cart, trace_id=state["trace_id"], session_upsells=0
+            cart=cart, trace_id=state["trace_id"], session_upsells=0, accept=accept
         )
         if upsell is None:
             return {"upsell_product": None}
@@ -181,9 +212,16 @@ class SellerAgent:
             upsells_in_session=0,
         )
         if enriched_decision.verdict is PolicyVerdict.ALLOW:
+            if accept:
+                return {
+                    "candidate_cart": enriched,
+                    "policy_decision": enriched_decision,
+                    "upsell_product": upsell,
+                    "tool_calls": [*state["tool_calls"], "upsell.suggest", "policy.evaluate"],
+                }
+            # Suggestion only: the cart the buyer is quoting on stays
+            # unchanged until the buyer explicitly accepts the add-on.
             return {
-                "candidate_cart": enriched,
-                "policy_decision": enriched_decision,
                 "upsell_product": upsell,
                 "tool_calls": [*state["tool_calls"], "upsell.suggest", "policy.evaluate"],
             }
@@ -204,11 +242,26 @@ class SellerAgent:
         cart = state.get("candidate_cart")
         decision = state.get("policy_decision")
         buyer_offer_paise = state["request"].buyer_offer_paise
+        best_price_paise = state.get("best_price_paise")
         if product is None:
             result = SellerDecision(
                 trace_id=state["trace_id"],
                 action=SellerAction.NO_MATCH,
                 response_message="I could not find a matching catalog item, so no quote was created.",
+                tool_calls=state["tool_calls"],
+            )
+        elif best_price_paise is not None:
+            # Price query: policy-derived floor, no cart created.
+            result = SellerDecision(
+                trace_id=state["trace_id"],
+                action=SellerAction.PRICE_QUERY,
+                response_message=(
+                    f"The lowest policy-valid price for {product.sku} is "
+                    f"{self._inr(best_price_paise)} per unit "
+                    f"(list {self._inr(product.price_paise)}). "
+                    "Tell me the amount you'd like to pay and I'll check it against the merchant rules."
+                ),
+                selected_product=product,
                 tool_calls=state["tool_calls"],
             )
         elif decision is None or cart is None:
@@ -283,7 +336,10 @@ class SellerAgent:
         never from a model. The negotiation algorithm itself is untouched.
         """
         if buyer_offer_paise is None or not cart.items:
-            return "Here is a policy-valid candidate cart."
+            return (
+                f"{cart.items[0].sku} is {self._inr(cart.items[0].offered_price_paise)} "
+                f"per unit — a policy-valid candidate cart."
+            )
         item = cart.items[0]
         unit = self._inr(item.offered_price_paise)
         if was_countered:

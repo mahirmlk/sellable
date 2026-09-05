@@ -92,6 +92,10 @@ class BuyerTools:
                 quantity=quantity,
                 buyer_offer_paise=buyer_offer_paise,
                 request_upsell=request_upsell,
+                # A machine buyer that asked for an add-on has explicitly
+                # accepted it in its mission; human chat uses typed or UI
+                # acceptance instead.
+                accept_upsell=request_upsell,
             ),
             trace_id=trace_id,
         )

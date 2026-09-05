@@ -38,8 +38,10 @@ def test_agent_creates_a_grounded_quote_and_policy_valid_upsell(
     assert result.policy_decision is not None
     assert result.policy_decision.verdict is PolicyVerdict.ALLOW
     assert result.cart is not None
-    assert [item.sku for item in result.cart.items] == ["SNACK-COFFEE-01", "SNACK-MUG-01"]
-    assert result.cart.total_paise == 194_800
+    # Upsell is a suggestion only: the cart carries the primary item until
+    # the buyer explicitly accepts the add-on.
+    assert [item.sku for item in result.cart.items] == ["SNACK-COFFEE-01"]
+    assert result.cart.total_paise == 84_900
     assert result.upsell_product is not None
     assert result.upsell_product.sku == "SNACK-MUG-01"
     assert "catalog.search" in result.tool_calls

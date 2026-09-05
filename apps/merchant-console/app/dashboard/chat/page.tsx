@@ -1065,7 +1065,7 @@ export default function ChatPageInner() {
   );
 
   const runRespond = useCallback(
-    async (message: string, opts: { upsell: boolean; offer?: number | null; sku?: string | null; isFollowUp?: boolean }) => {
+    async (message: string, opts: { upsell: boolean; offer?: number | null; sku?: string | null; isFollowUp?: boolean; accept?: boolean }) => {
       setBusy(true);
       try {
         const i = buildIntent(message);
@@ -1076,6 +1076,7 @@ export default function ChatPageInner() {
           request_upsell: opts.upsell,
           buyer_offer_paise: opts.offer ?? null,
           requested_sku: opts.sku ?? null,
+          accept_upsell: opts.accept ?? false,
           // Reuse the session trace: negotiation rounds must not fork fresh
           // traces — Activity and Replay show one consistent flow.
           trace_id: lastTraceIdRef.current ?? undefined,
@@ -1172,7 +1173,7 @@ export default function ChatPageInner() {
         status: "info",
       },
     ]);
-    await runRespond(message, { upsell: next, offer: offerRef.current, sku: null, isFollowUp: true });
+    await runRespond(message, { upsell: next, offer: offerRef.current, sku: null, isFollowUp: true, accept: next });
   }, [upsellOn, runRespond, busy, readOnly]);
 
   const handleNegotiate = useCallback(async () => {

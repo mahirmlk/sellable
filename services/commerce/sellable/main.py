@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from sellable.agents.buyer import BuyerAgent, BuyerResult
 from sellable.agents.seller import SellerAgent, SellerDecision, SellerRequest
+from agents.seller.intent import TurnKind, classify_buyer_message
 from sellable.auth import AgentApiKey, get_agent_api_key, get_agent_api_key_signed
 from sellable.buyer_missions import BuyerMissionService, UnknownBuyerMissionError
 from sellable.config import settings
@@ -1917,6 +1918,68 @@ def console_catalog_item(
 # ---------------------------------------------------------------------------
 
 
+def _active_sku_from_trace(core: CommerceCore, trace_id: str) -> str | None:
+    """Resolve the conversation's active product from the ledger.
+
+    The last SKU actually quoted on this trace is the active product, so a
+    typed follow-up ("can you do it for 1300?") applies to it without the
+    frontend re-sending the SKU and without any LLM memory.
+    """
+    for event in reversed(core.ledger.for_trace(trace_id)):
+        if event.action in ("catalog.get", "quote.created", "negotiation.countered"):
+            sku = (event.inputs_json or {}).get("sku")
+            if isinstance(sku, str):
+                return sku
+    return None
+
+
+def _negotiation_aware_request(
+    core: CommerceCore, body: SellerRequest, trace_id: str
+) -> SellerRequest:
+    """Classify a human-typed turn and route it to the right deterministic flow.
+
+    Machine callers send structured fields (sku / buyer_offer_paise) and are
+    taken as-is. For typed messages, negotiation and price queries are
+    detected deterministically (never by the LLM) and applied to the active
+    product resolved from the ledger, so "can you do it for 1300?" negotiates
+    the currently quoted SKU instead of restarting product discovery.
+    """
+    parsed = classify_buyer_message(body.message)
+    # An explicit structured offer is always a negotiation turn; upsells are
+    # disabled while the primary price is contested.
+    if body.buyer_offer_paise is not None:
+        if body.request_upsell:
+            return body.model_copy(update={"request_upsell": False})
+        return body
+    if body.price_query or body.accept_upsell:
+        return body
+    if parsed.kind is TurnKind.NEGOTIATE_OFFER or parsed.kind is TurnKind.PRICE_QUERY:
+        active_sku = body.requested_sku or _active_sku_from_trace(core, trace_id)
+        if active_sku is None:
+            return body  # nothing quoted yet — normal product discovery
+        update: dict[str, object] = {
+            "requested_sku": active_sku,
+            "request_upsell": False,  # no accessories while negotiating
+        }
+        if parsed.kind is TurnKind.NEGOTIATE_OFFER:
+            update["buyer_offer_paise"] = parsed.offer_paise
+        else:
+            update["price_query"] = True
+        return body.model_copy(update=update)
+    if parsed.kind is TurnKind.ACCEPT_UPSELL:
+        offered = any(
+            event.action == "upsell.offered"
+            for event in core.ledger.for_trace(trace_id)
+        )
+        if offered:
+            active_sku = body.requested_sku or _active_sku_from_trace(core, trace_id)
+            update: dict[str, object] = {"accept_upsell": True, "request_upsell": True}
+            if active_sku:
+                update["requested_sku"] = active_sku
+            return body.model_copy(update=update)
+    return body
+
+
 @app.post("/console/agent/seller/respond", response_model=SellerDecision, tags=["console"])
 @limiter.limit("30/minute")
 def console_seller_respond(
@@ -1925,10 +1988,17 @@ def console_seller_respond(
     session: MerchantSession = Depends(get_merchant_session),
     x_trace_id: str | None = Header(default=None),
 ) -> SellerDecision:
-    """Conversational checkout against the merchant's own catalog and policy."""
+    """Conversational checkout against the merchant's own catalog and policy.
+
+    Typed negotiation ("can you do 1300?") is detected deterministically and
+    routed through the policy engine against the active product; the LLM only
+    phrases the grounded result.
+    """
     core = merchant_core(session)
+    trace_id = resolve_trace_id(x_trace_id)
+    body = _negotiation_aware_request(core, body, trace_id)
     agent = SellerAgent(core, llm=_seller_llm)
-    return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
+    return agent.respond(body, trace_id=trace_id)
 
 
 @app.post("/console/orders", tags=["console"])
