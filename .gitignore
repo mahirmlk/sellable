@@ -74,3 +74,6 @@ supabase/.temp/
 # Vercel
 .vercel
 .vercelignore
+
+# Local agent context (untracked)
+.docs/
