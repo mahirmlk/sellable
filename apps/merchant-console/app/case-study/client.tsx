@@ -180,8 +180,8 @@ function SketchPolicyGateDiagram() {
 function InteractionModelLive() {
   const [step, setStep] = useState(0);
   const [typed, setTyped] = useState(0);
-  const fullLeft = "may 31 - trying to get this game 7 recap into shape and i'm blanking on the fina";
-  const suffix = "l score — Spurs 111, Thunder 103";
+  const fullLeft = "need an espresso machine for the office, budget is ₹5,000 — what's your best";
+  const suffix = " price? Espresso Mini — ₹4,650, and the grinder's free this week.";
   useEffect(() => {
     const timers: number[] = [];
     const t1 = window.setTimeout(() => setStep(1), 500);
@@ -231,15 +231,14 @@ function InteractionModelLive() {
             )}
           </p>
           <p className="mt-3 font-mono text-[0.68rem] leading-[1.5] text-neutral-500">
-            The writer pauses on <em className="text-[#111] not-italic font-medium">“fina…”</em> — the model has already
-            noticed the missing fact. It does not interrupt the sentence.
+            The answer contains <em className="text-[#111] not-italic font-medium">money</em> — so it does not go out on the model&rsquo;s word alone. The quote waits for the policy engine.
           </p>
           {/* Fixed reserve for the insertion banner: it appears at step 3. */}
           <p className="mt-2 font-mono text-[0.68rem] leading-[1.5] min-h-[2.6rem]">
             {showInsert ? (
               <span className="animate-[slide-up_0.4s_ease-out_both]">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
-                  <span className="w-1 h-1 rounded-full bg-emerald-500" /> Held fact released — “Spurs 111, Thunder 103” inserted where the sentence naturally wanted it.
+                  <span className="w-1 h-1 rounded-full bg-emerald-500" /> Held fact released — quote ₹4,650 delivered only after policy said ALLOW.
                 </span>
               </span>
             ) : null}
@@ -253,9 +252,9 @@ function InteractionModelLive() {
             >
               <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#ff6900] flex-shrink-0" />
               <div>
-                <div className="font-mono text-[0.7rem] font-medium text-[#111]">lookup queued</div>
-                <div className="font-sans text-[0.74rem] leading-[1.45] text-neutral-600">Missing final score detected before sentence ends.</div>
-                <div className="mt-1 font-mono text-[0.62rem] text-neutral-400">query: Spurs Thunder Game 7 final score</div>
+                <div className="font-mono text-[0.7rem] font-medium text-[#111]">quote built</div>
+                <div className="font-sans text-[0.74rem] leading-[1.45] text-neutral-600">₹4,650 computed from catalog, margin rules, and negotiation round 1.</div>
+                <div className="mt-1 font-mono text-[0.62rem] text-neutral-400">item: espresso-mini · floor ₹4,200 · budget ₹5,000</div>
               </div>
             </div>
             <div
@@ -264,8 +263,8 @@ function InteractionModelLive() {
               <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${showHold ? "bg-emerald-500" : "bg-neutral-300"}`} />
               <div>
                 <div className="font-mono text-[0.7rem] font-medium text-[#111]">fact held</div>
-                <div className="font-sans text-[0.74rem] leading-[1.45] text-neutral-600">Spurs 111 — Thunder 103 cached. Not yet inserted.</div>
-                <div className="mt-1 inline-flex items-center gap-1 font-mono text-[0.62rem] text-emerald-700 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded">policy: hold till anchor</div>
+                <div className="font-sans text-[0.74rem] leading-[1.45] text-neutral-600">Quote + one upsell ready. Held — the agent cannot release it alone.</div>
+                <div className="mt-1 inline-flex items-center gap-1 font-mono text-[0.62rem] text-emerald-700 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded">policy: awaiting ALLOW</div>
               </div>
             </div>
             <div
@@ -273,20 +272,20 @@ function InteractionModelLive() {
             >
               <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${showInsert ? "bg-[#0a0a0a]" : "bg-neutral-300"}`} />
               <div>
-                <div className="font-mono text-[0.7rem] font-medium text-[#111]">anchor found → inserted</div>
-                <div className="font-sans text-[0.74rem] leading-[1.45] text-neutral-600">Sentence reached “final score” — natural insertion point.</div>
+                <div className="font-mono text-[0.7rem] font-medium text-[#111]">ALLOW → released</div>
+                <div className="font-sans text-[0.74rem] leading-[1.45] text-neutral-600">Above floor, under budget, in stock. Released exactly once; consent binds to ₹4,650.</div>
               </div>
             </div>
           </div>
           <div className="mt-4 border-t border-black/5 pt-3 font-mono text-[0.62rem] leading-[1.6] text-neutral-500">
-            <span className="text-[#111] font-medium">SELLABLE mirror:</span> Seller Agent holds a valid quote + upsell until single-use consent and policy both allow insertion at the payment step. The LLM never gets to write money directly.
+            <span className="text-[#111] font-medium">This is the real release path:</span> propose → ALLOW → single-use consent → payment. The LLM only phrased the reply; the policy engine decided the release, and the ledger recorded it.
           </div>
         </div>
       </div>
       <div className="h-[1px] bg-gradient-to-r from-transparent via-black/10 to-transparent" />
       <div className="px-5 py-2.5 flex items-center gap-2 font-mono text-[0.6rem] tracking-[0.06em] uppercase text-neutral-400 bg-[#fafaf8]">
         <span className="w-1 h-1 rounded-full bg-[#ff6900] animate-pulse" />
-        Live held-fact pattern · same white editorial physics as the reference image
+        Live held-fact pattern · the release is decided by policy, not by the model
       </div>
     </div>
   );
@@ -587,31 +586,23 @@ export default function CaseStudyClient() {
 
           <div className="mt-6 space-y-6 font-sans text-[1.02rem] leading-[1.75] tracking-[-0.015em] text-[#1a1a18]">
             <p>
-              The first example is based on a note written after a Spurs-Thunder Game 7. While drafting a recap, the writer mentions that they cannot remember the
-              final score. The model notices the missing information and starts a lookup <em className="font-medium not-italic text-[#111]">before the sentence is finished</em>.
+              In SELLABLE, a &quot;held fact&quot; is a money-relevant fact the agent has ready <em className="font-medium not-italic text-[#111]">but is not yet allowed to release</em>. When a buyer agent negotiates with a merchant, the Seller Agent produces three such facts: a <em className="font-medium not-italic text-[#111]">quote</em> (a price computed from the catalog, margin rules, and negotiation history), an <em className="font-medium not-italic text-[#111]">upsell</em> (a suggestion checked against stock and the buyer&rsquo;s budget), and a <em className="font-medium not-italic text-[#111]">consent token</em> (a single-use, amount-bound authorization to pay).
             </p>
             <p>
-              The result comes back as <span className="rounded bg-[#ff6900]/10 border border-[#ff6900]/15 px-1.5 py-0.5 font-mono text-[0.92rem] text-[#111]">Spurs 111, Thunder 103</span>, but the model does not immediately insert it into the draft. It
-              keeps the information available while the user continues typing, then adds it when the writing reaches a place where the score naturally belongs.
-            </p>
-            <p>
-              This is the &quot;held fact&quot; pattern. The fact is <em className="font-medium not-italic text-[#111]">not hidden</em> — it is <em className="font-medium not-italic text-[#111]">timed</em>. The model holds it in memory, aware of its relevance, but defers insertion until the context is right. Inserting it too early would disrupt the sentence flow. Inserting it too late would miss the moment. The discipline is in the timing.
+              The agent cannot release any of them on its own. Every held fact first goes to the deterministic policy engine, which checks budget caps, floor prices, allowed categories, remaining stock, and negotiation rounds. If the guardrails pass, the fact is released into the conversation — exactly once. If not, it is denied and the denial is logged. The fact is not hidden; it is <em className="font-medium not-italic text-[#111]">gated</em>.
             </p>
             <PlainWords>
-              Think of a good assistant who has already found the answer but waits for the right moment to speak. The answer is ready; the timing is deliberate. SELLABLE applies that same &ldquo;wait for the right moment&rdquo; discipline to payments.
+              Think of the agent as a cashier who can prepare a sale, but the register only opens when the rulebook says so. The rulebook is not another AI — it is plain, deterministic code.
             </PlainWords>
             <p>
-              In agentic commerce, the same pattern governs money. The Seller Agent holds a valid quote — a price computed from catalog, margin rules, and negotiation history. It holds an upsell suggestion — a complementary product checked against stock and budget. It holds a consent token — a single-use, amount-bound, expiring authorization. Each of these is a &quot;held fact&quot; about money. The agent cannot insert them arbitrarily. They must wait for the policy engine to confirm that every guardrail is satisfied, and then release exactly once.
-            </p>
-            <p>
-              This is why the held fact is not just a UX metaphor. It is the safety architecture. The model proposes; the policy engine disposes; the ledger records the moment of insertion with a trace_id, a reasoning_summary, and the policy references that governed the decision. Every rupee has an explanation. Every hold has a reason. Every insertion has an anchor.
+              This is why the held fact is the safety design itself, not a metaphor around it. The model proposes, the policy engine decides, and the XAI Ledger records every release with a trace ID, the reasoning behind it, and the policy rules that governed it. Every rupee has an explanation.
             </p>
             <PlainWords>
-              In SELLABLE, the AI can suggest and negotiate, but it can never move money by itself. A rulebook (not another AI) checks every deal, and a receipt-style log explains every step in plain language.
+              In SELLABLE, the AI can suggest and negotiate, but it can never move money by itself. A rulebook — not another AI — checks every deal, and a receipt-style log explains every step in plain language.
             </PlainWords>
           </div>
 
-          <div className="mt-3 font-mono text-[0.66rem] tracking-[0.08em] uppercase text-neutral-400">Reference interaction — white paper style, live sampling indicator</div>
+          <div className="mt-3 font-mono text-[0.66rem] tracking-[0.08em] uppercase text-neutral-400">Live interaction — the held fact, gated by policy, released once</div>
 
           <InteractionModelLive />
 
@@ -707,7 +698,7 @@ export default function CaseStudyClient() {
           </div>
           <h2 className="font-serif text-[1.9rem] sm:text-[2.2rem] leading-[0.95] tracking-[-0.03em] text-[#111] mt-4">How a held fact becomes a paid order</h2>
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
-            The same timing discipline from the Spurs example governs money. The agent may hold a valid quote while the system waits for the natural insertion point — consent, policy, HITL — then releases it exactly once.
+            The same gating discipline governs money. The agent may hold a valid quote while the system waits for the guardrails to clear — consent, policy, HITL — then releases it exactly once.
           </p>
           <p className="mt-3 font-sans text-[1.0rem] leading-[1.65] text-neutral-600">
             Each step in the workflow is not just a UI state — it is a ledger event. The Buyer Agent discovers the merchant via <code className="font-mono text-[0.86rem] bg-black/5 px-1.5 py-0.5 border border-black/10">/.well-known/agents.json</code>, reads the machine-readable catalog, and initiates a quote request. The Seller Agent responds with a price computed from real catalog data, bounded negotiation rules, and margin floors. The Policy Engine validates both sides: the buyer&apos;s budget ceiling and the merchant&apos;s floor price. Only when both allow does the flow proceed to consent. The consent token is single-use, amount-bound, and expiring — it cannot be replayed, cannot exceed the amount, and cannot be reused after payment. If any gate fails, the flow stops gracefully with a structured explanation. Nothing is retried silently. Nothing is left ambiguous.
