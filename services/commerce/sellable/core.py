@@ -515,10 +515,24 @@ class CommerceCore:
             )
         )
 
-    def all_orders(self) -> list[Order]:
+    def all_orders(self, *, limit: int = 500, offset: int = 0) -> list[Order]:
         # DB-first so externally-advanced state (webhook settlement by another
         # process/replica) is always reflected.
-        return list(self.order_repo.all(merchant_id=self.merchant_scope))
+        return list(
+            self.order_repo.all(
+                merchant_id=self.merchant_scope, limit=limit, offset=offset
+            )
+        )
+
+    def get_orders_many(self, order_ids: list[str]) -> dict[str, Order]:
+        """Merchant-scoped batch order fetch in ONE query (mission list path).
+
+        Foreign orders are excluded, like repeated get_order calls — and the
+        core cache is refreshed so later reads in this request see them.
+        """
+        orders = self.order_repo.get_many(order_ids, merchant_id=self.merchant_scope)
+        self._orders.update(orders)
+        return orders
 
     def get_policy(self) -> MerchantPolicy:
         return self.policy

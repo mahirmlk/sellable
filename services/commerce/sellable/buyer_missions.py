@@ -136,14 +136,19 @@ class BuyerMissionService:
         return order
 
     @staticmethod
-    def _payment_verified(core: CommerceCore, order: Order) -> bool:
+    def _payment_verified(core: CommerceCore, order: Order, *, events=None) -> bool:
         """True when the buyer already verified this order as PAID.
 
         Checks the event's recorded status, not just its existence: an old
         verification taken while the order was still AWAITING_CONSENT must
         never mark a later mission VERIFIED.
         """
-        for event in core.ledger.for_trace(order.trace_id, merchant_id=core.merchant_scope):
+        trace_events = (
+            events
+            if events is not None
+            else core.ledger.for_trace(order.trace_id, merchant_id=core.merchant_scope)
+        )
+        for event in trace_events:
             if event.action != "buyer.payment_verified":
                 continue
             output = event.output_json or {}
@@ -156,9 +161,13 @@ class BuyerMissionService:
 
     @staticmethod
     def _derive(
-        core: CommerceCore, order: Order, *, verified: bool
+        core: CommerceCore, order: Order, *, verified: bool, events=None
     ) -> tuple[BuyerMissionState, str]:
-        """Map the AUTHORITATIVE order state onto the mission lifecycle."""
+        """Map the AUTHORITATIVE order state onto the mission lifecycle.
+
+        ``events`` is the trace's prefetched ledger batch (list path); when
+        absent the single-row path queries the ledger directly.
+        """
         status = order.status
         if status in _PAID_STATUSES:
             if verified:
@@ -169,7 +178,10 @@ class BuyerMissionService:
             # start_payment; payment is already being attempted.
             return BuyerMissionState.PAYMENT_PENDING, "await_webhook"
         if status is OrderStatus.PAYMENT_FAILED:
-            retries = core.ledger.count_actions(order.trace_id, "retry.started")
+            if events is not None:
+                retries = sum(1 for e in events if e.action == "retry.started")
+            else:
+                retries = core.ledger.count_actions(order.trace_id, "retry.started")
             if retries < PaymentService.MAX_RETRIES:
                 return BuyerMissionState.PAYMENT_FAILED, "retry_payment"
             return BuyerMissionState.PAYMENT_FAILED, "none"
@@ -245,6 +257,9 @@ class BuyerMissionService:
         mission_id: str,
         merchant_id: str,
         buyer_agent=None,
+        record=None,
+        order: Order | None = None,
+        events=None,
     ) -> ConsoleBuyerMission:
         """Authoritative mission state, verifying a PAID order when needed.
 
@@ -252,8 +267,14 @@ class BuyerMissionService:
         has not yet verified it, this performs the read-only
         ``verify_payment()`` check exactly once (guarded by the ledger) and
         reports VERIFIED.
+
+        ``record``/``order``/``events`` are list-path prefetches: when given,
+        the per-row repo/order/ledger reads are skipped. An ``order_id``
+        without a prefetched order still loads (and 404s) exactly like the
+        single-read path.
         """
-        record = self._owned(mission_id, merchant_id)
+        if record is None:
+            record = self._owned(mission_id, merchant_id)
         if record.order_id is None:
             # A DENIED mission has no order — nothing resumable, and saying
             # otherwise would be a lie.
@@ -277,12 +298,16 @@ class BuyerMissionService:
                 created_at=record.created_at,
                 updated_at=record.updated_at,
             )
-        order = self._order_for(core, record)
-        verified = self._payment_verified(core, order)
+        order = self._order_for(core, record) if order is None else order
+        if order.trace_id != record.trace_id:
+            raise ValueError(
+                "Buyer mission order trace mismatch — refusing to continue a forked audit trail"
+            )
+        verified = self._payment_verified(core, order, events=events)
         if not verified and order.status in _PAID_STATUSES and buyer_agent is not None:
             buyer_agent.verify_payment(order.order_id, trace_id=order.trace_id)
             verified = True
-        state, required_action = self._derive(core, order, verified=verified)
+        state, required_action = self._derive(core, order, verified=verified, events=events)
         record = self._refresh_pointer(record, state=state)
         return self._payload(record, order, state, required_action)
 
@@ -294,8 +319,23 @@ class BuyerMissionService:
         buyer_agent=None,
         limit: int = 20,
     ) -> list[ConsoleBuyerMission]:
+        records = self._repo.list_for_merchant(merchant_id, limit=limit)
+        # Batch the per-row reads: ONE order query + ONE ledger query for the
+        # whole page instead of N × (order + trace events + retry count).
+        order_ids = [r.order_id for r in records if r.order_id]
+        orders = core.get_orders_many(order_ids) if order_ids else {}
+        traces = [r.trace_id for r in records if r.order_id]
+        batched = (
+            core.ledger.events_for_traces(traces, merchant_id=merchant_id)
+            if traces
+            else {}
+        )
         out: list[ConsoleBuyerMission] = []
-        for record in self._repo.list_for_merchant(merchant_id, limit=limit):
+        for record in records:
+            if record.order_id is not None and record.order_id not in orders:
+                # The linked order vanished (should not happen) — skip the
+                # row instead of failing the whole list.
+                continue
             try:
                 out.append(
                     self.snapshot(
@@ -303,6 +343,9 @@ class BuyerMissionService:
                         mission_id=record.mission_id,
                         merchant_id=merchant_id,
                         buyer_agent=buyer_agent,
+                        record=record,
+                        order=orders.get(record.order_id) if record.order_id else None,
+                        events=batched.get(record.trace_id, []),
                     )
                 )
             except UnknownBuyerMissionError:

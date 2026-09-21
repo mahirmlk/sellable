@@ -891,12 +891,16 @@ def _enrich_transaction(
 @limiter.limit("60/minute")
 def console_transactions(
     request: Request,
+    limit: int = 500,
+    offset: int = 0,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> list[ConsoleTransactionItem]:
     core = merchant_core(session)
-    orders = core.all_orders()
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    orders = core.all_orders(limit=limit, offset=offset)
     sorted_orders = sorted(orders, key=lambda x: x.created_at, reverse=True)
     # ONE ledger query for all traces (was one query per order).
     batched = ledger.events_for_traces(
@@ -1130,6 +1134,8 @@ def console_events(
 @limiter.limit("60/minute")
 def console_approvals(
     request: Request,
+    limit: int = 500,
+    offset: int = 0,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
     session: MerchantSession = Depends(get_merchant_session),
@@ -1137,13 +1143,15 @@ def console_approvals(
     from sellable.contracts import OrderStatus
 
     core = merchant_core(session)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
     orders = core.all_orders()
     held = [
         order
         for order in orders
         if order.requires_approval
         and order.status in (OrderStatus.AWAITING_CONSENT,)
-    ]
+    ][offset : offset + limit]
     # ONE ledger query for all held traces (was one query per order).
     batched = ledger.events_for_traces(
         [order.trace_id for order in held], merchant_id=session.merchant_id
@@ -1295,6 +1303,8 @@ def console_fulfill_order(
 @limiter.limit("60/minute")
 def console_insights(
     request: Request,
+    limit: int = 1000,
+    offset: int = 0,
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
     session: MerchantSession = Depends(get_merchant_session),
@@ -1306,7 +1316,9 @@ def console_insights(
     paid = [o for o in orders if o.status == OrderStatus.PAID]
     revenue = sum(o.amount_paise for o in paid)
 
-    events = ledger.all_events(limit=1000, merchant_id=session.merchant_id)
+    limit = max(1, min(limit, 5000))
+    offset = max(0, offset)
+    events = ledger.all_events(limit=limit, offset=offset, merchant_id=session.merchant_id)
 
     # Ledger-derived growth metrics. The seller agent records "upsell.offered"
     # (no "accepted" flag) and "negotiation.countered" (no outcome field), so
@@ -1886,9 +1898,13 @@ def console_buyer_mission_continue(
 def console_catalog(
     request: Request,
     query: str = "",
+    limit: int = 500,
+    offset: int = 0,
     session: MerchantSession = Depends(get_merchant_session),
 ) -> list[Product]:
     """The authenticated merchant's real, DB-persisted catalog."""
+    limit = max(1, min(limit, 1000))
+    offset = max(0, offset)
     products = CatalogRepository().list(session.merchant_id)
     if query:
         needle = query.strip().lower()
@@ -1897,7 +1913,7 @@ def console_catalog(
             for p in products
             if needle in p.sku.lower() or needle in p.title.lower() or needle in p.description.lower()
         ]
-    return products
+    return products[offset : offset + limit]
 
 
 @app.get("/console/catalog/{sku}", response_model=Product, tags=["console"])

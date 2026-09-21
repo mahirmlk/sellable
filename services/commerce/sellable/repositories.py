@@ -288,13 +288,15 @@ class OrderRepository:
                     created_at=record.created_at,
             )
 
-    def all(self, merchant_id: str | None = None, *, limit: int = 500) -> list[Order]:
+    def all(self, merchant_id: str | None = None, *, limit: int = 500, offset: int = 0) -> list[Order]:
         """Newest-first orders, bounded so dashboards never full-scan history."""
         with Session(self._engine) as session:
             query = select(OrderRecord).order_by(OrderRecord.created_at.desc())
             if merchant_id is not None:
                 query = query.where(OrderRecord.merchant_id == merchant_id)
-            records = session.scalars(query.limit(max(1, limit))).all()
+            records = session.scalars(
+                query.offset(max(0, offset)).limit(max(1, limit))
+            ).all()
             return [
                 Order(
                     order_id=r.order_id,
