@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 
+export { PartialBanner } from "./commerce-ui";
+
 /**
  * Local section/tab helpers for the Tier-2/3 dashboard work.
  *
@@ -35,15 +37,6 @@ export function Section({
       </div>
       <div className="px-5 py-4">{children}</div>
     </section>
-  );
-}
-
-/** Non-blocking notice: part of the data failed while the rest rendered. */
-export function PartialBanner({ message }: { message: string }) {
-  return (
-    <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-3">
-      <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{message}</span>
-    </div>
   );
 }
 
