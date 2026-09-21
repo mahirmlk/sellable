@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
 import re
 import secrets
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -100,9 +102,37 @@ logger = logging.getLogger("sellable")
 limiter = Limiter(key_func=get_remote_address)
 
 
+def _assert_single_worker() -> None:
+    """Refuse multi-worker startup until money invariants are DB-backed.
+
+    Consent single-use, order idempotency, and payment-attempt locks are
+    process-memory (threading locks) with only partial DB backstops, so a
+    second worker/replica silently voids them. The supported deploy is a
+    single worker (see Dockerfile CMD); any explicit multi-worker launcher
+    config (``WEB_CONCURRENCY``/``UVICORN_WORKERS`` > 1) fails closed here
+    instead of risking a double-spend. Remove this guard only when consent
+    consumption and attempt creation are atomic DB transitions.
+    """
+    raw = os.getenv("WEB_CONCURRENCY") or os.getenv("UVICORN_WORKERS") or "1"
+    try:
+        workers = int(str(raw).strip())
+    except ValueError:
+        raise RuntimeError(
+            f"WEB_CONCURRENCY/UVICORN_WORKERS={raw!r} is not an integer; "
+            "single-worker deploy required until money invariants are DB-backed"
+        ) from None
+    if workers != 1:
+        raise RuntimeError(
+            f"Multi-worker startup refused (workers={workers}): consent "
+            "single-use and payment-attempt invariants are process-memory "
+            "only. Deploy a single worker until they are DB-backed."
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info("Starting SELLABLE Commerce Core")
+    _assert_single_worker()
     initialise_database()
     logger.info("Database initialized")
     # Non-blocking JWKS warm: daemon thread only, startup never waits on it.
@@ -268,13 +298,18 @@ def get_ledger() -> LedgerRepository:
 @app.get("/health", tags=["operations"])
 @limiter.exempt
 def health() -> dict[str, str | bool | list[str]]:
-    return {
-        "status": "ok",
-        "environment": settings.environment,
-        "database": "connected",
-        "razorpay_configured": settings.razorpay_is_configured,
-        "cors_origins": list(settings.cors_origins),
-    }
+    if settings.is_dev_environment:
+        return {
+            "status": "ok",
+            "environment": settings.environment,
+            "database": "connected",
+            "razorpay_configured": settings.razorpay_is_configured,
+            "cors_origins": list(settings.cors_origins),
+        }
+    # Production: minimal liveness shape. The full CORS origin list plus
+    # environment/config flags aid reconnaissance and CORS-misconfig review
+    # from outside; operators already have them in deploy config.
+    return {"status": "ok", "database": "connected"}
 
 
 @app.post(
@@ -619,14 +654,14 @@ async def razorpay_webhook(
 def refund_order(
     request: Request,
     order_id: str,
-    reason: str = "merchant_initiated",
-    amount_paise: int | None = None,
-    idempotency_key: str | None = None,
+    # Same edge contract as the agent path's RefundCreateRequest: invalid
+    # values 422 here too instead of slipping through to a 400/502 downstream.
+    reason: str = Query(default="merchant_initiated", min_length=1, max_length=500),
+    amount_paise: int | None = Query(default=None, gt=0),
+    idempotency_key: str | None = Query(default=None, min_length=16, max_length=256),
     refunds: RefundService = Depends(get_refund_service),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
-    if len(reason) > 500:
-        raise HTTPException(status_code=400, detail="Reason must be 500 characters or fewer")
     require_owner(session)
     core = merchant_core(session)
     try:
@@ -1939,14 +1974,35 @@ def _active_sku_from_trace(core: CommerceCore, trace_id: str) -> str | None:
 
     The last SKU actually quoted on this trace is the active product, so a
     typed follow-up ("can you do it for 1300?") applies to it without the
-    frontend re-sending the SKU and without any LLM memory.
+    frontend re-sending the SKU and without any LLM memory. Tenant-scoped:
+    trace ids are client-influenced, so a colliding trace from another
+    merchant must never resolve (or mis-resolve) this merchant's SKU.
     """
-    for event in reversed(core.ledger.for_trace(trace_id)):
+    for event in reversed(
+        core.ledger.for_trace(trace_id, merchant_id=core.merchant_scope)
+    ):
         if event.action in ("catalog.get", "quote.created", "negotiation.countered"):
             sku = (event.inputs_json or {}).get("sku")
             if isinstance(sku, str):
                 return sku
     return None
+
+
+def _copy_request_validated(body: SellerRequest, update: dict[str, object]) -> SellerRequest:
+    """Apply an update to a seller request with contract validation.
+
+    ``model_copy(update=...)`` skips validation, so a parsed or
+    ledger-derived value (e.g. ``buyer_offer_paise=0``) could smuggle past
+    the ``gt=0`` contract. Re-validate and fail closed to the original
+    request (normal product discovery) instead of erroring the turn.
+    """
+    try:
+        return SellerRequest.model_validate({**body.model_dump(), **update})
+    except ValidationError:
+        logger.warning(
+            "negotiation-aware request update failed validation; using original request"
+        )
+        return body
 
 
 def _negotiation_aware_request(
@@ -1965,7 +2021,7 @@ def _negotiation_aware_request(
     # disabled while the primary price is contested.
     if body.buyer_offer_paise is not None:
         if body.request_upsell:
-            return body.model_copy(update={"request_upsell": False})
+            return _copy_request_validated(body, {"request_upsell": False})
         return body
     if body.price_query or body.accept_upsell:
         return body
@@ -1978,21 +2034,23 @@ def _negotiation_aware_request(
             "request_upsell": False,  # no accessories while negotiating
         }
         if parsed.kind is TurnKind.NEGOTIATE_OFFER:
-            update["buyer_offer_paise"] = parsed.offer_paise
+            # Belt-and-braces with parse_offer_paise's own clamp: the offer
+            # reaching the validated copy must satisfy buyer_offer_paise gt=0.
+            update["buyer_offer_paise"] = max(1, parsed.offer_paise or 0)
         else:
             update["price_query"] = True
-        return body.model_copy(update=update)
+        return _copy_request_validated(body, update)
     if parsed.kind is TurnKind.ACCEPT_UPSELL:
         offered = any(
             event.action == "upsell.offered"
-            for event in core.ledger.for_trace(trace_id)
+            for event in core.ledger.for_trace(trace_id, merchant_id=core.merchant_scope)
         )
         if offered:
             active_sku = body.requested_sku or _active_sku_from_trace(core, trace_id)
             update: dict[str, object] = {"accept_upsell": True, "request_upsell": True}
             if active_sku:
                 update["requested_sku"] = active_sku
-            return body.model_copy(update=update)
+            return _copy_request_validated(body, update)
     return body
 
 
@@ -2209,6 +2267,18 @@ def console_checkout_session_get(
     return found
 
 
+def _reject_oversized_blob(name: str, blob: dict[str, object] | None, limit_bytes: int) -> None:
+    """Fail closed (413) when a client snapshot blob exceeds its persist cap."""
+    if blob is None:
+        return
+    size = len(json.dumps(blob, separators=(",", ":")).encode("utf-8"))
+    if size > limit_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Checkout session {name} snapshot exceeds {limit_bytes} bytes",
+        )
+
+
 @app.post("/console/checkout/session", response_model=CheckoutSession, tags=["console"])
 @limiter.limit("30/minute")
 def console_checkout_session_save(
@@ -2223,7 +2293,15 @@ def console_checkout_session_save(
     the first user action — never on plain page loads). With a session_id it
     updates that row after an ownership check; closed sessions reject writes.
     Linking an order advances the lifecycle to ORDER_PLACED.
+
+    Quote/decision snapshots are size-capped (413 past the cap): checkout
+    always re-quotes server-side, so an oversized client blob is never
+    needed and must not bloat the shared sessions table.
     """
+    _reject_oversized_blob("cart", body.cart, CheckoutSessionRepository.MAX_CART_JSON_BYTES)
+    _reject_oversized_blob(
+        "decision", body.decision, CheckoutSessionRepository.MAX_DECISION_JSON_BYTES
+    )
     now = datetime.now(timezone.utc)
     if body.session_id:
         existing = repo.get(body.session_id)

@@ -24,6 +24,7 @@ from sellable.contracts import (
     Refund,
     RefundStatus,
 )
+from sellable.auth import NONCE_TTL_SECONDS
 from sellable.ledger.database import (
     AgentNonceRecord,
     BuyerMissionRecord,
@@ -442,11 +443,13 @@ class NonceRepository:
     def __init__(self, engine: object | None = None) -> None:
         self._engine = engine or make_engine()
 
-    def claim(self, agent_id: str, nonce: str, *, ttl_seconds: int = 600) -> bool:
+    def claim(self, agent_id: str, nonce: str, *, ttl_seconds: int = NONCE_TTL_SECONDS) -> bool:
         """Return True exactly once per (agent, nonce) pair.
 
         Stale rows (older than the timestamp window) are pruned on each
-        claim so the table stays tiny.
+        claim so the table stays tiny. The TTL is the shared
+        ``NONCE_TTL_SECONDS`` so the persistent claim agrees with the
+        in-memory replay guard and the timestamp acceptance window.
         """
         now = int(time.time())
         with Session(self._engine) as session:
@@ -472,6 +475,12 @@ class CheckoutSessionRepository:
     MAX_MESSAGES = 200
     #: Chat-history titles derive from the first user message, truncated here.
     TITLE_MAX_CHARS = 48
+    #: Persisted quote/decision snapshot caps (bytes of UTF-8 JSON each).
+    #: Money-safe to reject: checkout always re-quotes server-side, so an
+    #: oversized client snapshot is never needed — and unbounded JSON blobs
+    #: would let one merchant bloat the shared sessions table.
+    MAX_CART_JSON_BYTES = 32_768
+    MAX_DECISION_JSON_BYTES = 32_768
 
     def __init__(self, engine: object | None = None) -> None:
         self._engine = engine or make_engine()

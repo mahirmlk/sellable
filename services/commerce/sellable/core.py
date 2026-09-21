@@ -296,7 +296,12 @@ class CommerceCore:
 
     def consume_consent(self, consent_id: str, *, order_id: str) -> Order:
         # The order lock makes consume + transition atomic against concurrent
-        # start_payment calls for the same order.
+        # start_payment calls for the same order *in this process only*.
+        # Cross-worker atomicity is NOT provided here: a second worker would
+        # pass its own in-memory check against the same ISSUED consent. That
+        # is why startup refuses multi-worker config (see
+        # _assert_single_worker in main.py) until consumption becomes an
+        # atomic DB transition (UPDATE ... WHERE status=ISSUED RETURNING).
         with self._order_lock:
             order = self.get_order(order_id)
             # Validate the transition BEFORE burning the single-use consent:

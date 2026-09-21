@@ -154,9 +154,14 @@ class SellerAgent:
         # Negotiation rounds accumulate across one trace: every prior
         # countered offer on this trace counts, so a buyer hammering offers
         # eventually trips the merchant's max_negotiation_rounds policy.
+        # Tenant-scoped: trace ids are client-influenced, so a colliding
+        # trace from another merchant must never inflate this merchant's
+        # rounds (fail-closed direction, but still a cross-tenant read).
         prior_rounds = sum(
             1
-            for event in self.commerce.ledger.for_trace(trace_id)
+            for event in self.commerce.ledger.for_trace(
+                trace_id, merchant_id=self.commerce.merchant_scope
+            )
             if event.action == "negotiation.countered"
         )
         cart, countered = self.tools.quote_create(
