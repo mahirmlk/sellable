@@ -2,6 +2,7 @@
 
 import { useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { DashboardSidebar } from "./dashboard-sidebar";
+import { CommandMenu } from "./command-menu";
 
 const STORAGE_KEY = "sellable_sidebar_collapsed";
 const CHANGE_EVENT = "sellable:sidebar-collapsed-changed";
@@ -50,12 +51,13 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen">
       <DashboardSidebar collapsed={collapsed} onToggle={toggleCollapsed} />
       <div
-        className={`flex-1 flex flex-col min-h-screen transition-[margin] duration-300 ease-in-out ${
+        className={`flex-1 flex flex-col min-h-screen min-w-0 transition-[margin] duration-300 ease-in-out ${
           collapsed ? "lg:ml-[56px]" : "lg:ml-[240px]"
         }`}
       >
         {children}
       </div>
+      <CommandMenu />
     </div>
   );
 }

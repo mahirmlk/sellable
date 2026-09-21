@@ -1428,9 +1428,9 @@ export default function ChatPageInner() {
       {/* Header */}
       <div className="px-6 py-4 border-b border-[var(--bb-line)] flex items-center justify-between gap-4 flex-shrink-0">
         <div className="min-w-0">
-          <h1 className="font-[var(--font-sans)] text-[1.35rem] tracking-[-0.04em] text-[var(--bb-white)]">Checkout</h1>
+          <h1 className="font-[var(--font-sans)] text-[1.35rem] tracking-[-0.04em] text-[var(--bb-white)]">AI Sales</h1>
           <p className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-1)] mt-1">
-            AGENT-ASSISTED · POLICY-BOUND · HUMAN APPROVED
+            Your AI seller handles product discovery, quotes, negotiation and checkout. SEARCH → QUOTE → NEGOTIATE → CHECKOUT
           </p>
         </div>
         <div className="flex items-center gap-4 flex-shrink-0">

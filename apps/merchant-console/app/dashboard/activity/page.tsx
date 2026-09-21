@@ -5,6 +5,11 @@ import Link from "next/link";
 import { RefreshCw, Radio, Play, X, Wallet, ShieldAlert, ExternalLink, History } from "lucide-react";
 import { ActorBadge, ActorIcon } from "@/components/dashboard/actor-badge";
 import { formatTimestamp, formatPaise } from "@/lib/formatters";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { exportToCsv } from "@/lib/csv";
+import { useSavedViews } from "@/lib/saved-views";
 import { type ActorType, type LedgerEvent } from "@/lib/types/domain";
 import {
   getConsoleEvents,
@@ -202,6 +207,12 @@ export default function ActivityPage() {
   // the real floor/HITL caps next to it (same source the chat panel uses).
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
   const [resumingTrace, setResumingTrace] = useState<string | null>(null);
+  // Human-readable rows: technical details expand per event, collapsed default.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // Saved filter views + CSV export over the current filter pair.
+  const { getViews, saveView, deleteView } = useSavedViews<string>("sellable.saved-views.activity");
+  const savedViews = getViews();
+  const [viewName, setViewName] = useState("");
 
   useEffect(() => {
     getConsolePolicy().then(setPolicy).catch(() => {
@@ -585,11 +596,71 @@ export default function ActivityPage() {
     return true;
   });
 
+  // Plain-language labels for the default row view. Technical details
+  // (actor/action/trace/io/reasoning/refs) stay one click away underneath.
+  const actionLabel = (action: string): string => {
+    if (action === "buyer.mission_received") return "Buyer mission received";
+    if (action === "buyer.discovered_merchant") return "Merchant discovered";
+    if (action === "catalog.search") return "Catalog searched";
+    if (action === "catalog.get") return "Product viewed";
+    if (action === "buyer.catalog_researched") return "Catalog researched";
+    if (action === "product.selected") return "Product selected";
+    if (action === "quote.created") return "Quote created";
+    if (action === "quote.received") return "Quote received";
+    if (action.includes("negotiat")) return "Negotiation round";
+    if (action.includes("upsell")) return "Upsell suggested";
+    if (action === "policy.checked") return "Policy checked";
+    if (action === "buyer.response_phrased") return "Seller replied";
+    if (action === "buyer.order_requested") return "Order requested";
+    if (action === "order.created") return "Order created";
+    if (action === "buyer.order_held") return "Order held for approval";
+    if (action.includes("consent")) return `Consent ${action.split(".")[1] ?? "updated"}`;
+    if (action === "payment.pending" || action.includes("payment.attempted")) return "Payment started";
+    if (action === "payment.captured" || action === "order.paid") return "Payment captured";
+    if (action === "payment.failed") return "Payment failed";
+    if (action.includes("webhook")) return "Webhook verified";
+    if (action === "buyer.payment_verified") return "Payment verified by buyer";
+    if (action.includes("settl")) return "Order settled";
+    if (action === "seller.response_ready") return "Seller response ready";
+    if (action.includes("refund")) return "Order refunded";
+    if (action.includes("abort")) return "Order aborted";
+    if (action.includes("retry")) return "Payment retried";
+    return action.replace(/[._]/g, " ");
+  };
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const filterKey = `${actorFilter}|${typeFilter}`;
+
+  const handleExportCsv = () => {
+    exportToCsv(
+      `live-activity-${new Date().toISOString().slice(0, 10)}`,
+      filtered.map((e) => ({
+        time: e.timestamp,
+        label: actionLabel(e.action),
+        actor: e.actor,
+        action: e.action,
+        trace_id: e.traceId,
+        reasoning: e.reasoningSummary ?? "",
+        policy_refs: (e.policyRefs ?? []).join(";"),
+        provider_ref: e.provider_ref ?? "",
+        flags: (e.flags ?? []).join(";"),
+      }))
+    );
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">Activity</h1>
+          <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">Live Activity</h1>
           <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">REAL-TIME OPERATIONAL FEED</p>
         </div>
         <div className="flex items-center gap-3">
@@ -958,6 +1029,56 @@ export default function ActivityPage() {
           </select>
         </div>
         <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{filtered.length} events</span>
+        <button
+          onClick={handleExportCsv}
+          disabled={filtered.length === 0}
+          className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase px-3 py-1.5 border border-[var(--bb-line)] bg-transparent text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-40"
+        >
+          EXPORT CSV
+        </button>
+      </div>
+
+      {/* Saved views over the current actor/type filter pair */}
+      <div className="flex flex-wrap items-center gap-2 stagger-child">
+        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">SAVED VIEWS</span>
+        <input
+          value={viewName}
+          onChange={(e) => setViewName(e.target.value)}
+          placeholder="Name this view…"
+          className="font-[var(--font-mono)] text-[0.65rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-1.5 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+        />
+        <button
+          onClick={() => {
+            saveView(viewName, filterKey);
+            setViewName("");
+          }}
+          disabled={!viewName.trim()}
+          className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase px-3 py-1.5 border border-[var(--bb-orange)]/50 bg-[var(--bb-orange)]/10 text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-all cursor-pointer disabled:opacity-40"
+        >
+          SAVE CURRENT
+        </button>
+        {savedViews.map((v) => (
+          <span key={v.name} className="inline-flex items-center gap-1 border border-[var(--bb-line)] bg-[var(--bb-panel)] pl-2.5">
+            <button
+              onClick={() => {
+                const [a, t] = v.value.split("|");
+                if (a) setActorFilter(a as ActorType | "all");
+                if (t) setTypeFilter(t);
+              }}
+              className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] py-1.5 cursor-pointer"
+              title={`Apply: ${v.value}`}
+            >
+              {v.name}
+            </button>
+            <button
+              onClick={() => deleteView(v.name)}
+              className="px-1.5 py-1.5 font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-4)] hover:text-red-400 cursor-pointer"
+              aria-label={`Delete view ${v.name}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
       </div>
 
       {missionMsg && (
@@ -968,50 +1089,96 @@ export default function ActivityPage() {
         </div>
       )}
       {loadError && (
-        <div className="px-4 py-3 border border-amber-400/30 bg-amber-400/5 flex items-start gap-2">
-          <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{loadError}</span>
-        </div>
+        <ErrorBanner message={loadError} onRetry={() => void fetchData()} />
       )}
 
+      {loading && events.length === 0 ? (
+        <TableSkeleton rows={8} />
+      ) : (
       <div className="border border-[var(--bb-line)] overflow-hidden stagger-child">
         {filtered.length === 0 ? (
-          <div className="px-5 py-12 text-center">
-            <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-              {loading ? "Loading events..." : "No events match the current filters."}
-            </div>
-          </div>
-        ) : filtered.map((event, i) => (
-          <div key={event.eventId} className={`px-5 py-4 hover-panel transition-colors ${i < filtered.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
-            <div className="flex items-start gap-4">
-              <div className="flex items-center gap-2 w-[60px] flex-shrink-0">
-                <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{formatTimestamp(event.timestamp)}</span>
-              </div>
-              <ActorIcon actor={event.actor} />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 mb-1">
-                  <ActorBadge actor={event.actor} />
-                  <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{event.action}</span>
+          <EmptyState
+            title={loading ? "Loading events…" : "No activity yet."}
+            message={
+              loading
+                ? "Fetching the latest ledger events."
+                : events.length === 0
+                  ? "Events appear here once buyers interact with your store — run a checkout in AI Sales or launch a buyer mission above."
+                  : "No events match the current filters."
+            }
+          />
+        ) : filtered.map((event, i) => {
+          const expanded = expandedIds.has(event.eventId);
+          return (
+          <div key={event.eventId} className={`hover-panel transition-colors ${i < filtered.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
+            <button
+              onClick={() => toggleExpanded(event.eventId)}
+              className="w-full text-left px-5 py-3.5 flex items-center gap-3 cursor-pointer"
+              aria-expanded={expanded}
+            >
+              <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] w-[62px] shrink-0 tabular-nums">{formatTimestamp(event.timestamp)}</span>
+              <span className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-white)] flex-1 min-w-0 truncate">{actionLabel(event.action)}</span>
+              <span className="hidden sm:inline shrink-0"><ActorBadge actor={event.actor} /></span>
+              <span className={`font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-3)] shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}>›</span>
+            </button>
+            {expanded && (
+            <div className="px-5 pb-4 ml-[74px] border-l border-[var(--bb-line)] pl-4 space-y-3 expand-enter">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Actor</div>
+                  <div className="flex items-center gap-2">
+                    <ActorIcon actor={event.actor} />
+                    <ActorBadge actor={event.actor} />
+                  </div>
                 </div>
-                {event.reasoningSummary && (
-                  <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)] leading-relaxed mb-2">{event.reasoningSummary}</div>
+                <div>
+                  <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Action</div>
+                  <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)] break-all">{event.action}</div>
+                </div>
+              </div>
+              <div>
+                <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Trace</div>
+                <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)] break-all">{event.traceId}</div>
+              </div>
+              {event.reasoningSummary && (
+                <div>
+                  <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Reasoning</div>
+                  <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)] leading-relaxed">{event.reasoningSummary}</div>
+                </div>
+              )}
+              <div>
+                <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Inputs / Output</div>
+                <pre className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)] bg-[var(--bb-panel)] p-2 border border-[var(--bb-line)] overflow-x-auto max-h-[240px] overflow-y-auto">
+                  {JSON.stringify({ inputs: event.inputs, output: event.output }, null, 2)}
+                </pre>
+              </div>
+              <div className="flex flex-wrap gap-x-6 gap-y-2">
+                <div>
+                  <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Policy refs</div>
+                  <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)]">{event.policyRefs.length > 0 ? event.policyRefs.join(", ") : "—"}</div>
+                </div>
+                <div>
+                  <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Provider ref</div>
+                  <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)]">{event.provider_ref ?? "—"}</div>
+                </div>
+                {event.flags.length > 0 && (
+                  <div>
+                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Flags</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {event.flags.map((flag) => (
+                        <span key={flag} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 bg-[var(--bb-orange-wash-2)] text-[var(--bb-orange)]">{flag}</span>
+                      ))}
+                    </div>
+                  </div>
                 )}
-                <div className="flex flex-wrap gap-1.5">
-                  {event.policyRefs.map((ref) => (
-                    <span key={ref} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]">{ref}</span>
-                  ))}
-                  {event.flags.map((flag) => (
-                    <span key={flag} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 bg-[var(--bb-orange-wash-2)] text-[var(--bb-orange)]">{flag}</span>
-                  ))}
-                  {event.outcome_effect && Object.entries(event.outcome_effect).map(([key, val]) => (
-                    <span key={key} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-green-400/40 text-green-400">{key}: {String(val)}</span>
-                  ))}
-                </div>
               </div>
-              <div className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)] flex-shrink-0">{event.traceId}</div>
             </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
+      )}
     </div>
   );
 }
