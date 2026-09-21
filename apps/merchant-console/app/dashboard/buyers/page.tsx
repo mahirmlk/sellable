@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import { DataTable } from "@/components/dashboard/data-table";
+import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import {
   ChannelBadge,
   FilterTabs,
@@ -106,10 +107,10 @@ export default function BuyersPage() {
   }, [buyers, filter, query]);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Buyers"
-        subtitle="EVERY BUYER WHO ORDERED FROM YOUR STORE"
+        subtitle="Everyone who ordered from your store"
         actions={<RefreshButton onRefresh={() => void fetchData()} loading={loading} />}
       />
 
@@ -117,7 +118,7 @@ export default function BuyersPage() {
         tabs={[
           { key: "all", label: "All", count: counts.all },
           { key: "human", label: "Human", count: counts.human },
-          { key: "agent", label: "AI Buyer", count: counts.agent },
+          { key: "agent", label: "AI buyer", count: counts.agent },
         ]}
         active={filter}
         onChange={setFilter}
@@ -128,10 +129,11 @@ export default function BuyersPage() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search buyer id…"
-          className="flex-1 min-w-[180px] max-w-[300px] font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          placeholder="Search buyer ID…"
+          aria-label="Search buyers"
+          className="flex-1 min-w-[180px] max-w-[320px] h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
         />
-        <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] ml-auto">
+        <span className="text-[12px] text-neutral-400 ml-auto tabular-nums">
           {visible.length} of {buyers.length} buyers
         </span>
       </div>
@@ -139,20 +141,7 @@ export default function BuyersPage() {
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
 
       {loading ? (
-        <DataTable>
-          <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-            <div className="skeleton h-3 w-32" />
-          </div>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="px-5 py-4 border-b border-[var(--bb-line-soft)] last:border-b-0">
-              <div className="flex items-center gap-4">
-                <div className="skeleton h-3 w-28" />
-                <div className="skeleton h-3 w-16" />
-                <div className="skeleton h-3 w-12 ml-auto" />
-              </div>
-            </div>
-          ))}
-        </DataTable>
+        <TableSkeleton rows={6} />
       ) : visible.length === 0 ? (
         <EmptyState
           title={buyers.length === 0 ? "No buyers yet" : "No buyers match"}
@@ -164,42 +153,42 @@ export default function BuyersPage() {
         />
       ) : (
         <DataTable>
-          <div className="hidden lg:grid grid-cols-[1fr_110px_90px_110px_90px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-            {["BUYER", "TYPE", "ORDERS", "TOTAL VALUE", "LAST ORDER"].map((h) => (
-              <div key={h} className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">{h}</div>
+          <div className="hidden lg:grid grid-cols-[1fr_110px_90px_110px_90px] gap-3 px-6 py-3 border-b border-black/[0.06] bg-neutral-50/80">
+            {["Buyer", "Type", "Orders", "Total value", "Last order"].map((h) => (
+              <div key={h} className="text-[12px] font-medium text-neutral-500">{h}</div>
             ))}
           </div>
           {visible.map((b, i) => (
             <Link
               key={b.id}
               href={`/dashboard/buyers/${encodeURIComponent(b.id)}`}
-              className={`hidden lg:grid grid-cols-[1fr_110px_90px_110px_90px] gap-3 px-5 py-3.5 items-center hover:bg-[var(--bb-panel)] transition-colors group ${
-                i < visible.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+              className={`hidden lg:grid grid-cols-[1fr_110px_90px_110px_90px] gap-3 px-6 py-4 items-center hover:bg-black/[0.02] transition-colors focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+                i < visible.length - 1 ? "border-b border-black/[0.05]" : ""
               }`}
             >
-              <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-1)] group-hover:text-[var(--bb-white)] transition-colors truncate" title={b.id}>
+              <div className="text-[13px] text-neutral-600 truncate" title={b.id}>
                 {b.id}
               </div>
               <ChannelBadge channel={b.channel} />
-              <div className="font-[var(--font-mono)] text-[0.72rem] text-[var(--bb-white)] tabular-nums">{b.orderCount}</div>
+              <div className="text-[14px] text-neutral-900 tabular-nums">{b.orderCount}</div>
               <MoneyValue paise={b.totalPaise} />
-              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{formatTimeAgo(b.lastOrderAt)}</div>
+              <div className="text-[12px] text-neutral-400">{formatTimeAgo(b.lastOrderAt)}</div>
             </Link>
           ))}
           {/* Mobile cards */}
-          <div className="lg:hidden divide-y divide-[var(--bb-line-soft)]">
+          <div className="lg:hidden divide-y divide-black/[0.05]">
             {visible.map((b) => (
               <Link
                 key={b.id}
                 href={`/dashboard/buyers/${encodeURIComponent(b.id)}`}
-                className="block px-5 py-4 space-y-2"
+                className="block px-5 py-4 space-y-2 hover:bg-black/[0.02]"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)] truncate">{b.id}</div>
+                  <div className="text-[14px] font-medium text-neutral-900 truncate">{b.id}</div>
                   <MoneyValue paise={b.totalPaise} />
                 </div>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">
+                  <span className="text-[12px] text-neutral-400">
                     {b.orderCount} order{b.orderCount > 1 ? "s" : ""} · {formatTimeAgo(b.lastOrderAt)}
                   </span>
                   <ChannelBadge channel={b.channel} />

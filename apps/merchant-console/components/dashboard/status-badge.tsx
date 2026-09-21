@@ -1,31 +1,33 @@
 import { type TransactionStatus } from "@/lib/types/domain";
 
-const statusConfig: Record<TransactionStatus, { label: string; color: string; bg: string }> = {
-  AWAITING_CONSENT: { label: "AWAITING CONSENT", color: "text-[var(--bb-orange)]", bg: "bg-[var(--bb-orange-wash-2)]" },
-  CONSENTED: { label: "CONSENTED", color: "text-blue-400", bg: "bg-blue-400/10" },
-  PAYMENT_PENDING: { label: "PAYMENT PENDING", color: "text-yellow-400", bg: "bg-yellow-400/10" },
-  PAID: { label: "PAID", color: "text-green-400", bg: "bg-green-400/10" },
-  FULFILLED: { label: "FULFILLED", color: "text-emerald-300", bg: "bg-emerald-300/10" },
-  PAYMENT_FAILED: { label: "PAYMENT FAILED", color: "text-red-400", bg: "bg-red-400/10" },
-  ABORTED: { label: "ABORTED", color: "text-[var(--bb-grey-3)]", bg: "bg-[var(--bb-panel-2)]" },
-  REFUNDED: { label: "REFUNDED", color: "text-purple-400", bg: "bg-purple-400/10" },
+const statusConfig: Record<TransactionStatus, { label: string; classes: string; dot?: boolean }> = {
+  AWAITING_CONSENT: { label: "Awaiting consent", classes: "bg-[#fff4e5] text-[#b25e00]", dot: true },
+  CONSENTED: { label: "Consented", classes: "bg-blue-50 text-blue-700", dot: true },
+  PAYMENT_PENDING: { label: "Payment pending", classes: "bg-amber-50 text-amber-800", dot: true },
+  PAID: { label: "Paid", classes: "bg-green-50 text-green-700", dot: true },
+  FULFILLED: { label: "Fulfilled", classes: "bg-green-50 text-green-700", dot: true },
+  PAYMENT_FAILED: { label: "Payment failed", classes: "bg-red-50 text-red-700", dot: true },
+  ABORTED: { label: "Aborted", classes: "bg-neutral-100 text-neutral-600" },
+  REFUNDED: { label: "Refunded", classes: "bg-purple-50 text-purple-700" },
 };
 
+function formatStatus(s: string) {
+  return s
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 export function StatusBadge({ status }: { status: TransactionStatus }) {
-  // Unknown future statuses render under their own name — never mislabeled
-  // as an existing state.
   const cfg = statusConfig[status] || {
-    label: String(status).replace(/_/g, " "),
-    color: "text-[var(--bb-grey-2)]",
-    bg: "bg-[var(--bb-panel-2)]",
+    label: formatStatus(String(status)),
+    classes: "bg-neutral-100 text-neutral-600",
   };
   return (
     <span
-      className={`inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 ${cfg.color} ${cfg.bg} rounded-sm`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${cfg.classes}`}
     >
-      {(status === "PAID" || status === "FULFILLED" || status === "CONSENTED") && (
-        <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      )}
+      {cfg.dot ? <span className="size-1.5 rounded-full bg-current" /> : null}
       {cfg.label}
     </span>
   );
@@ -34,48 +36,53 @@ export function StatusBadge({ status }: { status: TransactionStatus }) {
 export function PolicyBadge({ verdict }: { verdict: "ALLOW" | "DENY" | "NEEDS_HUMAN_APPROVAL" }) {
   const cfg =
     verdict === "ALLOW"
-      ? { label: "ALLOW", color: "text-green-400", icon: "✓" }
+      ? { label: "Allow", classes: "bg-green-50 text-green-700" }
       : verdict === "DENY"
-        ? { label: "DENIED", color: "text-red-400", icon: "✕" }
-        : { label: "NEEDS APPROVAL", color: "text-amber-400", icon: "!" };
+        ? { label: "Denied", classes: "bg-red-50 text-red-700" }
+        : { label: "Needs approval", classes: "bg-amber-50 text-amber-800" };
   return (
-    <span className={`inline-flex items-center gap-1 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase ${cfg.color}`}>
-      <span>{cfg.icon}</span>
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${cfg.classes}`}>
+      <span className="size-1.5 rounded-full bg-current" />
       {cfg.label}
     </span>
   );
 }
 
 export function ConsentBadge({ status }: { status: string }) {
-  // Consumed (CONSENTED in detail, CONSUMED in lists) reads green, a live
-  // ISSUED consent reads blue, EXPIRED reads amber (the single-use window
-  // passed — a stale ISSUED label here is what left dead payment buttons
-  // on screen), and NOT_ISSUED/NONE stay muted grey.
   const isApproved = status === "CONSENTED" || status === "CONSUMED";
   const isIssued = status === "ISSUED";
   const isExpired = status === "EXPIRED";
+  const classes = isApproved
+    ? "bg-green-50 text-green-700"
+    : isIssued
+      ? "bg-blue-50 text-blue-700"
+      : isExpired
+        ? "bg-amber-50 text-amber-800"
+        : "bg-neutral-100 text-neutral-600";
   return (
     <span
-      className={`inline-flex items-center gap-1 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase ${
-        isApproved ? "text-green-400" : isIssued ? "text-blue-400" : isExpired ? "text-amber-400" : "text-[var(--bb-grey-3)]"
-      }`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${classes}`}
     >
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {status}
+      <span className="size-1.5 rounded-full bg-current" />
+      {formatStatus(status)}
     </span>
   );
 }
 
 export function PaymentBadge({ status }: { status: string }) {
   const isCaptured = status === "CAPTURED" || status === "verified_webhook";
+  const classes = isCaptured
+    ? "bg-green-50 text-green-700"
+    : status === "FAILED"
+      ? "bg-red-50 text-red-700"
+      : "bg-neutral-100 text-neutral-600";
+  const label = isCaptured ? "Captured" : status === "FAILED" ? "Failed" : formatStatus(status);
   return (
     <span
-      className={`inline-flex items-center gap-1 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase ${
-        isCaptured ? "text-green-400" : status === "FAILED" ? "text-red-400" : "text-[var(--bb-grey-3)]"
-      }`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${classes}`}
     >
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {isCaptured ? "CAPTURED" : status === "FAILED" ? "FAILED" : status}
+      <span className="size-1.5 rounded-full bg-current" />
+      {label}
     </span>
   );
 }

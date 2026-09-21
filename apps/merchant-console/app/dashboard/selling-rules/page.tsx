@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Save, RefreshCw, Check, AlertCircle, FlaskConical } from "lucide-react";
+import { Save, Check, FlaskConical } from "lucide-react";
 import {
   getConsolePolicy,
   updateConsolePolicy,
@@ -14,12 +14,25 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { RefreshButton } from "@/components/dashboard/commerce-ui";
 import {
   Section,
   PartialBanner,
 } from "@/components/dashboard/tier-fallbacks";
 
 type SimVerdict = "ALLOW" | "OFFER BELOW FLOOR" | "BLOCKED";
+
+const SIM_VERDICT_LABEL: Record<SimVerdict, string> = {
+  ALLOW: "Allow",
+  "OFFER BELOW FLOOR": "Offer below floor",
+  BLOCKED: "Blocked",
+};
+
+const PRIMARY_PILL =
+  "inline-flex items-center gap-2 h-9 px-5 rounded-full bg-[#0071e3] text-white text-[13px] font-semibold shadow-sm hover:bg-[#0077ed] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+const APPLE_INPUT =
+  "h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow";
+const ROW = "py-3 flex items-center justify-between gap-3 border-b border-black/[0.06] last:border-b-0";
 
 export default function SellingRulesPage() {
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
@@ -173,18 +186,18 @@ export default function SellingRulesPage() {
     const value = current[key];
     const isEditing = key in editing;
     return (
-      <div className="py-3 flex items-center justify-between gap-3 border-b border-[var(--bb-line-soft)] last:border-b-0">
-        <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase ${highlight ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-3)]"}`}>{label}</span>
+      <div className={ROW}>
+        <span className={`text-[13px] ${highlight ? "font-medium text-[#0071e3]" : "text-neutral-500"}`}>{label}</span>
         <div className="flex items-center gap-2">
           <input
             type="number"
             value={Math.round((value as number) / 100)}
             onChange={(e) => handleChange(key, String(parseInt(e.target.value || "0", 10) * 100))}
-            className="w-[120px] font-[var(--font-mono)] text-[0.85rem] text-right bg-[var(--bb-panel)] border px-2 py-1 transition-colors focus:outline-none"
-            style={{ borderColor: isEditing ? "var(--bb-orange)" : "var(--bb-line)", color: isEditing ? "var(--bb-orange)" : "var(--bb-white)" }}
+            className="w-[120px] h-9 rounded-[10px] bg-white border text-[14px] text-right tabular-nums px-2.5 text-neutral-900 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
+            style={{ borderColor: isEditing ? "#0071e3" : "rgba(0,0,0,0.12)" }}
             aria-label={label}
           />
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-4)] w-[20px]">₹</span>
+          <span className="text-[13px] text-neutral-400 w-[20px]">₹</span>
         </div>
       </div>
     );
@@ -195,53 +208,50 @@ export default function SellingRulesPage() {
     const value = current[key];
     const isEditing = key in editing;
     return (
-      <div className="py-3 flex items-center justify-between gap-3 border-b border-[var(--bb-line-soft)] last:border-b-0">
-        <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)]">{label}</span>
+      <div className={ROW}>
+        <span className="text-[13px] text-neutral-500">{label}</span>
         <div className="flex items-center gap-2">
           <input
             type="number"
             value={value as number}
             onChange={(e) => handleChange(key, e.target.value)}
-            className="w-[80px] font-[var(--font-mono)] text-[0.85rem] text-right bg-[var(--bb-panel)] border px-2 py-1 transition-colors focus:outline-none"
-            style={{ borderColor: isEditing ? "var(--bb-orange)" : "var(--bb-line)", color: isEditing ? "var(--bb-orange)" : "var(--bb-white)" }}
+            className="w-[80px] h-9 rounded-[10px] bg-white border text-[14px] text-right tabular-nums px-2.5 text-neutral-900 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
+            style={{ borderColor: isEditing ? "#0071e3" : "rgba(0,0,0,0.12)" }}
             aria-label={label}
           />
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-4)] w-[20px]">{suffix}</span>
+          <span className="text-[13px] text-neutral-400 w-[20px]">{suffix}</span>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Selling Rules"
-        subtitle="MERCHANT-CONTROLLED BOUNDARIES · ENFORCED BY THE POLICY ENGINE"
+        subtitle="Boundaries you control · ENFORCED BY THE POLICY ENGINE"
         actions={
           <>
-            <button onClick={() => void fetchData()} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-              <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-            </button>
-            <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className="inline-flex items-center gap-2 h-[32px] px-4 border font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: hasChanges ? "var(--bb-orange)" : "var(--bb-line)", backgroundColor: hasChanges ? "color-mix(in srgb, var(--bb-orange) 10%, transparent)" : "var(--bb-panel)", color: hasChanges ? "var(--bb-orange)" : "var(--bb-grey-3)" }}>
-              <Save size={12} /> {saving ? "SAVING..." : "SAVE CHANGES"}
+            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+            <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className={PRIMARY_PILL}>
+              <Save size={13} /> {saving ? "Saving…" : "Save changes"}
             </button>
           </>
         }
       />
 
       {saveMsg === "success" && (
-        <div className="border border-green-400/30 bg-green-400/5 px-5 py-3 flex items-center gap-2">
-          <Check size={14} className="text-green-400" />
-          <span className="font-[var(--font-mono)] text-[0.65rem] text-green-400">Policy updated successfully. Changes are enforced immediately.</span>
+        <div className="rounded-2xl bg-green-50/80 backdrop-blur-xl border border-green-200/60 px-4 py-3 flex items-center gap-2.5">
+          <span className="flex items-center justify-center size-6 rounded-full bg-green-100 shrink-0" aria-hidden>
+            <Check size={13} className="text-green-700" />
+          </span>
+          <span className="text-[13px] text-green-900">
+            Policy updated successfully. Changes are enforced immediately.
+          </span>
         </div>
       )}
       {saveMsg === "error" && <ErrorBanner message="Failed to update policy. Please try again." onRetry={() => void handleSave()} />}
-      {validationError && (
-        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-3 flex items-center gap-2">
-          <AlertCircle size={14} className="text-amber-400" />
-          <span className="font-[var(--font-mono)] text-[0.65rem] text-amber-400">{validationError}</span>
-        </div>
-      )}
+      {validationError && <PartialBanner message={validationError} />}
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
       {partialError && <PartialBanner message={partialError} />}
 
@@ -252,64 +262,64 @@ export default function SellingRulesPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Section title="PRICING" hint={hasChanges ? "UNSAVED CHANGES" : "MAX ORDER + MAX ITEM + MAX DISCOUNT"}>
+            <Section title="Pricing" hint={hasChanges ? "Unsaved changes" : "Max order + max item + max discount"}>
               {paiseField("Max order value", "max_order_value_paise")}
               {paiseField("Max single-item value", "max_single_item_value_paise")}
               {countField("Max discount", "max_discount_percent", "%")}
             </Section>
-            <Section title="NEGOTIATION" hint={hasChanges ? "UNSAVED CHANGES" : "ROUNDS THE SELLER MAY COUNTER"}>
+            <Section title="Negotiation" hint={hasChanges ? "Unsaved changes" : "Rounds the seller may counter"}>
               {countField("Max negotiation rounds", "max_negotiation_rounds")}
-              <div className="pt-3 font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-3)] leading-relaxed">
+              <div className="pt-3 text-[13px] text-neutral-500 leading-relaxed">
                 After this many rounds the seller holds its position or walks away, per backend policy.
               </div>
             </Section>
-            <Section title="APPROVALS" hint={hasChanges ? "UNSAVED CHANGES" : "HUMAN-IN-THE-LOOP THRESHOLD"}>
+            <Section title="Approvals" hint={hasChanges ? "Unsaved changes" : "Human-in-the-loop threshold"}>
               {paiseField("Human approval threshold", "human_approval_threshold_paise", true)}
-              <div className="pt-3 font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-3)] leading-relaxed">
+              <div className="pt-3 text-[13px] text-neutral-500 leading-relaxed">
                 Orders at or above this amount are held for merchant approval before consent and payment.
               </div>
             </Section>
-            <Section title="PRODUCTS" hint={hasChanges ? "UNSAVED CHANGES" : "CATEGORIES THE SELLER MAY SELL"}>
-              <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-2">ALLOWED CATEGORIES</div>
+            <Section title="Products" hint={hasChanges ? "Unsaved changes" : "Categories the seller may sell"}>
+              <div className="text-[13px] text-neutral-500 mb-2">Allowed categories</div>
               <input
                 type="text"
                 value={current.allowed_categories.join(", ")}
                 onChange={(e) => handleChange("allowed_categories", e.target.value)}
-                className="w-full font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
-                style={{ borderColor: "allowed_categories" in editing ? "var(--bb-orange)" : undefined }}
+                className={`${APPLE_INPUT} w-full`}
+                style={{ borderColor: "allowed_categories" in editing ? "#0071e3" : undefined }}
               />
-              <div className="font-[var(--font-mono)] text-[0.48rem] text-[var(--bb-grey-4)] mt-1">Comma-separated list of allowed product categories</div>
+              <div className="text-[12px] text-neutral-400 mt-1.5">Comma-separated list of allowed product categories</div>
             </Section>
           </div>
 
-          <Section title="UPSELLS" hint={hasChanges ? "UNSAVED CHANGES" : "ATTACH LIMIT PER SESSION"}>
+          <Section title="Upsells" hint={hasChanges ? "Unsaved changes" : "Attach limit per session"}>
             <div className="max-w-[420px]">
               {countField("Max upsells per session", "max_upsells_per_session")}
             </div>
           </Section>
 
           {/* Policy simulator — frontend-only preview */}
-          <Section title="POLICY SIMULATOR" hint="PREVIEW ONLY — FINAL DECISIONS ARE MADE BY THE SERVER">
+          <Section title="Policy simulator" hint="Preview only — final decisions are made by the server">
             <div className="flex items-start gap-2 mb-4">
-              <FlaskConical size={14} className="text-[var(--bb-grey-3)] mt-0.5 shrink-0" />
-              <p className="font-[var(--font-sans)] text-[0.75rem] text-[var(--bb-grey-2)] leading-relaxed">
+              <FlaskConical size={14} className="text-neutral-400 mt-0.5 shrink-0" />
+              <p className="text-[14px] text-neutral-600 leading-relaxed">
                 Pick a loaded product and enter a hypothetical buyer offer. The simulator compares it against
                 the loaded policy values (floor, discount, category, item cap) in the browser only.
                 Preview only — final decisions are made by the server.
               </p>
             </div>
             {catalog === null ? (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Catalog unavailable — the simulator needs loaded products.</div>
+              <div className="text-[14px] text-neutral-500">Catalog unavailable — the simulator needs loaded products.</div>
             ) : catalog.length === 0 ? (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">No products loaded — add products in Catalog first.</div>
+              <div className="text-[14px] text-neutral-500">No products loaded — add products in Catalog first.</div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                <label className="flex flex-col gap-1">
-                  <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">PRODUCT</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[13px] text-neutral-500">Product</span>
                   <select
                     value={simSku}
                     onChange={(e) => setSimSku(e.target.value)}
-                    className="font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 cursor-pointer"
+                    className={`${APPLE_INPUT} w-full cursor-pointer`}
                   >
                     <option value="">Select a product…</option>
                     {catalog.map((p) => (
@@ -319,30 +329,30 @@ export default function SellingRulesPage() {
                     ))}
                   </select>
                 </label>
-                <label className="flex flex-col gap-1">
-                  <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">HYPOTHETICAL BUYER OFFER (₹)</span>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[13px] text-neutral-500">Hypothetical buyer offer (₹)</span>
                   <input
                     type="number"
                     min="1"
                     value={simOffer}
                     onChange={(e) => setSimOffer(e.target.value)}
                     placeholder="1800"
-                    className="font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 tabular-nums focus:outline-none focus:border-[var(--bb-orange)]"
+                    className={`${APPLE_INPUT} w-full tabular-nums`}
                   />
                 </label>
               </div>
             )}
             {simVerdict && (
-              <div className={`border p-4 ${simVerdict === "ALLOW" ? "border-green-400/30 bg-green-400/5" : "border-red-400/30 bg-red-400/5"}`}>
-                <div className={`font-[var(--font-mono)] text-[0.7rem] tracking-[0.12em] uppercase mb-2 ${simVerdict === "ALLOW" ? "text-green-400" : "text-red-400"}`}>
-                  {simVerdict === "ALLOW" ? "✓ ALLOW" : `✕ ${simVerdict}`}
+              <div className={`rounded-2xl border p-4 ${simVerdict === "ALLOW" ? "border-green-200/60 bg-green-50" : "border-red-200/60 bg-red-50"}`}>
+                <div className={`mb-2 inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${simVerdict === "ALLOW" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                  {SIM_VERDICT_LABEL[simVerdict]}
                 </div>
                 <ul className="space-y-1">
                   {simNotes.map((n, i) => (
-                    <li key={i} className="font-[var(--font-sans)] text-[0.75rem] text-[var(--bb-grey-2)] leading-relaxed">{n}</li>
+                    <li key={i} className="text-[14px] text-neutral-600 leading-relaxed">{n}</li>
                   ))}
                 </ul>
-                <div className="mt-2 font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">
+                <div className="mt-2 text-[12px] text-neutral-400">
                   Preview only — final decisions are made by the server.
                 </div>
               </div>

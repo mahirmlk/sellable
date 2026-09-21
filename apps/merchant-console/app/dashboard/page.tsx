@@ -64,16 +64,16 @@ function Metric({
   sub?: string;
 }) {
   return (
-    <div className="border border-[var(--bb-line)] p-4 bg-[var(--bb-panel)]">
-      <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-3">
+    <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-5 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_12px_40px_-12px_rgba(0,0,0,0.18)]">
+      <div className="text-[13px] font-medium text-neutral-500 mb-2 truncate">
         {label}
       </div>
-      <div className="font-[var(--font-mono)] text-[1.35rem] leading-none tabular-nums tracking-tight text-[var(--bb-white)]">
+      <div className="text-[28px] font-semibold leading-none tracking-tight tabular-nums text-neutral-900">
         {value}
       </div>
       {sub && (
-        <div className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)] mt-2">
-          {sub}
+        <div className="text-[12px] text-neutral-400 mt-2 normal-case tracking-normal">
+          {sub.charAt(0) + sub.slice(1).toLowerCase()}
         </div>
       )}
     </div>
@@ -81,23 +81,17 @@ function Metric({
 }
 
 function SectionLabel({
-  index,
   title,
   children,
 }: {
-  index: string;
+  index?: string;
   title: string;
   children?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between mb-3">
-      <div className="flex items-baseline gap-2.5">
-        <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-orange)] tabular-nums">
-          {index}
-        </span>
-        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)]">
-          {title}
-        </span>
+      <div className="text-[15px] font-semibold tracking-[-0.01em] text-neutral-900">
+        {title}
       </div>
       {children}
     </div>
@@ -285,7 +279,7 @@ export default function OverviewPage() {
 
   if (loading) {
     return (
-      <div className="p-6 space-y-6 max-w-[1440px]">
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">
@@ -304,8 +298,8 @@ export default function OverviewPage() {
 
   if (allFailed) {
     return (
-      <div className="p-6 space-y-6 max-w-[1440px]">
-        <PageHeader title={`${greeting()}${store ? `, ${store.name}` : ""}`} subtitle="YOUR STORE AT A GLANCE" />
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+        <PageHeader title={`${greeting()}${store ? `, ${store.name}` : ""}`} subtitle="Your store at a glance" />
         <ErrorBanner
           message="The backend could not be reached — none of the store sections loaded."
           onRetry={() => {
@@ -318,28 +312,28 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-[1440px]">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       {/* Greeting header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">
+          <h1 className="text-[28px] font-bold tracking-[-0.02em] text-neutral-900">
             {greeting()}
             {store && !storeFailed ? `, ${store.name}` : ""}
           </h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
             {!storeFailed && (
-              <span className="inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-green-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-400" /> ACTIVE
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-[12px] font-medium text-green-700">
+                <span className="size-1.5 rounded-full bg-green-600" /> Active
               </span>
             )}
             {paymentLabel && (
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)]">
-                · {paymentLabel}
+              <span className="text-[13px] text-neutral-500">
+                {paymentLabel}
               </span>
             )}
             {!paymentLabel && !statusError && (
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-4)]">
-                · CHECKING PAYMENTS…
+              <span className="text-[13px] text-neutral-400">
+                Checking payments…
               </span>
             )}
           </div>
@@ -370,12 +364,11 @@ export default function OverviewPage() {
 
       {/* Sales overview with real figures */}
       <div>
-        <SectionLabel index="01" title="Sales overview" />
-        <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] p-5 relative overflow-hidden">
-          <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-[var(--bb-orange)]" />
+        <SectionLabel title="Sales overview" />
+        <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-6 relative overflow-hidden">
           {revenue !== null && ordersCount !== null ? (
             <>
-              <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)] leading-relaxed">
+              <div className="text-[15px] text-neutral-900 leading-relaxed">
                 {formatPaiseDecimal(revenue)} across {ordersCount} order{ordersCount === 1 ? "" : "s"}
                 {assisted !== null && assistedPct !== null
                   ? `, with ${formatPaiseDecimal(assisted)} (${assistedPct}%) assisted by your AI Seller.`
@@ -383,18 +376,18 @@ export default function OverviewPage() {
               </div>
               {assisted !== null && assistedPct !== null && (
                 <div className="mt-4">
-                  <div className="h-[6px] bg-[var(--bb-black)] border border-[var(--bb-line-soft)] overflow-hidden">
-                    <div className="h-full bg-[var(--bb-orange)]" style={{ width: `${assistedPct}%` }} />
+                  <div className="h-1.5 rounded-full bg-black/[0.06] overflow-hidden">
+                    <div className="h-full rounded-full bg-[#0071e3]" style={{ width: `${assistedPct}%` }} />
                   </div>
-                  <div className="mt-2 flex items-center justify-between font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase">
-                    <span className="text-[var(--bb-orange)]">{assistedPct}% AI-ASSISTED</span>
-                    <span className="text-[var(--bb-grey-4)]">{100 - assistedPct}% DIRECT</span>
+                  <div className="mt-2 flex items-center justify-between text-[12px]">
+                    <span className="font-medium text-[#0071e3]">{assistedPct}% AI-assisted</span>
+                    <span className="text-neutral-400">{100 - assistedPct}% direct</span>
                   </div>
                 </div>
               )}
             </>
           ) : (
-            <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">
+            <div className="text-[13px] text-neutral-400">
               Sales figures are unavailable — the insights service did not respond. Retry to reload.
             </div>
           )}
@@ -402,12 +395,12 @@ export default function OverviewPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
-        <div className="space-y-6">
+        <div className="space-y-8">
           {/* Needs attention */}
           <div>
-            <SectionLabel index="02" title="Needs attention" />
+            <SectionLabel title="Needs attention" />
             {needsAttention.length === 0 ? (
-              <div className="border border-[var(--bb-line)] px-5 py-8 text-center font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-4)]">
+              <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] px-6 py-10 text-center text-[14px] text-neutral-400">
                 {txFailed && approvalsFailed && catalogFailed
                   ? "Attention signals are unavailable — the backing services did not respond."
                   : "All clear. Nothing needs your attention right now."}
@@ -418,23 +411,25 @@ export default function OverviewPage() {
                   <Link
                     key={item.label}
                     href={item.href}
-                    className={`px-5 py-3.5 flex items-center justify-between gap-4 hover:bg-[var(--bb-panel)] transition-colors group ${
-                      i < needsAttention.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+                    className={`px-6 py-4 flex items-center justify-between gap-4 hover:bg-black/[0.02] transition-colors ${
+                      i < needsAttention.length - 1 ? "border-b border-black/[0.05]" : ""
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <IconWarning size={14} className="text-amber-400 shrink-0" />
+                      <span className="flex items-center justify-center size-7 rounded-full bg-amber-100 shrink-0" aria-hidden>
+                        <IconWarning size={14} className="text-amber-800" />
+                      </span>
                       <div className="min-w-0">
-                        <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-1)] group-hover:text-[var(--bb-white)] transition-colors">
+                        <div className="text-[14px] font-medium text-neutral-900 truncate">
                           {item.label}
                         </div>
-                        <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] mt-0.5">
+                        <div className="text-[12px] text-neutral-400 mt-0.5 truncate">
                           {item.detail}
                         </div>
                       </div>
                     </div>
-                    <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] shrink-0">
-                      REVIEW →
+                    <span className="text-[13px] font-medium text-[#0071e3] shrink-0">
+                      Review →
                     </span>
                   </Link>
                 ))}
@@ -444,12 +439,12 @@ export default function OverviewPage() {
 
           {/* Recent orders */}
           <div>
-            <SectionLabel index="03" title="Recent orders">
+            <SectionLabel title="Recent orders">
               <Link
                 href="/dashboard/transactions"
-                className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:text-[var(--bb-orange-bright)] transition-colors"
+                className="text-[13px] font-medium text-[#0071e3] hover:underline"
               >
-                VIEW ALL →
+                View all →
               </Link>
             </SectionLabel>
             {txFailed ? (
@@ -461,9 +456,9 @@ export default function OverviewPage() {
                 action={
                   <Link
                     href="/dashboard/storefront"
-                    className="inline-flex items-center h-[32px] px-4 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all"
+                    className="inline-flex items-center h-9 px-5 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all"
                   >
-                    VIEW STOREFRONT
+                    View storefront
                   </Link>
                 }
               />
@@ -473,20 +468,20 @@ export default function OverviewPage() {
                   <Link
                     key={tx.id}
                     href={`/dashboard/transactions/${tx.id}`}
-                    className={`px-5 py-3 flex items-center justify-between gap-3 hover:bg-[var(--bb-panel)] transition-colors group ${
-                      i < recentOrders.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+                    className={`px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-black/[0.02] transition-colors ${
+                      i < recentOrders.length - 1 ? "border-b border-black/[0.05]" : ""
                     }`}
                   >
                     <div className="min-w-0">
-                      <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-2)] group-hover:text-[var(--bb-white)] transition-colors truncate">
+                      <div className="text-[13px] text-neutral-600 truncate">
                         #{tx.id}
                       </div>
-                      <div className="font-[var(--font-mono)] text-[0.52rem] text-[var(--bb-grey-4)] mt-0.5">
-                        {formatTimeAgo(tx.updatedAt)} · {tx.channel === "agent_to_agent" ? "AI Buyer" : "Human"}
+                      <div className="text-[12px] text-neutral-400 mt-0.5">
+                        {formatTimeAgo(tx.updatedAt)} · {tx.channel === "agent_to_agent" ? "AI buyer" : "Human"}
                       </div>
                     </div>
                     <div className="text-right shrink-0 ml-3">
-                      <div className="font-[var(--font-mono)] text-[0.82rem] text-[var(--bb-white)] tabular-nums">
+                      <div className="text-[15px] font-semibold text-neutral-900 tabular-nums">
                         {formatPaise(tx.amountPaise)}
                       </div>
                       <div className="mt-1">
@@ -501,12 +496,12 @@ export default function OverviewPage() {
 
           {/* Recent activity */}
           <div>
-            <SectionLabel index="04" title="Recent activity">
+            <SectionLabel title="Recent activity">
               <Link
                 href="/dashboard/activity"
-                className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:text-[var(--bb-orange-bright)] transition-colors"
+                className="text-[13px] font-medium text-[#0071e3] hover:underline"
               >
-                VIEW ALL →
+                View all →
               </Link>
             </SectionLabel>
             {eventsFailed ? (
@@ -522,25 +517,25 @@ export default function OverviewPage() {
                   <Link
                     key={event.id}
                     href="/dashboard/activity"
-                    className={`px-5 py-[11px] flex items-center gap-4 hover:bg-[var(--bb-panel)] transition-colors group ${
-                      i < recentEvents.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+                    className={`px-6 py-3 flex items-center gap-3 hover:bg-black/[0.02] transition-colors ${
+                      i < recentEvents.length - 1 ? "border-b border-black/[0.05]" : ""
                     }`}
                   >
-                    <span className="font-[var(--font-mono)] text-[0.58rem] text-[var(--bb-grey-4)] w-[58px] flex-shrink-0 tabular-nums">
+                    <span className="text-[12px] text-neutral-400 w-[58px] flex-shrink-0 tabular-nums">
                       {event.time}
                     </span>
                     <span
-                      className={`w-[5px] h-[5px] rotate-45 flex-shrink-0 ${
+                      className={`size-2 rounded-full flex-shrink-0 ${
                         event.type === "success"
-                          ? "bg-green-400"
+                          ? "bg-[#1f9d55]"
                           : event.type === "error"
-                            ? "bg-red-400"
+                            ? "bg-[#d92d20]"
                             : event.type === "warning"
-                              ? "bg-yellow-400"
-                              : "bg-[var(--bb-grey-3)]"
+                              ? "bg-[#b25e00]"
+                              : "bg-neutral-300"
                       }`}
                     />
-                    <span className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-2)] group-hover:text-[var(--bb-white)] transition-colors">
+                    <span className="text-[14px] text-neutral-700 truncate">
                       {event.label}
                     </span>
                   </Link>
@@ -550,37 +545,37 @@ export default function OverviewPage() {
           </div>
         </div>
 
-        <div className="space-y-6">
+        <div className="space-y-8">
           {/* Store health */}
           <div>
-            <SectionLabel index="05" title="Store health" />
+            <SectionLabel title="Store health" />
             {statusError ? (
               <ErrorBanner message={`Store health is unavailable: ${statusError.message}`} onRetry={reloadStatus} />
             ) : health.length === 0 ? (
               <TableSkeleton rows={5} />
             ) : (
-              <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] px-5 py-4 space-y-3">
+              <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] px-6 py-4">
                 {health.map((h) => (
-                  <div key={h.label} className="flex items-center justify-between gap-3">
-                    <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+                  <div key={h.label} className="flex items-center justify-between gap-3 py-2.5 border-b border-black/[0.05] last:border-b-0">
+                    <span className="text-[13px] text-neutral-500">
                       {h.label}
                     </span>
                     <span className="flex items-center gap-2">
                       <span
-                        className={`w-[5px] h-[5px] rounded-full ${
-                          h.ready === null ? "bg-[var(--bb-grey-4)]" : h.ready ? "bg-green-400" : "bg-amber-400"
+                        className={`size-2 rounded-full ${
+                          h.ready === null ? "bg-neutral-300" : h.ready ? "bg-[#1f9d55]" : "bg-[#b25e00]"
                         }`}
                       />
                       <span
-                        className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] uppercase ${
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium ${
                           h.ready === null
-                            ? "text-[var(--bb-grey-4)]"
+                            ? "bg-neutral-100 text-neutral-500"
                             : h.ready
-                              ? "text-green-400"
-                              : "text-amber-400"
+                              ? "bg-green-50 text-green-700"
+                              : "bg-amber-50 text-amber-800"
                         }`}
                       >
-                        {h.ready === null ? "—" : h.ready ? "READY" : h.state?.replace(/_/g, " ") ?? "NOT READY"}
+                        {h.ready === null ? "—" : h.ready ? "Ready" : h.state?.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) ?? "Not ready"}
                       </span>
                     </span>
                   </div>
@@ -591,38 +586,38 @@ export default function OverviewPage() {
 
           {/* AI sales snapshot */}
           <div>
-            <SectionLabel index="06" title="AI sales snapshot" />
+            <SectionLabel title="AI sales snapshot" />
             {growthFailed || !growth ? (
               <ErrorBanner
                 message="AI sales figures could not be loaded."
                 onRetry={() => void fetchData()}
               />
             ) : (
-              <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] px-5 py-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+              <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] px-6 py-4">
+                <div className="flex items-center justify-between py-2.5 border-b border-black/[0.05]">
+                  <span className="text-[13px] text-neutral-500">
                     AI-assisted revenue
                   </span>
-                  <span className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-orange)] tabular-nums">
+                  <span className="text-[15px] font-semibold text-[#0071e3] tabular-nums">
                     {formatPaiseDecimal(growth.agent_assisted_revenue)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+                <div className="flex items-center justify-between py-2.5 border-b border-black/[0.05]">
+                  <span className="text-[13px] text-neutral-500">
                     Negotiations
                   </span>
-                  <span className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-white)] tabular-nums">
+                  <span className="text-[15px] font-semibold text-neutral-900 tabular-nums">
                     {growth.negotiations}
-                    <span className="text-[var(--bb-grey-4)] text-[0.62rem]"> · {growth.negotiated_accepted} accepted</span>
+                    <span className="text-neutral-400 font-normal text-[13px]"> · {growth.negotiated_accepted} accepted</span>
                   </span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
+                <div className="flex items-center justify-between py-2.5">
+                  <span className="text-[13px] text-neutral-500">
                     Upsell offers
                   </span>
-                  <span className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-white)] tabular-nums">
+                  <span className="text-[15px] font-semibold text-neutral-900 tabular-nums">
                     {growth.upsell_offers}
-                    <span className="text-[var(--bb-grey-4)] text-[0.62rem]">
+                    <span className="text-neutral-400 font-normal text-[13px]">
                       {" "}· {growth.upsell_accepted} accepted{upsellRate !== null ? ` · ${upsellRate}%` : ""}
                     </span>
                   </span>

@@ -94,18 +94,18 @@ export default function InventoryPage() {
   }, [visible]);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Inventory"
-        subtitle="LIVE STOCK LEVELS FROM YOUR CATALOG"
+        subtitle="Live stock levels from your catalog"
         actions={
           <>
             <button
               onClick={handleExport}
               disabled={visible.length === 0}
-              className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
             >
-              <Download size={12} /> EXPORT
+              <Download size={14} /> Export
             </button>
             <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
           </>
@@ -116,9 +116,9 @@ export default function InventoryPage() {
       {loading ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="border border-[var(--bb-line)] p-4 bg-[var(--bb-panel)]">
-              <div className="skeleton h-3 w-20 mb-3" />
-              <div className="skeleton h-7 w-16" />
+            <div key={i} className="rounded-2xl bg-white/60 backdrop-blur-xl border border-black/[0.05] p-6 space-y-3">
+              <div className="h-3 w-20 animate-pulse rounded-lg bg-black/[0.06]" />
+              <div className="h-7 w-16 animate-pulse rounded-lg bg-black/[0.06]" />
             </div>
           ))}
         </div>
@@ -130,11 +130,11 @@ export default function InventoryPage() {
             { label: "Low stock", value: String(counts.low) },
             { label: "Out of stock", value: String(counts.out) },
           ].map((m) => (
-            <div key={m.label} className="border border-[var(--bb-line)] p-4 bg-[var(--bb-panel)]">
-              <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-3">
+            <div key={m.label} className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-5 transition-all duration-200 hover:-translate-y-px">
+              <div className="text-[13px] font-medium text-neutral-500 mb-2">
                 {m.label}
               </div>
-              <div className="font-[var(--font-mono)] text-[1.35rem] leading-none tabular-nums tracking-tight text-[var(--bb-white)]">
+              <div className="text-[28px] font-semibold leading-none tracking-tight tabular-nums text-neutral-900">
                 {m.value}
               </div>
             </div>
@@ -159,9 +159,10 @@ export default function InventoryPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search inventory…"
-          className="flex-1 min-w-[180px] max-w-[300px] font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          aria-label="Search inventory"
+          className="flex-1 min-w-[180px] max-w-[320px] h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
         />
-        <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] ml-auto">
+        <span className="text-[12px] text-neutral-400 ml-auto tabular-nums">
           {visible.length} of {catalog.length} products
         </span>
       </div>
@@ -182,53 +183,53 @@ export default function InventoryPage() {
             catalog.length === 0 ? (
               <Link
                 href="/dashboard/catalog"
-                className="inline-flex items-center h-[32px] px-4 bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
+                className="inline-flex items-center h-9 px-5 rounded-full bg-[#0071e3] text-[13px] font-semibold text-white shadow-sm hover:bg-[#0077ed] transition-colors"
               >
-                GO TO PRODUCTS
+                Go to products
               </Link>
             ) : undefined
           }
         />
       ) : (
         <DataTable>
-          <div className="hidden lg:grid grid-cols-[1fr_140px_120px_140px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-            {["PRODUCT", "SKU", "AVAILABLE", "STATUS"].map((h) => (
-              <div key={h} className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">{h}</div>
+          <div className="hidden lg:grid grid-cols-[1fr_140px_120px_140px] gap-3 px-6 py-3 border-b border-black/[0.06] bg-neutral-50/80">
+            {["Product", "SKU", "Available", "Status"].map((h) => (
+              <div key={h} className="text-[12px] font-medium text-neutral-500">{h}</div>
             ))}
           </div>
           {visible.map((p, i) => (
             <Link
               key={p.id}
               href={`/dashboard/catalog/${p.sku}`}
-              className={`hidden lg:grid grid-cols-[1fr_140px_120px_140px] gap-3 px-5 py-3 items-center hover:bg-[var(--bb-panel)] transition-colors ${
-                i < visible.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+              className={`hidden lg:grid grid-cols-[1fr_140px_120px_140px] gap-3 px-6 py-4 items-center hover:bg-black/[0.02] transition-colors focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+                i < visible.length - 1 ? "border-b border-black/[0.05]" : ""
               }`}
             >
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)] truncate">
+              <div className="text-[15px] font-medium text-neutral-900 truncate">
                 {p.title}
-                <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-4)] ml-2">
+                <span className="text-[12px] font-normal text-neutral-400 ml-2">
                   {p.category}
                 </span>
               </div>
-              <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{p.sku}</div>
-              <div className="font-[var(--font-mono)] text-[0.78rem] text-[var(--bb-white)] tabular-nums">{p.stock}</div>
+              <div className="text-[13px] text-neutral-500 tabular-nums">{p.sku}</div>
+              <div className="text-[15px] font-semibold text-neutral-900 tabular-nums">{p.stock}</div>
               <StockBadge stock={p.stock} threshold={LOW_STOCK_THRESHOLD} />
             </Link>
           ))}
           {/* Mobile cards */}
-          <div className="lg:hidden divide-y divide-[var(--bb-line-soft)]">
+          <div className="lg:hidden divide-y divide-black/[0.05]">
             {visible.map((p) => (
-              <Link key={p.id} href={`/dashboard/catalog/${p.sku}`} className="block px-5 py-3.5 space-y-1.5">
+              <Link key={p.id} href={`/dashboard/catalog/${p.sku}`} className="block px-5 py-4 space-y-1.5 hover:bg-black/[0.02]">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)] leading-snug truncate">
+                  <span className="text-[15px] font-medium text-neutral-900 leading-snug truncate">
                     {p.title}
                   </span>
-                  <span className="font-[var(--font-mono)] text-[0.85rem] text-[var(--bb-white)] tabular-nums shrink-0">
+                  <span className="text-[15px] font-semibold text-neutral-900 tabular-nums shrink-0">
                     {p.stock}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-4)]">
+                  <span className="text-[12px] text-neutral-400">
                     {p.sku} · {p.category}
                   </span>
                   <StockBadge stock={p.stock} threshold={LOW_STOCK_THRESHOLD} />

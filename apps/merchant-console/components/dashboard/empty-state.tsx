@@ -12,14 +12,20 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 border border-dashed border-[var(--bb-line)] bg-[var(--bb-panel)] px-6 py-12 text-center">
-      <p className="font-[var(--font-sans)] text-[0.95rem] font-medium text-[var(--bb-white)]">
+    <div
+      role="status"
+      className="flex flex-col items-center justify-center gap-2 rounded-3xl bg-neutral-50/80 backdrop-blur-xl border border-black/[0.05] px-6 py-16 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+    >
+      <div className="flex items-center justify-center size-11 rounded-2xl bg-white border border-black/[0.06] shadow-sm text-[20px] mb-1" aria-hidden>
+        ○
+      </div>
+      <p className="text-[17px] font-semibold tracking-[-0.01em] text-neutral-900">
         {title}
       </p>
-      <p className="max-w-[28rem] font-[var(--font-sans)] text-[0.85rem] leading-relaxed text-[var(--bb-grey-2)]">
+      <p className="max-w-[28rem] text-[14px] leading-relaxed text-neutral-500">
         {message}
       </p>
-      {action ? <div className="mt-3">{action}</div> : null}
+      {action ? <div className="mt-4">{action}</div> : null}
     </div>
   );
 }

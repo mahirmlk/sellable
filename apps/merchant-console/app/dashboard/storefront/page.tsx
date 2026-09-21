@@ -1,6 +1,6 @@
 "use client";
 
-import { Globe, ExternalLink, Copy, Check, RefreshCw, KeyRound, Plus, RotateCw, Ban, ShieldAlert, ChevronDown } from "lucide-react";
+import { Globe, ExternalLink, Copy, Check, KeyRound, Plus, RotateCw, Ban, ShieldAlert, ChevronDown } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import {
   getAgentManifest,
@@ -24,6 +24,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { RefreshButton } from "@/components/dashboard/commerce-ui";
 import {
   Section,
   PartialBanner,
@@ -40,21 +41,33 @@ const DISCOVERY_DESCRIPTIONS: Record<string, string> = {
   instructions: "LLM-facing store guidance",
 };
 
+const SECONDARY_PILL =
+  "inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+const SMALL_PILL =
+  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-white border border-black/10 shadow-sm text-[12px] font-medium text-neutral-600 hover:text-neutral-900 hover:shadow transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+const SMALL_DANGER_PILL =
+  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-red-50/60 border border-red-200/70 shadow-sm text-[12px] font-medium text-red-700 hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+const PRIMARY_PILL =
+  "inline-flex items-center gap-2 h-9 px-5 rounded-full bg-[#0071e3] text-white text-[13px] font-semibold shadow-sm hover:bg-[#0077ed] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+const APPLE_INPUT =
+  "h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow";
+
 function ChannelRow({ name, detail, state }: { name: string; detail: string; state: "ACTIVE" | "AVAILABLE" | "OFFLINE" }) {
   const tone =
     state === "ACTIVE"
-      ? "border-green-400/40 text-green-400"
+      ? "bg-green-50 text-green-700"
       : state === "AVAILABLE"
-        ? "border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]"
-        : "border-red-400/40 text-red-400";
+        ? "bg-neutral-100 text-neutral-600"
+        : "bg-red-50 text-red-700";
+  const label = state === "ACTIVE" ? "Active" : state === "AVAILABLE" ? "Available" : "Offline";
   return (
-    <div className="flex items-center justify-between gap-3 py-3 border-b border-[var(--bb-line-soft)] last:border-b-0">
+    <div className="flex items-center justify-between gap-3 py-3 border-b border-black/[0.06] last:border-b-0">
       <div className="min-w-0">
-        <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-white)]">{name}</div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] mt-0.5">{detail}</div>
+        <div className="text-[14px] font-medium text-neutral-900">{name}</div>
+        <div className="text-[13px] text-neutral-500 mt-0.5">{detail}</div>
       </div>
-      <span className={`shrink-0 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase px-2 py-0.5 border ${tone}`}>
-        {state}
+      <span className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${tone}`}>
+        {label}
       </span>
     </div>
   );
@@ -244,14 +257,12 @@ export default function StorefrontPage() {
   const inStock = (catalog ?? []).filter((p) => p.stock > 0).length;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="AI Storefront"
         subtitle="Your store's AI sales channel."
         actions={
-          <button onClick={() => void fetchData()} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-          </button>
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
         }
       />
 
@@ -265,20 +276,18 @@ export default function StorefrontPage() {
           title="Storefront unavailable"
           message="Nothing could be loaded from the backend. Check connectivity and retry."
           action={
-            <button onClick={() => void fetchData()} className="inline-flex items-center gap-2 h-[32px] px-4 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] transition-all cursor-pointer">
-              <RefreshCw size={12} /> RETRY
-            </button>
+            <RefreshButton onRefresh={() => void fetchData()} loading={loading} label="Retry" />
           }
         />
       ) : (
         <>
           {/* Store availability */}
-          <Section title="STORE AVAILABILITY" hint="LIVE BACKEND STATE">
+          <Section title="Store availability" hint="Live backend state">
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <span className={`inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase ${discoverable ? "text-green-400" : "text-amber-400"}`}>
-                <Globe size={16} /> {discoverable ? "DISCOVERABLE" : "OFFLINE — NOT VERIFIED"}
+              <span className={`inline-flex items-center gap-2 text-[14px] font-semibold ${discoverable ? "text-green-700" : "text-[#b25e00]"}`}>
+                <Globe size={16} /> {discoverable ? "Discoverable" : "Offline — not verified"}
               </span>
-              <span className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)]">
+              <span className="text-[14px] text-neutral-600">
                 {discoverable
                   ? `Fetched live from ${fullUrl("/.well-known/agents.json")} — this is what autonomous AI buyers read.`
                   : "The agent manifest could not be fetched. Nothing below is claimed live."}
@@ -291,9 +300,9 @@ export default function StorefrontPage() {
                   { label: "Agent gateway", value: status.agent_gateway.state },
                   { label: "Policy engine", value: status.policy_engine.state },
                 ].map((r) => (
-                  <div key={r.label} className="border border-[var(--bb-line-soft)] bg-[var(--bb-black)] px-3 py-2.5 flex items-center justify-between gap-2">
-                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-3)]">{r.label}</span>
-                    <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] ${r.value === "CONNECTED" ? "text-green-400" : r.value === "UNCONFIGURED" ? "text-yellow-400" : "text-red-400"}`}>
+                  <div key={r.label} className="rounded-[10px] bg-neutral-50 border border-black/[0.06] px-3 py-2.5 flex items-center justify-between gap-2">
+                    <span className="text-[12px] font-medium text-neutral-500">{r.label}</span>
+                    <span className={`text-[13px] font-semibold ${r.value === "CONNECTED" ? "text-green-700" : r.value === "UNCONFIGURED" ? "text-[#b25e00]" : "text-red-700"}`}>
                       {r.value}
                     </span>
                   </div>
@@ -303,28 +312,28 @@ export default function StorefrontPage() {
           </Section>
 
           {/* AI discovery */}
-          <Section title="AI DISCOVERY" hint="FROM THE LIVE MANIFEST ONLY">
+          <Section title="AI discovery" hint="From the live manifest only">
             {manifest ? (
               <div className="space-y-0">
                 {endpoints.map((ep, i) => {
                   const url = fullUrl(ep.path);
                   const openable = !ep.path.includes("{");
                   return (
-                    <div key={ep.path} className={`py-3 flex items-center justify-between gap-3 ${i < endpoints.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
+                    <div key={ep.path} className={`py-3 flex items-center justify-between gap-3 ${i < endpoints.length - 1 ? "border-b border-black/[0.06]" : ""}`}>
                       <div className="min-w-0">
                         <div className="flex items-center gap-3 mb-1 flex-wrap">
-                          <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)] break-all">{ep.path}</span>
-                          <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">{ep.label}</span>
+                          <span className="text-[13px] font-medium text-neutral-900 break-all">{ep.path}</span>
+                          <span className="text-[12px] text-neutral-500">{ep.label}</span>
                         </div>
-                        <div className="font-[var(--font-sans)] text-[0.75rem] text-[var(--bb-grey-3)]">{ep.description}</div>
+                        <div className="text-[13px] text-neutral-500">{ep.description}</div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => handleCopy(url)} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
-                          {copiedPath === url ? <><Check size={10} /> COPIED</> : <><Copy size={10} /> COPY</>}
+                        <button onClick={() => handleCopy(url)} className={SMALL_PILL}>
+                          {copiedPath === url ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
                         </button>
                         {openable && (
-                          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all">
-                            <ExternalLink size={10} /> OPEN
+                          <a href={url} target="_blank" rel="noopener noreferrer" className={SMALL_PILL}>
+                            <ExternalLink size={12} /> Open
                           </a>
                         )}
                       </div>
@@ -333,61 +342,61 @@ export default function StorefrontPage() {
                 })}
               </div>
             ) : (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">
+              <div className="text-[14px] text-neutral-500">
                 Discovery links are unavailable because the live manifest could not be fetched.
               </div>
             )}
           </Section>
 
           {/* Capabilities — live manifest only */}
-          <Section title="CAPABILITIES" hint="LIVE MANIFEST ONLY — NOTHING CLAIMED WITHOUT EVIDENCE">
+          <Section title="Capabilities" hint="Live manifest only — nothing claimed without evidence">
             {manifest ? (
               capabilities.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {capabilities.map((cap) => (
-                    <span key={cap} className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] px-2 py-1 border border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]">{cap}</span>
+                    <span key={cap} className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-[12px] font-medium text-neutral-600">{cap}</span>
                   ))}
                 </div>
               ) : (
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">The live manifest lists no capabilities.</div>
+                <div className="text-[14px] text-neutral-500">The live manifest lists no capabilities.</div>
               )
             ) : (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Capabilities are unknown — the live manifest could not be fetched.</div>
+              <div className="text-[14px] text-neutral-500">Capabilities are unknown — the live manifest could not be fetched.</div>
             )}
             {manifest && (
-              <div className="mt-4 pt-4 border-t border-[var(--bb-line-soft)]">
-                <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">MERCHANT</div>
-                <div className="font-[var(--font-sans)] text-[1rem] text-[var(--bb-white)]">{String(manifest.name ?? "—")}</div>
-                <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{String(manifest.merchant_id ?? "")}</div>
+              <div className="mt-4 pt-4 border-t border-black/[0.06]">
+                <div className="text-[12px] font-medium text-neutral-500 mb-1">Merchant</div>
+                <div className="text-[17px] font-semibold tracking-[-0.01em] text-neutral-900">{String(manifest.name ?? "—")}</div>
+                <div className="text-[12px] text-neutral-400 tabular-nums">{String(manifest.merchant_id ?? "")}</div>
               </div>
             )}
           </Section>
 
           {/* Commerce pipeline: catalog / quotes / negotiation / checkout / payment */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Section title="PRODUCT CATALOG" hint={catalog ? `${catalog.length} PRODUCTS · ${inStock} IN STOCK` : "UNAVAILABLE"}>
+            <Section title="Product catalog" hint={catalog ? `${catalog.length} products · ${inStock} in stock` : "Unavailable"}>
               {catalog === null ? (
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Catalog could not be loaded.</div>
+                <div className="text-[14px] text-neutral-500">Catalog could not be loaded.</div>
               ) : catalog.length === 0 ? (
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">No products yet — the AI seller only sells what you stock.</div>
+                <div className="text-[14px] text-neutral-500">No products yet — the AI seller only sells what you stock.</div>
               ) : (
                 <div className="space-y-2">
                   {catalog.slice(0, 5).map((p) => (
                     <div key={p.id} className="flex items-center justify-between gap-3">
-                      <span className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-1)] truncate" title={p.title}>{p.title}</span>
-                      <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)] tabular-nums shrink-0">{formatPaise(p.price_paise)}</span>
+                      <span className="text-[14px] text-neutral-700 truncate" title={p.title}>{p.title}</span>
+                      <span className="text-[14px] font-medium text-neutral-900 tabular-nums shrink-0">{formatPaise(p.price_paise)}</span>
                     </div>
                   ))}
                   {catalog.length > 5 && (
-                    <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">+ {catalog.length - 5} more in the Catalog page</div>
+                    <div className="text-[12px] text-neutral-400">+ {catalog.length - 5} more in the Catalog page</div>
                   )}
                 </div>
               )}
             </Section>
 
-            <Section title="QUOTES" hint={transactions ? `${transactions.length} ORDERS ON RECORD` : "UNAVAILABLE"}>
+            <Section title="Quotes" hint={transactions ? `${transactions.length} orders on record` : "Unavailable"}>
               {transactions === null ? (
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Order data could not be loaded.</div>
+                <div className="text-[14px] text-neutral-500">Order data could not be loaded.</div>
               ) : (
                 <div className="grid grid-cols-3 gap-3">
                   {[
@@ -396,17 +405,17 @@ export default function StorefrontPage() {
                     { label: "Paid", value: String(paidOrders) },
                   ].map((s) => (
                     <div key={s.label}>
-                      <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">{s.label}</div>
-                      <div className="font-[var(--font-sans)] text-[1.3rem] text-[var(--bb-white)]">{s.value}</div>
+                      <div className="text-[12px] font-medium text-neutral-500 mb-1">{s.label}</div>
+                      <div className="text-[24px] font-semibold tracking-[-0.01em] text-neutral-900 tabular-nums">{s.value}</div>
                     </div>
                   ))}
                 </div>
               )}
             </Section>
 
-            <Section title="NEGOTIATION" hint="FROM SALES METRICS">
+            <Section title="Negotiation" hint="From sales metrics">
               {insights === null ? (
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Negotiation metrics could not be loaded.</div>
+                <div className="text-[14px] text-neutral-500">Negotiation metrics could not be loaded.</div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   {[
@@ -416,47 +425,47 @@ export default function StorefrontPage() {
                     { label: "Walked away", value: String(insights.walked_away) },
                   ].map((s) => (
                     <div key={s.label}>
-                      <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">{s.label}</div>
-                      <div className="font-[var(--font-sans)] text-[1.3rem] text-[var(--bb-white)]">{s.value}</div>
+                      <div className="text-[12px] font-medium text-neutral-500 mb-1">{s.label}</div>
+                      <div className="text-[24px] font-semibold tracking-[-0.01em] text-neutral-900 tabular-nums">{s.value}</div>
                     </div>
                   ))}
                 </div>
               )}
             </Section>
 
-            <Section title="CHECKOUT" hint={transactions ? "ORDER STATE" : "UNAVAILABLE"}>
+            <Section title="Checkout" hint={transactions ? "Order state" : "Unavailable"}>
               {transactions === null ? (
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Checkout data could not be loaded.</div>
+                <div className="text-[14px] text-neutral-500">Checkout data could not be loaded.</div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">Pending payment</div>
-                    <div className="font-[var(--font-sans)] text-[1.3rem] text-[var(--bb-white)]">{pendingPayment}</div>
+                    <div className="text-[12px] font-medium text-neutral-500 mb-1">Pending payment</div>
+                    <div className="text-[24px] font-semibold tracking-[-0.01em] text-neutral-900 tabular-nums">{pendingPayment}</div>
                   </div>
                   <div>
-                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">Settled</div>
-                    <div className="font-[var(--font-sans)] text-[1.3rem] text-green-400">{paidOrders}</div>
+                    <div className="text-[12px] font-medium text-neutral-500 mb-1">Settled</div>
+                    <div className="text-[24px] font-semibold tracking-[-0.01em] text-green-700 tabular-nums">{paidOrders}</div>
                   </div>
                 </div>
               )}
             </Section>
           </div>
 
-          <Section title="PAYMENT" hint="LIVE STATUS + ORDER EVIDENCE">
-            <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)]">
+          <Section title="Payment" hint="Live status + order evidence">
+            <div className="text-[13px] text-neutral-600">
               {status
-                ? `Provider ${status.payment_rail.provider} · ${status.payment_rail.mode} · ${status.payment_rail.configured ? "CONFIGURED" : "NOT CONFIGURED"} · webhook ${status.payment_rail.webhook_configured ? "CONFIGURED" : "NOT CONFIGURED"}`
+                ? `Provider ${status.payment_rail.provider} · ${status.payment_rail.mode} · ${status.payment_rail.configured ? "Configured" : "Not configured"} · webhook ${status.payment_rail.webhook_configured ? "configured" : "not configured"}`
                 : "Payment rail status could not be loaded."}
             </div>
             {payment.provider && (
-              <div className="mt-2 font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-grey-3)]">
+              <div className="mt-2 text-[12px] text-neutral-500">
                 Manifest settlement: {String(payment.provider)} {String(payment.mode ?? "")} · authority {String(payment.settlement_authority ?? "")}
               </div>
             )}
           </Section>
 
           {/* Sales channels */}
-          <Section title="SALES CHANNELS" hint="DERIVED FROM LIVE STATUS + ORDER HISTORY">
+          <Section title="Sales channels" hint="Derived from live status + order history">
             <ChannelRow
               name="Human Chat"
               detail="Merchant-assisted checkout in the AI Sales inbox"
@@ -475,53 +484,57 @@ export default function StorefrontPage() {
           </Section>
 
           {/* API keys — secondary developer section, collapsed by default */}
-          <details className="border border-[var(--bb-line)] overflow-hidden group">
-            <summary className="px-5 py-3 bg-[var(--bb-panel)] flex items-center justify-between cursor-pointer list-none">
-              <div className="flex items-center gap-2">
-                <KeyRound size={13} className="text-[var(--bb-grey-3)]" />
-                <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">DEVELOPER — AGENT API KEYS</span>
-                <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)] hidden sm:inline">CREDENTIALS FOR EXTERNAL AI BUYERS · SECONDARY — PRIMARY LIVES IN DEVELOPERS</span>
+          <details className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] overflow-hidden group">
+            <summary className="px-6 py-4 flex items-center justify-between cursor-pointer list-none">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <KeyRound size={14} className="text-neutral-400 shrink-0" />
+                <span className="text-[14px] font-semibold text-neutral-900">Agent API keys</span>
+                <span className="text-[12px] text-neutral-400 hidden sm:inline truncate">Credentials for external AI buyers</span>
               </div>
-              <ChevronDown size={14} className="text-[var(--bb-grey-3)] group-open:rotate-180 transition-transform" />
+              <ChevronDown size={14} className="text-neutral-400 group-open:rotate-180 transition-transform shrink-0" />
             </summary>
 
             {keyActionError && (
-              <div className="px-5 py-3 border-t border-red-400/30 bg-red-400/5">
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-red-400">{keyActionError}</span>
+              <div className="px-6 pt-4">
+                <ErrorBanner message={keyActionError} />
               </div>
             )}
 
-            <div className="px-5 py-3 border-t border-[var(--bb-line-soft)] flex items-center justify-between gap-2">
-              <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">The key is stored hashed — plaintext is shown once at creation.</span>
+            <div className="px-6 py-4 border-t border-black/[0.06] flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[12px] text-neutral-400">The key is stored hashed — plaintext is shown once at creation.</span>
               <div className="flex items-center gap-2">
-                <button onClick={() => void fetchKeys()} disabled={keysLoading} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-                  <RefreshCw size={10} className={keysLoading ? "animate-spin" : ""} /> REFRESH
-                </button>
-                <button onClick={() => setCreateOpen((v) => !v)} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-orange)]/40 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-all cursor-pointer">
-                  {createOpen ? <Ban size={10} /> : <Plus size={10} />} {createOpen ? "CANCEL" : "GENERATE KEY"}
-                </button>
+                <RefreshButton onRefresh={() => void fetchKeys()} loading={keysLoading} />
+                {createOpen ? (
+                  <button onClick={() => setCreateOpen((v) => !v)} className={SECONDARY_PILL}>
+                    <Ban size={13} /> Cancel
+                  </button>
+                ) : (
+                  <button onClick={() => setCreateOpen((v) => !v)} className={PRIMARY_PILL}>
+                    <Plus size={13} /> Generate key
+                  </button>
+                )}
               </div>
             </div>
 
             {createOpen && (
-              <div className="px-5 py-4 border-t border-[var(--bb-line)] bg-[var(--bb-panel)] space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-1">
-                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">LABEL (OPTIONAL)</span>
+              <div className="px-6 py-5 border-t border-black/[0.06] bg-neutral-50/60 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[13px] text-neutral-500">Label (optional)</span>
                     <input
                       value={keyLabel}
                       onChange={(e) => setKeyLabel(e.target.value)}
                       placeholder="perplexity shopping agent"
-                      className="font-[var(--font-sans)] text-[0.75rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+                      className={`${APPLE_INPUT} w-full`}
                     />
                   </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">BUYER AGENT ID (OPTIONAL)</span>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[13px] text-neutral-500">Buyer agent ID (optional)</span>
                     <input
                       value={keyBuyerId}
                       onChange={(e) => setKeyBuyerId(e.target.value.toLowerCase())}
                       placeholder="perplexity_buyer_01"
-                      className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+                      className={`${APPLE_INPUT} w-full tabular-nums`}
                     />
                   </label>
                 </div>
@@ -529,65 +542,65 @@ export default function StorefrontPage() {
                   <button
                     onClick={() => void handleCreateKey()}
                     disabled={busyKey === "__create__"}
-                    className="inline-flex items-center gap-2 h-[32px] px-4 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer disabled:opacity-50"
+                    className={PRIMARY_PILL}
                   >
-                    <KeyRound size={11} /> {busyKey === "__create__" ? "GENERATING…" : "GENERATE"}
+                    <KeyRound size={13} /> {busyKey === "__create__" ? "Generating…" : "Generate"}
                   </button>
                 </div>
               </div>
             )}
 
             {freshKey && (
-              <div className="px-5 py-4 border-t border-green-400/30 bg-green-400/5">
+              <div className="px-6 py-5 border-t border-black/[0.06] bg-green-50/60">
                 <div className="flex items-start gap-2 mb-2">
-                  <ShieldAlert size={14} className="text-green-400 mt-0.5 shrink-0" />
-                  <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] uppercase text-green-400">COPY NOW — SHOWN ONLY THIS ONCE ({freshKey.prefix}…)</span>
+                  <ShieldAlert size={14} className="text-green-700 mt-0.5 shrink-0" />
+                  <span className="text-[13px] font-medium text-green-800">Copy now — shown only this once ({freshKey.prefix}…)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)] bg-[var(--bb-black)] border border-[var(--bb-line)] px-3 py-2 overflow-x-auto whitespace-nowrap">{freshKey.plaintext}</code>
-                  <button onClick={() => handleCopyKey(freshKey.plaintext)} className="inline-flex items-center gap-1 h-[32px] px-3 border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
-                    {copiedPath === freshKey.plaintext ? <><Check size={10} /> COPIED</> : <><Copy size={10} /> COPY</>}
+                  <code className="flex-1 rounded-[10px] bg-neutral-50 border border-black/[0.06] text-neutral-800 text-[13px] px-3 py-2 overflow-x-auto whitespace-nowrap tabular-nums">{freshKey.plaintext}</code>
+                  <button onClick={() => handleCopyKey(freshKey.plaintext)} className={SMALL_PILL}>
+                    {copiedPath === freshKey.plaintext ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
                   </button>
                 </div>
               </div>
             )}
 
             {keysLoading ? (
-              <div className="px-5 py-8 text-center font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">Loading keys…</div>
+              <div className="px-6 py-8 text-center text-[13px] text-neutral-400">Loading keys…</div>
             ) : keysError ? (
-              <div className="px-5 py-4 border-t border-amber-400/30 bg-amber-400/5">
-                <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{keysError}</span>
+              <div className="px-6 py-4 border-t border-black/[0.06]">
+                <PartialBanner message={keysError} />
               </div>
             ) : keys.length === 0 ? (
-              <div className="px-5 py-8 text-center">
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] mb-1">No agent keys issued yet.</div>
-                <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-4)]">
+              <div className="px-6 py-8 text-center border-t border-black/[0.06]">
+                <div className="text-[15px] font-semibold text-neutral-900 mb-1">No agent keys issued yet</div>
+                <div className="text-[14px] text-neutral-500">
                   Generate a key and hand it to an external AI buyer so it can call your agent API.
                 </div>
               </div>
             ) : (
-              keys.map((k, i) => (
-                <div key={k.key_id} className={`px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between border-t border-[var(--bb-line-soft)] ${i === 0 ? "" : ""}`}>
+              keys.map((k) => (
+                <div key={k.key_id} className="px-6 py-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between border-t border-black/[0.06]">
                   <div className="min-w-0">
                     <div className="flex items-center gap-3 mb-1 flex-wrap">
-                      <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{k.key_prefix}…</span>
-                      <span className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase px-1.5 py-0.5 border ${k.revoked_at ? "border-red-400/40 text-red-400" : "border-green-400/40 text-green-400"}`}>
-                        {k.revoked_at ? "REVOKED" : "ACTIVE"}
+                      <span className="text-[13px] font-semibold text-neutral-900 tabular-nums">{k.key_prefix}…</span>
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${k.revoked_at ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
+                        {k.revoked_at ? "Revoked" : "Active"}
                       </span>
-                      {k.label && <span className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-2)] truncate">{k.label}</span>}
+                      {k.label && <span className="text-[13px] text-neutral-600 truncate">{k.label}</span>}
                     </div>
-                    <div className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">
+                    <div className="text-[12px] text-neutral-400">
                       {k.buyer_agent_id ? `buyer: ${k.buyer_agent_id} · ` : ""}created {new Date(k.created_at).toLocaleString()}
                       {k.last_used_at ? ` · last used ${new Date(k.last_used_at).toLocaleString()}` : " · never used"}
                     </div>
                   </div>
                   {!k.revoked_at && (
                     <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => void handleRotateKey(k.key_id)} disabled={busyKey !== null} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-                        <RotateCw size={10} /> {busyKey === k.key_id ? "WORKING…" : "ROTATE"}
+                      <button onClick={() => void handleRotateKey(k.key_id)} disabled={busyKey !== null} className={SMALL_PILL}>
+                        <RotateCw size={12} /> {busyKey === k.key_id ? "Working…" : "Rotate"}
                       </button>
-                      <button onClick={() => void handleRevokeKey(k.key_id)} disabled={busyKey !== null} className="inline-flex items-center gap-1 h-[28px] px-2 border border-red-400/30 bg-red-400/5 font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-red-400 hover:bg-red-400/10 transition-all cursor-pointer disabled:opacity-50">
-                        <Ban size={10} /> REVOKE
+                      <button onClick={() => void handleRevokeKey(k.key_id)} disabled={busyKey !== null} className={SMALL_DANGER_PILL}>
+                        <Ban size={12} /> Revoke
                       </button>
                     </div>
                   )}

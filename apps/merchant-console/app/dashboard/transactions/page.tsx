@@ -14,6 +14,7 @@ import { formatTimeAgo } from "@/lib/formatters";
 import { getConsoleApprovals, getConsoleTransactions } from "@/lib/api";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
+import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import { DataTable } from "@/components/dashboard/data-table";
 import {
@@ -144,18 +145,18 @@ export default function TransactionsPage() {
   }, []);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Orders"
-        subtitle="EVERY ORDER THROUGH YOUR STORE"
+        subtitle="Every order through your store"
         actions={
           <>
             <button
               onClick={handleExport}
               disabled={visible.length === 0}
-              className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
             >
-              <Download size={12} /> EXPORT
+              <Download size={14} /> Export
             </button>
             <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
           </>
@@ -183,30 +184,31 @@ export default function TransactionsPage() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search order, buyer, or SKU…"
-          className="flex-1 min-w-[180px] max-w-[300px] font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          aria-label="Search orders"
+          className="flex-1 min-w-[180px] max-w-[320px] h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
         />
         <select
           value={channel}
           onChange={(e) => setChannel(e.target.value as ChannelFilter)}
-          className="font-[var(--font-mono)] text-[0.62rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-grey-2)] px-2.5 py-2 cursor-pointer focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          className="h-9 rounded-[10px] bg-white border border-black/[0.12] text-[13px] text-neutral-700 px-2.5 cursor-pointer focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
           aria-label="Filter by buyer type"
         >
-          <option value="all">BUYER: ALL</option>
-          <option value="agent_to_agent">BUYER: AI BUYER</option>
-          <option value="human_chat">BUYER: HUMAN</option>
+          <option value="all">All buyers</option>
+          <option value="agent_to_agent">AI buyer</option>
+          <option value="human_chat">Human</option>
         </select>
         <select
           value={sort}
           onChange={(e) => setSort(e.target.value as SortKey)}
-          className="font-[var(--font-mono)] text-[0.62rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-grey-2)] px-2.5 py-2 cursor-pointer focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          className="h-9 rounded-[10px] bg-white border border-black/[0.12] text-[13px] text-neutral-700 px-2.5 cursor-pointer focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
           aria-label="Sort orders"
         >
-          <option value="newest">SORT: NEWEST</option>
-          <option value="oldest">SORT: OLDEST</option>
-          <option value="amount-desc">SORT: AMOUNT HIGH–LOW</option>
-          <option value="amount-asc">SORT: AMOUNT LOW–HIGH</option>
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+          <option value="amount-desc">Amount: high to low</option>
+          <option value="amount-asc">Amount: low to high</option>
         </select>
-        <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] ml-auto">
+        <span className="text-[12px] text-neutral-400 ml-auto tabular-nums">
           {visible.length} of {transactions.length} orders
         </span>
       </div>
@@ -220,21 +222,7 @@ export default function TransactionsPage() {
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
 
       {loading ? (
-        <DataTable>
-          <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-            <div className="skeleton h-3 w-32" />
-          </div>
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="px-5 py-4 border-b border-[var(--bb-line-soft)] last:border-b-0">
-              <div className="flex items-center gap-4">
-                <div className="skeleton h-3 w-24" />
-                <div className="skeleton h-3 w-32" />
-                <div className="skeleton h-3 w-16" />
-                <div className="skeleton h-3 w-12 ml-auto" />
-              </div>
-            </div>
-          ))}
-        </DataTable>
+        <TableSkeleton rows={8} />
       ) : visible.length === 0 ? (
         <EmptyState
           title={transactions.length === 0 ? "No orders yet" : "No orders match"}
@@ -246,44 +234,44 @@ export default function TransactionsPage() {
         />
       ) : (
         <DataTable>
-          <div className="hidden lg:grid grid-cols-[150px_1fr_120px_90px_100px_130px_70px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-            {["ORDER", "ITEMS", "BUYER", "AMOUNT", "CHANNEL", "STATUS", "PLACED"].map((h) => (
-              <div key={h} className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">{h}</div>
+          <div className="hidden lg:grid grid-cols-[150px_1fr_120px_90px_100px_130px_70px] gap-3 px-6 py-3 border-b border-black/[0.06] bg-neutral-50/80">
+            {["Order", "Items", "Buyer", "Amount", "Channel", "Status", "Placed"].map((h) => (
+              <div key={h} className="text-[12px] font-medium text-neutral-500">{h}</div>
             ))}
           </div>
           {visible.map((tx, i) => (
             <Link
               key={tx.id}
               href={`/dashboard/transactions/${tx.id}`}
-              className={`hidden lg:grid grid-cols-[150px_1fr_120px_90px_100px_130px_70px] gap-3 px-5 py-3.5 items-center hover:bg-[var(--bb-panel)] transition-colors group ${
-                i < visible.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+              className={`hidden lg:grid grid-cols-[150px_1fr_120px_90px_100px_130px_70px] gap-3 px-6 py-4 items-center hover:bg-black/[0.02] transition-colors focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+                i < visible.length - 1 ? "border-b border-black/[0.05]" : ""
               }`}
             >
-              <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-1)] group-hover:text-[var(--bb-white)] transition-colors truncate">
+              <div className="text-[13px] text-neutral-600 truncate">
                 #{tx.id}
               </div>
-              <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-3)] truncate">
+              <div className="text-[13px] text-neutral-500 truncate">
                 {itemsSummary(tx.items, rawItems[tx.id])}
               </div>
-              <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-2)] truncate" title={tx.buyer.id}>
+              <div className="text-[13px] text-neutral-600 truncate" title={tx.buyer.id}>
                 {tx.buyer.id}
               </div>
               <MoneyValue paise={tx.amountPaise} />
               <ChannelBadge channel={tx.channel} />
               <StatusBadge status={tx.status} />
-              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">
+              <div className="text-[12px] text-neutral-400">
                 {formatTimeAgo(tx.updatedAt)}
               </div>
             </Link>
           ))}
           {/* Mobile cards */}
-          <div className="lg:hidden divide-y divide-[var(--bb-line-soft)]">
+          <div className="lg:hidden divide-y divide-black/[0.05]">
             {visible.map((tx) => (
-              <Link key={tx.id} href={`/dashboard/transactions/${tx.id}`} className="block px-5 py-4 space-y-2">
+              <Link key={tx.id} href={`/dashboard/transactions/${tx.id}`} className="block px-5 py-4 space-y-2 hover:bg-black/[0.02]">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-[var(--font-mono)] text-[0.72rem] text-[var(--bb-white)] truncate">#{tx.id}</div>
-                    <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] mt-0.5 truncate">
+                    <div className="text-[14px] font-medium text-neutral-900 truncate">#{tx.id}</div>
+                    <div className="text-[12px] text-neutral-400 mt-0.5 truncate">
                       {itemsSummary(tx.items, rawItems[tx.id])}
                     </div>
                   </div>
@@ -293,7 +281,7 @@ export default function TransactionsPage() {
                   </div>
                 </div>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)] truncate">
+                  <span className="text-[12px] text-neutral-400 truncate">
                     {tx.buyer.id} · {formatTimeAgo(tx.updatedAt)}
                   </span>
                   <ChannelBadge channel={tx.channel} />

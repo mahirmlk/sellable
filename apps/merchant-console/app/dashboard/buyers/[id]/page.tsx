@@ -99,8 +99,8 @@ export default function BuyerDetailPage() {
 
   if (loading) {
     return (
-      <div className="p-6 space-y-6">
-        <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">Loading buyer…</div>
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+        <div className="text-[13px] text-neutral-500">Loading buyer…</div>
         <TableSkeleton rows={6} />
       </div>
     );
@@ -108,12 +108,12 @@ export default function BuyerDetailPage() {
 
   if (loadError) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
         <Link
           href="/dashboard/buyers"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
         >
-          <ArrowLeft size={14} /> BACK TO BUYERS
+          <ArrowLeft size={14} /> Back to buyers
         </Link>
         <ErrorBanner message={loadError} onRetry={() => void fetchData()} />
       </div>
@@ -122,12 +122,12 @@ export default function BuyerDetailPage() {
 
   if (buyerOrders.length === 0) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
         <Link
           href="/dashboard/buyers"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
         >
-          <ArrowLeft size={14} /> BACK TO BUYERS
+          <ArrowLeft size={14} /> Back to buyers
         </Link>
         <EmptyState
           title="Buyer not found"
@@ -138,22 +138,22 @@ export default function BuyerDetailPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <div className="flex items-center justify-between gap-3">
         <Link
           href="/dashboard/buyers"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
         >
-          <ArrowLeft size={14} /> BACK TO BUYERS
+          <ArrowLeft size={14} /> Back to buyers
         </Link>
         <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
       </div>
 
       {/* Buyer header: id, type, orders, total value */}
-      <div className="border border-[var(--bb-line)] p-6">
+      <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)] break-all">
+            <h1 className="text-[22px] font-semibold tracking-tight text-neutral-900 break-all">
               {buyerId}
             </h1>
             <div className="mt-2">
@@ -162,18 +162,14 @@ export default function BuyerDetailPage() {
           </div>
           <div className="flex items-center gap-8 shrink-0">
             <div>
-              <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-1.5">
-                ORDERS
-              </div>
-              <div className="font-[var(--font-mono)] text-[1.35rem] text-[var(--bb-white)] tabular-nums">
+              <div className="text-[12px] text-neutral-500 mb-1.5">Orders</div>
+              <div className="text-[20px] font-semibold text-neutral-900 tabular-nums">
                 {buyerOrders.length}
               </div>
             </div>
             <div>
-              <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-1.5">
-                TOTAL VALUE
-              </div>
-              <div className="font-[var(--font-mono)] text-[1.35rem] text-[var(--bb-orange)] tabular-nums">
+              <div className="text-[12px] text-neutral-500 mb-1.5">Total value</div>
+              <div className="text-[20px] font-semibold text-neutral-900 tabular-nums">
                 {formatPaiseDecimal(totalPaise)}
               </div>
             </div>
@@ -185,10 +181,8 @@ export default function BuyerDetailPage() {
         {/* Order history */}
         <div>
           <div className="flex items-baseline gap-2.5 mb-3">
-            <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-orange)] tabular-nums">01</span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)]">
-              ORDER HISTORY
-            </span>
+            <span className="text-[12px] font-medium text-neutral-400 tabular-nums">01</span>
+            <span className="text-[13px] font-medium text-neutral-600">Order history</span>
           </div>
           <DataTable>
             {mapped.map((tx, i) => {
@@ -197,15 +191,15 @@ export default function BuyerDetailPage() {
                 <Link
                   key={tx.id}
                   href={`/dashboard/transactions/${tx.id}`}
-                  className={`px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-[var(--bb-panel)] transition-colors group ${
-                    i < mapped.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+                  className={`px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-neutral-50 transition-colors group ${
+                    i < mapped.length - 1 ? "border-b border-black/[0.06]" : ""
                   }`}
                 >
                   <div className="min-w-0">
-                    <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-1)] group-hover:text-[var(--bb-white)] transition-colors truncate">
+                    <div className="text-[13px] font-medium text-neutral-700 group-hover:text-neutral-900 transition-colors truncate">
                       #{tx.id}
                     </div>
-                    <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] mt-0.5 truncate">
+                    <div className="text-[12px] text-neutral-400 mt-0.5 truncate">
                       {itemsSummary(
                         tx.items,
                         raw?.items?.map((it) => ({ sku: it.sku, quantity: it.quantity }))
@@ -228,13 +222,11 @@ export default function BuyerDetailPage() {
         {/* Recent activity for this buyer */}
         <div>
           <div className="flex items-baseline gap-2.5 mb-3">
-            <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-orange)] tabular-nums">02</span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)]">
-              RECENT ACTIVITY
-            </span>
+            <span className="text-[12px] font-medium text-neutral-400 tabular-nums">02</span>
+            <span className="text-[13px] font-medium text-neutral-600">Recent activity</span>
           </div>
           {activity.length === 0 ? (
-            <div className="border border-[var(--bb-line)] px-5 py-8 text-center font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-4)]">
+            <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] px-6 py-8 text-center text-[13px] text-neutral-400">
               No ledger activity recorded for this buyer&apos;s orders yet.
             </div>
           ) : (
@@ -242,14 +234,14 @@ export default function BuyerDetailPage() {
               {activity.map((e, i) => (
                 <div
                   key={e.event_id}
-                  className={`px-5 py-[11px] flex items-center gap-3 ${
-                    i < activity.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+                  className={`px-6 py-[11px] flex items-center gap-3 ${
+                    i < activity.length - 1 ? "border-b border-black/[0.06]" : ""
                   }`}
                 >
-                  <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] w-[58px] flex-shrink-0 tabular-nums">
+                  <span className="text-[12px] text-neutral-400 w-[58px] flex-shrink-0 tabular-nums">
                     {formatTimestamp(e.timestamp)}
                   </span>
-                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">
+                  <span className="text-[13px] text-neutral-600">
                     {e.actor} — {e.action}
                   </span>
                 </div>

@@ -110,17 +110,17 @@ export function CommandMenu() {
       aria-label="Go to page"
     >
       <div
-        className="absolute inset-0 bg-black/60"
+        className="absolute inset-0 bg-neutral-900/30 backdrop-blur-sm"
         onClick={close}
         aria-hidden
       />
-      <div className="relative w-full max-w-[480px] overflow-hidden border border-[var(--bb-line)] bg-[var(--bb-panel)] shadow-2xl">
-        <div className="flex items-center gap-3 border-b border-[var(--bb-line)] px-4">
+      <div className="relative w-full max-w-[560px] overflow-hidden rounded-[14px] bg-white/80 backdrop-blur-2xl border border-white/40 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.25)]">
+        <div className="flex items-center gap-3 border-b border-black/[0.06] px-4">
           <span
-            className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-3)]"
+            className="text-[15px] text-neutral-400"
             aria-hidden
           >
-            ⌘K
+            ⌕
           </span>
           <input
             ref={inputRef}
@@ -139,24 +139,29 @@ export function CommandMenu() {
                 if (target) go(target.href);
               }
             }}
-            placeholder="Go to… (type a page name)"
+            placeholder="Search pages…"
             aria-label="Go to page"
-            className="h-12 w-full bg-transparent font-[var(--font-sans)] text-[0.9rem] text-[var(--bb-white)] outline-none placeholder:text-[var(--bb-grey-3)]"
+            aria-activedescendant={results[safeIndex] ? `cmd-${results[safeIndex].href}` : undefined}
+            className="h-12 w-full bg-transparent text-[15px] text-neutral-900 outline-none placeholder:text-neutral-400"
           />
           {query ? (
             <button
               type="button"
               onClick={() => setQuery("")}
               aria-label="Clear search"
-              className="cursor-pointer font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-3)] hover:text-[var(--bb-white)]"
+              className="flex items-center justify-center size-7 rounded-full cursor-pointer text-[13px] text-neutral-400 hover:text-neutral-900 hover:bg-black/[0.05] transition-colors"
             >
-              CLEAR
+              ×
             </button>
-          ) : null}
+          ) : (
+            <kbd className="hidden sm:inline-flex items-center h-5 px-1.5 rounded-md bg-white border border-black/10 shadow-sm text-[11px] font-medium text-neutral-500">
+              ESC
+            </kbd>
+          )}
         </div>
-        <div ref={listRef} className="max-h-[320px] overflow-y-auto py-1" role="listbox">
+        <div ref={listRef} className="max-h-[320px] overflow-y-auto p-2" role="listbox">
           {results.length === 0 ? (
-            <p className="px-4 py-6 text-center font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)]">
+            <p className="px-4 py-8 text-center text-[14px] text-neutral-500">
               No pages match “{query.trim()}”.
             </p>
           ) : (
@@ -166,24 +171,27 @@ export function CommandMenu() {
               return (
                 <button
                   key={item.href}
+                  id={`cmd-${item.href}`}
                   type="button"
                   role="option"
                   aria-selected={active}
                   data-active={active}
                   onMouseEnter={() => setActiveIndex(i)}
                   onClick={() => go(item.href)}
-                  className={`flex w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                    active ? "bg-[var(--bb-panel-3)]" : "bg-transparent"
+                  className={`flex w-full cursor-pointer items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+                    active ? "bg-black/[0.05]" : "bg-transparent"
                   }`}
                 >
-                  <Icon
-                    size={14}
-                    className={`shrink-0 ${active ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-3)]"}`}
-                  />
-                  <span className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-white)]">
+                  <span className={`flex items-center justify-center size-8 rounded-[10px] border shadow-sm shrink-0 ${active ? "bg-white border-black/10 text-neutral-900" : "bg-neutral-50 border-black/[0.06] text-neutral-500"}`}>
+                    <Icon
+                      size={15}
+                      className="shrink-0"
+                    />
+                  </span>
+                  <span className="text-[15px] font-medium text-neutral-900">
                     {item.label}
                   </span>
-                  <span className="ml-auto font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">
+                  <span className="ml-auto text-[12px] text-neutral-400">
                     {item.section}
                   </span>
                 </button>
@@ -191,15 +199,15 @@ export function CommandMenu() {
             })
           )}
         </div>
-        <div className="flex items-center gap-4 border-t border-[var(--bb-line)] px-4 py-2">
-          <span className="font-[var(--font-mono)] text-[0.58rem] text-[var(--bb-grey-4)]">
-            ↑↓ NAVIGATE
+        <div className="flex items-center gap-4 border-t border-black/[0.06] bg-white/60 px-4 py-2.5">
+          <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400">
+            <kbd className="inline-flex items-center h-5 px-1.5 rounded-md bg-white border border-black/10 shadow-sm text-[11px]">↑↓</kbd> Navigate
           </span>
-          <span className="font-[var(--font-mono)] text-[0.58rem] text-[var(--bb-grey-4)]">
-            ↵ OPEN
+          <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400">
+            <kbd className="inline-flex items-center h-5 px-1.5 rounded-md bg-white border border-black/10 shadow-sm text-[11px]">↵</kbd> Open
           </span>
-          <span className="font-[var(--font-mono)] text-[0.58rem] text-[var(--bb-grey-4)]">
-            ESC CLOSE
+          <span className="inline-flex items-center gap-1.5 text-[12px] text-neutral-400">
+            <kbd className="inline-flex items-center h-5 px-1.5 rounded-md bg-white border border-black/10 shadow-sm text-[11px]">esc</kbd> Close
           </span>
         </div>
       </div>

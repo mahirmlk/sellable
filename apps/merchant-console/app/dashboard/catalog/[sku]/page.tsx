@@ -24,13 +24,9 @@ import { LOW_STOCK_THRESHOLD, aiAvailable } from "@/lib/commerce-view";
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-3 border-b border-[var(--bb-line-soft)] last:border-b-0">
-      <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-4)] shrink-0">
-        {label}
-      </span>
-      <span className="font-[var(--font-mono)] text-[0.78rem] text-[var(--bb-white)] text-right break-words">
-        {value}
-      </span>
+    <div className="flex items-center justify-between gap-4 px-6 py-3 border-b border-black/[0.06] last:border-b-0">
+      <span className="text-[12px] text-neutral-500 shrink-0">{label}</span>
+      <span className="text-[13px] text-neutral-900 text-right break-words">{value}</span>
     </div>
   );
 }
@@ -43,11 +39,9 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border border-[var(--bb-line)] overflow-hidden">
-      <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-        <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
-          {title}
-        </div>
+    <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+      <div className="px-6 py-4 border-b border-black/[0.06]">
+        <div className="text-[15px] font-semibold text-neutral-900">{title}</div>
       </div>
       {children}
     </div>
@@ -56,14 +50,16 @@ function Section({
 
 function YesNo({ yes, hint }: { yes: boolean; hint: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-3 border-b border-[var(--bb-line-soft)] last:border-b-0">
-      <span className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-2)]">{hint}</span>
+    <div className="flex items-center justify-between gap-4 px-6 py-3 border-b border-black/[0.06] last:border-b-0">
+      <span className="text-[13px] text-neutral-600">{hint}</span>
       <span
-        className={`font-[var(--font-mono)] text-[0.62rem] tracking-[0.1em] uppercase ${
-          yes ? "text-green-400" : "text-[var(--bb-grey-4)]"
-        }`}
+        className={
+          yes
+            ? "inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-green-50 text-green-700"
+            : "inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-neutral-100 text-neutral-500"
+        }
       >
-        {yes ? "YES" : "NO"}
+        {yes ? "Yes" : "No"}
       </span>
     </div>
   );
@@ -107,8 +103,8 @@ export default function ProductDetailPage() {
 
   if (loading) {
     return (
-      <div className="p-6 space-y-6">
-        <PageHeader title={sku || "Product"} subtitle="PRODUCT DETAIL" />
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+        <PageHeader title={sku || "Product"} subtitle="Product detail" />
         <TableSkeleton rows={8} />
       </div>
     );
@@ -116,12 +112,12 @@ export default function ProductDetailPage() {
 
   if (loadError) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
         <Link
           href="/dashboard/catalog"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
         >
-          <ArrowLeft size={14} /> BACK TO PRODUCTS
+          <ArrowLeft size={14} /> Back to products
         </Link>
         <ErrorBanner message={loadError} onRetry={() => void fetchData()} />
       </div>
@@ -130,12 +126,12 @@ export default function ProductDetailPage() {
 
   if (notFound || !product) {
     return (
-      <div className="p-6 space-y-6">
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
         <Link
           href="/dashboard/catalog"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
         >
-          <ArrowLeft size={14} /> BACK TO PRODUCTS
+          <ArrowLeft size={14} /> Back to products
         </Link>
         <EmptyState
           title="Product not found"
@@ -152,40 +148,38 @@ export default function ProductDetailPage() {
   const available = aiAvailable(product.stock, product.floor_paise, product.price_paise);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <div className="flex items-center justify-between gap-3">
         <Link
           href="/dashboard/catalog"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
+          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
         >
-          <ArrowLeft size={14} /> BACK TO PRODUCTS
+          <ArrowLeft size={14} /> Back to products
         </Link>
         <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
       </div>
 
-      <div className="border border-[var(--bb-line)] p-6">
+      <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-1">
-              <Package size={18} className="text-[var(--bb-orange)]" />
-              <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">
+              <Package size={18} className="text-[#0071e3]" />
+              <h1 className="text-[22px] font-semibold tracking-tight text-neutral-900">
                 {product.title}
               </h1>
             </div>
             <div className="flex flex-wrap items-center gap-3 mt-2">
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]">
+              <span className="text-[12px] font-medium px-2.5 py-1 rounded-full bg-neutral-100 text-neutral-600">
                 {product.sku}
               </span>
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                {product.category}
-              </span>
+              <span className="text-[13px] text-neutral-500">{product.category}</span>
               <AiBadge available={available} />
             </div>
           </div>
           <StockBadge stock={product.stock} threshold={LOW_STOCK_THRESHOLD} />
         </div>
         {product.description && (
-          <p className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)] leading-relaxed max-w-[640px] mt-4">
+          <p className="text-[13px] text-neutral-600 leading-relaxed max-w-[640px] mt-4">
             {product.description}
           </p>
         )}
@@ -199,7 +193,7 @@ export default function ProductDetailPage() {
             <DetailRow label="Category" value={product.category} />
             <DetailRow
               label="Description"
-              value={product.description || <span className="text-[var(--bb-grey-4)]">—</span>}
+              value={product.description || <span className="text-neutral-400">—</span>}
             />
           </Section>
 
@@ -210,13 +204,15 @@ export default function ProductDetailPage() {
               value={<StockBadge stock={product.stock} threshold={LOW_STOCK_THRESHOLD} />}
             />
             {product.stock > 0 && product.stock <= LOW_STOCK_THRESHOLD && (
-              <div className="px-5 py-3 font-[var(--font-sans)] text-[0.75rem] text-amber-400 leading-relaxed">
-                Running low — at or below {LOW_STOCK_THRESHOLD} units. Restock to keep the AI Seller
-                offering this product.
+              <div className="px-6 py-4">
+                <span className="inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-amber-50 text-amber-800">
+                  Running low — at or below {LOW_STOCK_THRESHOLD} units. Restock to keep the AI Seller offering
+                  this product.
+                </span>
               </div>
             )}
             {product.stock <= 0 && (
-              <div className="px-5 py-3 font-[var(--font-sans)] text-[0.75rem] text-[var(--bb-grey-3)] leading-relaxed">
+              <div className="px-6 py-4 text-[13px] text-neutral-500 leading-relaxed">
                 Out of stock — hidden from the AI Seller until restocked.
               </div>
             )}
@@ -224,7 +220,7 @@ export default function ProductDetailPage() {
 
           <Section title="Attributes">
             {otherAttributes.length === 0 && !upsellSku ? (
-              <div className="px-5 py-6 text-center font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-4)]">
+              <div className="px-6 py-6 text-center text-[13px] text-neutral-400">
                 No extra attributes on this product.
               </div>
             ) : (
@@ -233,18 +229,14 @@ export default function ProductDetailPage() {
                   <DetailRow key={k} label={k.replace(/_/g, " ")} value={String(v)} />
                 ))}
                 {upsellSku && (
-                  <div className="px-5 py-3">
-                    <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-4)] mb-2">
-                      PAIRED UPSELL PRODUCT
-                    </div>
+                  <div className="px-6 py-4">
+                    <div className="text-[12px] text-neutral-500 mb-2">Paired upsell product</div>
                     <Link
                       href={`/dashboard/catalog/${upsellSku}`}
-                      className="flex items-center justify-between gap-3 p-3 border border-[var(--bb-line)] hover:border-[var(--bb-grey-4)] hover:bg-[var(--bb-panel)] transition-colors group"
+                      className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:bg-neutral-50 transition-colors group"
                     >
-                      <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">
-                        {upsellSku}
-                      </span>
-                      <ArrowRight size={14} className="text-[var(--bb-grey-4)] group-hover:text-[var(--bb-orange)] transition-colors" />
+                      <span className="text-[13px] font-medium text-neutral-900">{upsellSku}</span>
+                      <ArrowRight size={14} className="text-neutral-400 group-hover:text-[#0071e3] transition-colors" />
                     </Link>
                   </div>
                 )}
@@ -261,16 +253,22 @@ export default function ProductDetailPage() {
             <DetailRow
               label="Negotiation enabled"
               value={
-                <span className={negotiationEnabled ? "text-green-400" : "text-[var(--bb-grey-4)]"}>
-                  {negotiationEnabled ? "YES" : "NO"}
+                <span
+                  className={
+                    negotiationEnabled
+                      ? "inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-green-50 text-green-700"
+                      : "inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-neutral-100 text-neutral-500"
+                  }
+                >
+                  {negotiationEnabled ? "Yes" : "No"}
                 </span>
               }
             />
-            <div className="px-5 py-3 border-t border-[var(--bb-line-soft)] flex items-start gap-2">
-              <ShieldAlert size={14} className="text-[var(--bb-orange)] mt-0.5 flex-shrink-0" />
-              <p className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-3)] leading-relaxed">
-                Offers below the minimum price are rejected by the deterministic Policy Engine. This
-                is a configured boundary, not a UI field.
+            <div className="px-6 py-4 border-t border-black/[0.06] flex items-start gap-2">
+              <ShieldAlert size={14} className="text-[#0071e3] mt-0.5 flex-shrink-0" />
+              <p className="text-[13px] text-neutral-500 leading-relaxed">
+                Offers below the minimum price are rejected by the deterministic Policy Engine. This is a
+                configured boundary, not a UI field.
               </p>
             </div>
           </Section>
@@ -279,7 +277,7 @@ export default function ProductDetailPage() {
             <YesNo yes={available} hint="Available to AI Seller" />
             <YesNo yes={available} hint="Shown in catalog search" />
             <YesNo yes={available && negotiationEnabled} hint="Open to negotiation" />
-            <div className="px-5 py-3 font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-3)] leading-relaxed">
+            <div className="px-6 py-4 text-[13px] text-neutral-500 leading-relaxed">
               {available
                 ? "This product can be discovered, quoted, and sold by your AI Seller right now."
                 : product.stock <= 0

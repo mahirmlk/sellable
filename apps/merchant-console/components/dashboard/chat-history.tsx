@@ -39,11 +39,11 @@ export function historyChip(s: CheckoutSessionListItem): { label: string; tone: 
 }
 
 const CHIP_TONES: Record<ChipTone, string> = {
-  green: "text-green-400 border-green-400/30 bg-green-400/5",
-  amber: "text-amber-400 border-amber-400/30 bg-amber-400/5",
-  red: "text-red-400 border-red-400/30 bg-red-400/5",
-  grey: "text-[var(--bb-grey-2)] border-[var(--bb-line)]",
-  orange: "text-[var(--bb-orange)] border-[var(--bb-orange)]/30 bg-[var(--bb-orange)]/5",
+  green: "text-[#1f9d55] border-[#1f9d55]/20 bg-green-50",
+  amber: "text-[#b25e00] border-[#b25e00]/20 bg-amber-50",
+  red: "text-[#d92d20] border-[#d92d20]/20 bg-red-50",
+  grey: "text-neutral-600 border-black/[0.06] bg-neutral-100",
+  orange: "text-[#0071e3] border-[#0071e3]/20 bg-[#0071e3]/5",
 };
 
 /**
@@ -52,12 +52,12 @@ const CHIP_TONES: Record<ChipTone, string> = {
  * are pixel-identical (no layout shift when the list resolves).
  */
 export const HISTORY_ROW_CLASS =
-  "group relative w-full text-left px-4 py-3 border-b border-[var(--bb-line-soft)] transition-colors";
+  "group relative w-full text-left px-4 py-3 border-b border-black/[0.05] transition-colors";
 
 function HistoryChip({ label, tone }: { label: string; tone: ChipTone }) {
   return (
     <span
-      className={`inline-flex items-center h-[18px] px-1.5 border font-[var(--font-mono)] text-[0.48rem] tracking-[0.1em] ${CHIP_TONES[tone]}`}
+      className={`inline-flex items-center h-5 px-2 rounded-full border text-[11px] font-medium ${CHIP_TONES[tone]}`}
     >
       {label}
     </span>
@@ -70,12 +70,12 @@ function HistorySkeletonRow() {
   return (
     <div className={`${HISTORY_ROW_CLASS} animate-pulse`} aria-hidden="true">
       <div className="mb-1.5 pr-14 space-y-1.5">
-        <div className="h-[13px] w-11/12 bg-[var(--bb-panel)] border border-[var(--bb-line-soft)]" />
-        <div className="h-[13px] w-2/3 bg-[var(--bb-panel)] border border-[var(--bb-line-soft)]" />
+        <div className="h-[13px] w-11/12 rounded-md bg-neutral-100 border border-black/[0.05]" />
+        <div className="h-[13px] w-2/3 rounded-md bg-neutral-100 border border-black/[0.05]" />
       </div>
       <div className="flex items-center justify-between">
-        <div className="h-[12px] w-24 bg-[var(--bb-panel)] border border-[var(--bb-line-soft)]" />
-        <div className="h-[18px] w-14 bg-[var(--bb-panel)] border border-[var(--bb-line-soft)]" />
+        <div className="h-[12px] w-24 rounded-md bg-neutral-100 border border-black/[0.05]" />
+        <div className="h-5 w-14 rounded-full bg-neutral-100 border border-black/[0.05]" />
       </div>
     </div>
   );
@@ -120,15 +120,15 @@ export default function ChatHistory({
   };
 
   return (
-    <aside className="hidden lg:flex w-[300px] shrink-0 flex-col min-h-0 border-r border-[var(--bb-line)] bg-[var(--bb-black)]">
+    <aside className="hidden lg:flex w-[300px] shrink-0 flex-col min-h-0 border-r border-black/[0.06] bg-white">
       {/* Panel header */}
-      <div className="px-4 py-3 border-b border-[var(--bb-line)] flex items-center justify-between flex-shrink-0">
-        <span className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.52rem] tracking-[0.16em] uppercase text-[var(--bb-grey-1)]">
+      <div className="px-4 py-3 border-b border-black/[0.06] flex items-center justify-between flex-shrink-0">
+        <span className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.52rem] tracking-[0.16em] uppercase text-neutral-600">
           <History size={11} /> HISTORY
         </span>
         <button
           onClick={onNew}
-          className="inline-flex items-center gap-1.5 h-[26px] px-2.5 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 h-7 px-2.5 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors cursor-pointer font-medium rounded-full"
         >
           <Plus size={11} /> NEW SESSION
         </button>
@@ -144,10 +144,10 @@ export default function ChatHistory({
           </div>
         ) : visible.length === 0 ? (
           <div className="px-4 py-10 text-center">
-            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] mb-2">
+            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-neutral-600 mb-2">
               No previous chats
             </div>
-            <div className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-4)] leading-relaxed">
+            <div className="font-[var(--font-sans)] text-[0.72rem] text-neutral-400 leading-relaxed">
               {archivedCount > 0 && !showArchived
                 ? "All sessions are archived. Toggle below to reveal them."
                 : "Your checkout sessions will appear here."}
@@ -168,18 +168,18 @@ export default function ChatHistory({
                   disabled={isBusy}
                   className={`${HISTORY_ROW_CLASS} cursor-pointer disabled:cursor-wait ${
                     isActive
-                      ? "bg-[var(--bb-orange)]/[0.07] border-l-2 border-l-[var(--bb-orange)]"
-                      : "hover:bg-[var(--bb-panel)] border-l-2 border-l-transparent"
+                      ? "bg-[#0071e3]/5 border-l-2 border-l-[#0071e3]"
+                      : "hover:bg-neutral-50 border-l-2 border-l-transparent"
                   }`}
                   aria-current={isActive ? "true" : undefined}
                 >
                   <div className="flex items-start justify-between gap-2 mb-1.5 pr-14">
-                    <span className="font-[var(--font-sans)] text-[0.74rem] text-[var(--bb-white)] leading-snug line-clamp-2">
+                    <span className="text-[14px] text-neutral-900 leading-snug line-clamp-2">
                       {historyTitle(s)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-2)] tabular-nums">
+                    <span className="font-[var(--font-mono)] text-[0.55rem] text-neutral-600 tabular-nums">
                       {formatTimeAgo(s.updated_at)}
                       {amount !== null && amount > 0 ? ` · ${formatPaise(amount)}` : ""}
                     </span>
@@ -193,7 +193,7 @@ export default function ChatHistory({
                     disabled={isBusy}
                     title="Archive session"
                     aria-label={`Archive ${historyTitle(s)}`}
-                    className="inline-flex items-center justify-center w-[24px] h-[24px] border border-[var(--bb-line)] bg-[var(--bb-black)] text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center justify-center size-6 border border-black/[0.06] bg-white text-neutral-600 hover:text-neutral-900 hover:border-black/[0.12] transition-colors cursor-pointer disabled:opacity-50 rounded-full"
                   >
                     <Archive size={11} />
                   </button>
@@ -210,7 +210,7 @@ export default function ChatHistory({
                     disabled={isBusy}
                     title="Delete session"
                     aria-label={`Delete ${historyTitle(s)}`}
-                    className="inline-flex items-center justify-center w-[24px] h-[24px] border border-[var(--bb-line)] bg-[var(--bb-black)] text-[var(--bb-grey-2)] hover:text-red-400 hover:border-red-400/40 transition-colors cursor-pointer disabled:opacity-50"
+                    className="inline-flex items-center justify-center size-6 border border-black/[0.06] bg-white text-neutral-600 hover:text-[#d92d20] hover:border-[#d92d20]/30 transition-colors cursor-pointer disabled:opacity-50 rounded-full"
                   >
                     <Trash2 size={11} />
                   </button>
@@ -223,10 +223,10 @@ export default function ChatHistory({
 
       {/* Archived toggle */}
       {!loading && archivedCount > 0 && (
-        <div className="px-4 py-2.5 border-t border-[var(--bb-line)] flex-shrink-0">
+        <div className="px-4 py-2.5 border-t border-black/[0.06] flex-shrink-0">
           <button
             onClick={onToggleArchived}
-            className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] transition-colors cursor-pointer"
+            className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
           >
             {showArchived ? "HIDE ARCHIVED" : `SHOW ARCHIVED (${archivedCount})`}
           </button>

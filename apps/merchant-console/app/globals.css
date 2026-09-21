@@ -1328,7 +1328,183 @@ a:active:not([aria-disabled="true"]) {
   .ambient-scan-line,
   .hero-video-grad,
   .hero-video-grid,
-  .ambient-grain {
-    animation: none;
+  .ambient-grain,
+  .dashboard-apple *,
+  .dashboard-apple *::before,
+  .dashboard-apple *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
   }
+}
+
+/* --------------------------------------------------
+   PHASE 1 — APPLE PREMIUM LIGHT FOUNDATION (dashboard only)
+   Scope: .dashboard-apple isolates the light system so the
+   dark marketing site keeps its --bb-* values untouched.
+   -------------------------------------------------- */
+.dashboard-apple {
+  /* Page + surfaces */
+  --bb-black: #f5f5f7;
+  --bb-black-2: #ececf0;
+  --bb-panel: #ffffff;
+  --bb-panel-2: #f9f9fb;
+  --bb-panel-3: #f1f1f4;
+
+  /* Text — Apple ink scale */
+  --bb-white: #1d1d1f;
+  --bb-white-soft: #2c2c2e;
+  --bb-grey-1: #515154;
+  --bb-grey-2: #6e6e73;
+  --bb-grey-3: #8e8e93;
+  --bb-grey-4: #aeaeb2;
+  --bb-line: rgba(0, 0, 0, 0.08);
+  --bb-line-soft: rgba(0, 0, 0, 0.06);
+
+  /* Brand stays orange; Apple blue added for links/focus */
+  --bb-orange-wash: rgba(255, 105, 0, 0.1);
+  --bb-orange-wash-2: rgba(255, 105, 0, 0.07);
+  --apple-blue: #0071e3;
+  --apple-blue-ring: rgba(0, 113, 227, 0.22);
+  --apple-bg: #f5f5f7;
+  --apple-card: #ffffff;
+  --apple-nav: rgba(255, 255, 255, 0.72);
+  --apple-sidebar: rgba(251, 251, 253, 0.92);
+  --apple-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --apple-shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.12);
+  --apple-radius-lg: 16px;
+  --apple-radius-md: 12px;
+  --apple-radius-sm: 10px;
+  --apple-ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --font-sans: var(--font-inter), -apple-system, "SF Pro Text", "SF Pro Display", "Inter", system-ui, sans-serif;
+
+  background: var(--apple-bg);
+  color: var(--bb-white);
+  color-scheme: light;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.dashboard-apple ::selection {
+  background: rgba(0, 113, 227, 0.16);
+  color: #1d1d1f;
+}
+
+.dashboard-apple :focus-visible {
+  outline: 2px solid var(--apple-blue);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Soft premium cards + frosted glass */
+.dashboard-apple .apple-card {
+  background: var(--apple-card);
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
+  border-radius: var(--apple-radius-md);
+  box-shadow: var(--apple-shadow-card);
+}
+
+.dashboard-apple .apple-glass {
+  background: rgba(255, 255, 255, 0.7);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 0.5px solid rgba(255, 255, 255, 0.4);
+  box-shadow: var(--apple-shadow-card);
+}
+
+/* Light scrollbars */
+.dashboard-apple ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.dashboard-apple ::-webkit-scrollbar-thumb {
+  background: #d1d1d6;
+  border-radius: 8px;
+  border: 2px solid #f5f5f7;
+}
+.dashboard-apple ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Dashboard tables — light Apple treatment */
+.dashboard-apple .data-table {
+  background: #fff;
+  border: 0.5px solid rgba(0, 0, 0, 0.08);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--apple-shadow-card);
+}
+.dashboard-apple .data-table thead th {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: rgba(0, 0, 0, 0.45);
+  background: #f9f9fb;
+  padding: 10px 14px;
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
+  height: 36px;
+}
+.dashboard-apple .data-table tbody td {
+  color: #1d1d1f;
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+  font-family: var(--font-sans);
+}
+.dashboard-apple .data-table tbody tr:hover td {
+  background: rgba(0, 0, 0, 0.025);
+}
+@media (max-width: 640px) {
+  .dashboard-apple .data-table tbody tr {
+    background: #fff;
+    border: 0.5px solid rgba(0, 0, 0, 0.08);
+    border-radius: 12px;
+    box-shadow: var(--apple-shadow-card);
+  }
+  .dashboard-apple .data-table tbody td::before {
+    font-family: var(--font-sans);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
+    color: rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* Skeleton shimmer — light */
+.dashboard-apple .skeleton,
+.dashboard-apple [class*="skeleton"] {
+  background: rgba(0, 0, 0, 0.06) !important;
+  border-radius: 8px;
+}
+
+/* --------------------------------------------------
+   PHASE 4 — legacy page softening (auto Apple-fy remaining routes)
+   These attribute selectors catch old dark cards/buttons/inputs
+   that still use var(--bb-*) utilities, giving them radius +
+   shadow until each page is individually rewritten.
+   -------------------------------------------------- */
+.dashboard-apple div[class*="bg-[var(--bb-panel)]"][class*="border-[var(--bb-line)]"] {
+  border-radius: 16px;
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.12);
+}
+.dashboard-apple button[class*="bg-[var(--bb-orange)]"],
+.dashboard-apple a[class*="bg-[var(--bb-orange)]"] {
+  border-radius: 999px !important;
+}
+.dashboard-apple button[class*="border-[var(--bb-line)]"],
+.dashboard-apple a[class*="border-[var(--bb-line)]"] {
+  border-radius: 999px;
+}
+.dashboard-apple input,
+.dashboard-apple select,
+.dashboard-apple textarea {
+  border-radius: 10px !important;
+  background: #fff !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+  color: #1d1d1f !important;
+}
+.dashboard-apple input::placeholder,
+.dashboard-apple textarea::placeholder {
+  color: rgba(0, 0, 0, 0.35) !important;
 }
