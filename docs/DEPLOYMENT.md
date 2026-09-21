@@ -65,6 +65,13 @@ python -m evals.runner
 
 **Never commit `.env` with real credentials.**
 
+**Production CORS is mandatory, not optional.** `CORS_ORIGINS` must list the
+exact frontend origin(s) (e.g. `https://sellable.shop,https://www.sellable.shop`);
+bare `"*"`/`"null"` values are rejected at startup. The built-in localhost
+defaults in `config.py` exist for local development only — a production deploy
+that omits `CORS_ORIGINS` either breaks browser calls or silently trusts
+localhost with credentials, so every prod deploy checklist must confirm it.
+
 ---
 
 ## LLM Providers
@@ -133,6 +140,17 @@ In Razorpay **Test Mode**:
 
 Webhook delivery is idempotent — duplicate events are ignored and never double-
 settle an order.
+
+---
+
+## Tunnel / zrok safety
+
+`tools/zrok/` publishes a local backend to the public internet. Ops rule:
+**never share a non-development backend.** Only a `SELLABLE_ENVIRONMENT=development`
+backend running against local/scratch data may be shared, and a public share must
+never point at production data, staging with real credentials, or any shared/prod
+database. Treat a share URL with the same care as a credential: it bypasses the
+network boundary even though auth gates still apply.
 
 ---
 
