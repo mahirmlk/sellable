@@ -1,97 +1,82 @@
 "use client";
 
+// Orders (URL /dashboard/transactions, visible title "Orders"): toolbar
+// search/filter/sort, status tabs mapped from existing backend statuses,
+// rows with order + product summary + buyer + amount + channel + status +
+// time-ago. Saved views and CSV export operate over the loaded records.
+
 import Link from "next/link";
-import { useEffect, useState, useCallback } from "react";
-import { RefreshCw } from "lucide-react";
-import { StatusBadge, PolicyBadge, ConsentBadge, PaymentBadge } from "@/components/dashboard/status-badge";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Download } from "lucide-react";
+import { StatusBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatTimeAgo } from "@/lib/formatters";
-import { getConsoleTransactions, type ConsoleTransaction } from "@/lib/api";
-import { type Transaction, type TransactionStatus } from "@/lib/types/domain";
+import { getConsoleApprovals, getConsoleTransactions } from "@/lib/api";
+import {
+  ChannelBadge,
+  DataTable,
+  EmptyState,
+  ErrorBanner,
+  FilterTabs,
+  PageHeader,
+  RefreshButton,
+  SavedViewsBar,
+} from "../_components/tier1-ui";
+import {
+  exportToCsv,
+  itemsSummary,
+  mapConsoleTx,
+  orderTabOf,
+  type OrderTab,
+} from "../_components/tier1-data";
+import type { Transaction } from "@/lib/types/domain";
 
-function mapTx(tx: ConsoleTransaction): Transaction {
-  // 1:1 with backend OrderStatus — approval need comes from
-  // requires_approval, never from rewriting the status.
-  const statusMap: Record<string, TransactionStatus> = {
-    AWAITING_CONSENT: "AWAITING_CONSENT",
-    CONSENTED: "CONSENTED",
-    PAYMENT_PENDING: "PAYMENT_PENDING",
-    PAID: "PAID",
-    PAYMENT_FAILED: "PAYMENT_FAILED",
-    ABORTED: "ABORTED",
-    REFUNDED: "REFUNDED",
-    FULFILLED: "FULFILLED",
-  };
-  const channel = tx.channel === "human_chat" ? "human_chat" : "agent_to_agent";
-  // Same vocabulary as the detail view: NOT_ISSUED stays visible instead
-  // of collapsing into NONE.
-  const consentStatus =
-    tx.consent_status === "CONSUMED"
-      ? "CONSENTED"
-      : tx.consent_status === "ISSUED"
-        ? "ISSUED"
-        : tx.consent_status === "NOT_ISSUED"
-          ? "NOT_ISSUED"
-          : "NONE";
-  return {
-    id: tx.order_id,
-    traceId: tx.trace_id,
-    status: statusMap[tx.status] || tx.status as TransactionStatus,
-    amountPaise: tx.amount_paise,
-    buyer: { id: tx.buyer_agent_id, type: channel === "human_chat" ? "human" : "agent" },
-    channel,
-    policy: {
-      verdict: (tx.policy_verdict as Transaction["policy"]["verdict"]) || "ALLOW",
-      reasonCode: tx.policy_reason ?? undefined,
-      policyRefs: tx.policy_refs || [],
-      explanation: tx.policy_explanation ?? undefined,
-    },
-    consent: tx.consent_status
-      ? {
-          status: consentStatus,
-          amountPaise: tx.amount_paise,
-          expiresAt: tx.consent_expires_at || "",
-          singleUse: true,
-        }
-      : undefined,
-    payment: tx.payment_status
-      ? {
-          provider: "razorpay",
-          orderId: tx.payment_order_id || undefined,
-          paymentId: tx.payment_id || undefined,
-          status: tx.payment_status,
-          verifiedByWebhook: tx.payment_status === "CAPTURED",
-        }
-      : undefined,
-    items: tx.items?.map((item) => ({
-      sku: item.sku,
-      unitPaise: item.offered_price_paise,
-      linePaise: item.line_total_paise,
-      qty: item.quantity,
-    })),
-    updatedAt: tx.created_at,
-  };
+type ChannelFilter = "all" | "agent_to_agent" | "human_chat";
+type SortKey = "newest" | "oldest" | "amount-desc" | "amount-asc";
+
+interface OrderView {
+  tab: OrderTab;
+  channel: ChannelFilter;
+  sort: SortKey;
 }
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [rawItems, setRawItems] = useState<Record<string, Array<{ sku: string; quantity: number }>>>({});
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [tab, setTab] = useState<OrderTab>("all");
+  const [channel, setChannel] = useState<ChannelFilter>("all");
+  const [sort, setSort] = useState<SortKey>("newest");
+  const [query, setQuery] = useState("");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await getConsoleTransactions();
-      setTransactions(data.map(mapTx));
+      const [txData, apprData] = await Promise.all([
+        getConsoleTransactions(),
+        getConsoleApprovals().catch(() => []),
+      ]);
+      setTransactions(txData.map(mapConsoleTx));
+      const items: Record<string, Array<{ sku: string; quantity: number }>> = {};
+      for (const t of txData) {
+        if (t.items) items[t.order_id] = t.items.map((i) => ({ sku: i.sku, quantity: i.quantity }));
+      }
+      setRawItems(items);
+      setPendingIds(
+        new Set(apprData.filter((a) => a.status === "PENDING").map((a) => a.order_id))
+      );
     } catch (err) {
       setLoadError(
         err instanceof TypeError
-          ? "Backend unreachable — transactions could not be loaded."
-          : "Transactions could not be loaded from the backend."
+          ? "Backend unreachable — orders could not be loaded."
+          : "Orders could not be loaded from the backend."
       );
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -99,81 +84,225 @@ export default function TransactionsPage() {
     return () => window.clearTimeout(t);
   }, [fetchData]);
 
-  const filtered = statusFilter === "all" ? transactions : transactions.filter((tx) => tx.status === statusFilter);
-  const statuses = ["all", "PAID", "FULFILLED", "PAYMENT_PENDING", "PAYMENT_FAILED", "AWAITING_CONSENT", "CONSENTED", "ABORTED", "REFUNDED"];
+  const counts = useMemo(() => {
+    const c: Record<OrderTab, number> = {
+      all: transactions.length,
+      open: 0,
+      approval: 0,
+      payment: 0,
+      paid: 0,
+      failed: 0,
+      refunded: 0,
+    };
+    for (const tx of transactions) c[orderTabOf(tx, pendingIds)] += 1;
+    return c;
+  }, [transactions, pendingIds]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const rows = transactions.filter((tx) => {
+      if (tab !== "all" && orderTabOf(tx, pendingIds) !== tab) return false;
+      if (channel !== "all" && tx.channel !== channel) return false;
+      if (q) {
+        const hay = `${tx.id} ${tx.buyer.id} ${(rawItems[tx.id] ?? []).map((i) => i.sku).join(" ")}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    switch (sort) {
+      case "newest":
+        return [...rows].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));
+      case "oldest":
+        return [...rows].sort((a, b) => +new Date(a.updatedAt) - +new Date(b.updatedAt));
+      case "amount-desc":
+        return [...rows].sort((a, b) => b.amountPaise - a.amountPaise);
+      case "amount-asc":
+        return [...rows].sort((a, b) => a.amountPaise - b.amountPaise);
+    }
+  }, [transactions, tab, channel, sort, query, pendingIds, rawItems]);
+
+  const handleExport = useCallback(() => {
+    exportToCsv(
+      "orders.csv",
+      visible.map((tx) => ({
+        order_id: tx.id,
+        buyer_id: tx.buyer.id,
+        buyer_type: tx.buyer.type === "human" ? "Human" : "AI Buyer",
+        channel: tx.channel,
+        amount_inr: (tx.amountPaise / 100).toFixed(2),
+        status: tx.status,
+        items: itemsSummary(tx.items, rawItems[tx.id]),
+        created_at: tx.updatedAt,
+      }))
+    );
+  }, [visible, rawItems]);
+
+  const applyView = useCallback((v: OrderView) => {
+    setTab(v.tab);
+    setChannel(v.channel);
+    setSort(v.sort);
+  }, []);
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">Transactions</h1>
-          <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">FINANCIAL OPERATIONS VIEW</p>
-        </div>
-        <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-        </button>
+      <PageHeader
+        title="Orders"
+        subtitle="EVERY ORDER THROUGH YOUR STORE"
+        actions={
+          <>
+            <button
+              onClick={handleExport}
+              disabled={visible.length === 0}
+              className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50"
+            >
+              <Download size={12} /> EXPORT
+            </button>
+            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+          </>
+        }
+      />
+
+      <FilterTabs<OrderTab>
+        tabs={[
+          { key: "all", label: "All", count: counts.all },
+          { key: "open", label: "Open", count: counts.open },
+          { key: "approval", label: "Awaiting approval", count: counts.approval },
+          { key: "payment", label: "Payment pending", count: counts.payment },
+          { key: "paid", label: "Paid", count: counts.paid },
+          { key: "failed", label: "Failed", count: counts.failed },
+          { key: "refunded", label: "Refunded", count: counts.refunded },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
+
+      {/* Toolbar: search / channel filter / sort */}
+      <div className="flex flex-wrap items-center gap-2.5">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search order, buyer, or SKU…"
+          className="flex-1 min-w-[180px] max-w-[300px] font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+        />
+        <select
+          value={channel}
+          onChange={(e) => setChannel(e.target.value as ChannelFilter)}
+          className="font-[var(--font-mono)] text-[0.62rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-grey-2)] px-2.5 py-2 cursor-pointer focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          aria-label="Filter by buyer type"
+        >
+          <option value="all">BUYER: ALL</option>
+          <option value="agent_to_agent">BUYER: AI BUYER</option>
+          <option value="human_chat">BUYER: HUMAN</option>
+        </select>
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as SortKey)}
+          className="font-[var(--font-mono)] text-[0.62rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-grey-2)] px-2.5 py-2 cursor-pointer focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          aria-label="Sort orders"
+        >
+          <option value="newest">SORT: NEWEST</option>
+          <option value="oldest">SORT: OLDEST</option>
+          <option value="amount-desc">SORT: AMOUNT HIGH–LOW</option>
+          <option value="amount-asc">SORT: AMOUNT LOW–HIGH</option>
+        </select>
+        <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] ml-auto">
+          {visible.length} of {transactions.length} orders
+        </span>
       </div>
 
-      <div className="flex flex-wrap gap-2 stagger-child">
-        {statuses.map((s) => (
-          <button key={s} onClick={() => setStatusFilter(s)} className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase px-3 py-1.5 border transition-all cursor-pointer ${statusFilter === s ? "border-[var(--bb-orange)] bg-[var(--bb-orange)]/10 text-[var(--bb-orange)]" : "border-[var(--bb-line)] bg-transparent text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)]"}`}>
-            {s === "all" ? "ALL" : s.replace(/_/g, " ")}
-          </button>
-        ))}
-      </div>
+      <SavedViewsBar<OrderView>
+        storageKey="orders"
+        current={{ tab, channel, sort }}
+        onApply={applyView}
+      />
 
-      {loadError && (
-        <div className="border border-amber-400/30 bg-amber-400/5 px-5 py-3 flex items-start gap-2">
-          <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{loadError}</span>
-        </div>
-      )}
+      {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
 
-      <div className="border border-[var(--bb-line)] overflow-hidden">
-        <div className="hidden lg:grid grid-cols-[140px_100px_100px_100px_100px_100px_100px_120px_80px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-          {["ORDER", "BUYER", "CHANNEL", "AMOUNT", "POLICY", "CONSENT", "PAYMENT", "STATUS", "UPDATED"].map((h) => (
-            <div key={h} className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">{h}</div>
-          ))}
-        </div>
-
-        {filtered.length === 0 ? (
-          <div className="px-5 py-12 text-center">
-            <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-              {loading ? "Loading transactions..." : "No transactions found."}
-            </div>
+      {loading ? (
+        <DataTable>
+          <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
+            <div className="skeleton h-3 w-32" />
           </div>
-        ) : filtered.map((tx, i) => (
-          <Link key={tx.id} href={`/dashboard/transactions/${tx.id}`} className={`block hover:bg-[var(--bb-panel)] transition-colors ${i < filtered.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}>
-            <div className="hidden lg:grid grid-cols-[140px_100px_100px_100px_100px_100px_100px_120px_80px] gap-3 px-5 py-4 items-center">
-              <div className="font-[var(--font-mono)] text-[0.75rem] text-[var(--bb-white)]">{tx.id}</div>
-              <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{tx.buyer.id}</div>
-              <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">{tx.channel === "agent_to_agent" ? "A2A" : "CHAT"}</div>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="px-5 py-4 border-b border-[var(--bb-line-soft)] last:border-b-0">
+              <div className="flex items-center gap-4">
+                <div className="skeleton h-3 w-24" />
+                <div className="skeleton h-3 w-32" />
+                <div className="skeleton h-3 w-16" />
+                <div className="skeleton h-3 w-12 ml-auto" />
+              </div>
+            </div>
+          ))}
+        </DataTable>
+      ) : visible.length === 0 ? (
+        <EmptyState
+          title={transactions.length === 0 ? "No orders yet" : "No orders match"}
+          message={
+            transactions.length === 0
+              ? "No orders yet. Orders created through your store will appear here."
+              : "No orders match the current search and filters."
+          }
+        />
+      ) : (
+        <DataTable>
+          <div className="hidden lg:grid grid-cols-[150px_1fr_120px_90px_100px_130px_70px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
+            {["ORDER", "ITEMS", "BUYER", "AMOUNT", "CHANNEL", "STATUS", "PLACED"].map((h) => (
+              <div key={h} className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">{h}</div>
+            ))}
+          </div>
+          {visible.map((tx, i) => (
+            <Link
+              key={tx.id}
+              href={`/dashboard/transactions/${tx.id}`}
+              className={`hidden lg:grid grid-cols-[150px_1fr_120px_90px_100px_130px_70px] gap-3 px-5 py-3.5 items-center hover:bg-[var(--bb-panel)] transition-colors group ${
+                i < visible.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+              }`}
+            >
+              <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-1)] group-hover:text-[var(--bb-white)] transition-colors truncate">
+                #{tx.id}
+              </div>
+              <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-3)] truncate">
+                {itemsSummary(tx.items, rawItems[tx.id])}
+              </div>
+              <div className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-2)] truncate" title={tx.buyer.id}>
+                {tx.buyer.id}
+              </div>
               <MoneyValue paise={tx.amountPaise} />
-              <PolicyBadge verdict={tx.policy.verdict} />
-              <ConsentBadge status={tx.consent?.status || "NONE"} />
-              <PaymentBadge status={tx.payment?.status || "NONE"} />
+              <ChannelBadge channel={tx.channel} />
               <StatusBadge status={tx.status} />
-              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{formatTimeAgo(tx.updatedAt)}</div>
-            </div>
-            <div className="lg:hidden px-5 py-4">
-              <div className="flex items-start justify-between gap-3 mb-2">
-                <div>
-                  <div className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-white)]">{tx.id}</div>
-                  <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)] mt-0.5">{tx.buyer.id} · {tx.channel === "agent_to_agent" ? "A2A" : "CHAT"}</div>
-                </div>
-                <div className="text-right">
-                  <MoneyValue paise={tx.amountPaise} />
-                  <div className="mt-1"><StatusBadge status={tx.status} /></div>
-                </div>
+              <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">
+                {formatTimeAgo(tx.updatedAt)}
               </div>
-              <div className="flex items-center gap-4 text-[0.55rem]">
-                <PolicyBadge verdict={tx.policy.verdict} />
-                <ConsentBadge status={tx.consent?.status || "NONE"} />
-                <PaymentBadge status={tx.payment?.status || "NONE"} />
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
+            </Link>
+          ))}
+          {/* Mobile cards */}
+          <div className="lg:hidden divide-y divide-[var(--bb-line-soft)]">
+            {visible.map((tx) => (
+              <Link key={tx.id} href={`/dashboard/transactions/${tx.id}`} className="block px-5 py-4 space-y-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-[var(--font-mono)] text-[0.72rem] text-[var(--bb-white)] truncate">#{tx.id}</div>
+                    <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] mt-0.5 truncate">
+                      {itemsSummary(tx.items, rawItems[tx.id])}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <MoneyValue paise={tx.amountPaise} />
+                    <div className="mt-1"><StatusBadge status={tx.status} /></div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-3)] truncate">
+                    {tx.buyer.id} · {formatTimeAgo(tx.updatedAt)}
+                  </span>
+                  <ChannelBadge channel={tx.channel} />
+                </div>
+              </Link>
+            ))}
+          </div>
+        </DataTable>
+      )}
     </div>
   );
 }
