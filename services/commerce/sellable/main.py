@@ -1224,6 +1224,9 @@ def console_approve_order(
     commerce: CommerceCore = Depends(get_commerce),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    # Trust model (P3-13, intentional): member-level approval. Approvals are the
+    # day-to-day operational queue; owner-only gates stay on policy changes and
+    # money-out (refunds via require_owner). Capture still needs a real payer.
     core = merchant_core(session)
     # Validate issuability BEFORE the approval side effect: approve_order
     # writes DB + ledger, so a subsequent issue_consent failure must not
@@ -1288,6 +1291,8 @@ def console_reject_order(
     payments: PaymentService = Depends(get_payment_service),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    # Trust model (P3-13, intentional): members may reject/abort held orders, mirroring
+    # approve — both are operational queue actions, not config or money-out.
     core = merchant_core(session)
     try:
         order = core.get_order(order_id)
@@ -1321,6 +1326,8 @@ def console_fulfill_order(
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
     """Mark a paid order fulfilled (PAID → FULFILLED + ledger event)."""
+    # Trust model (P3-13, intentional): members may fulfill. Only PAID orders can
+    # move, and PAID itself requires a verified payer webhook — no money is created here.
     core = merchant_core(session)
     try:
         core.get_order(order_id)
