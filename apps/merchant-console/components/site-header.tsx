@@ -66,13 +66,7 @@ export function SiteHeader() {
         {/* Right: Actions (desktop) */}
         <div className="hidden md:flex items-center gap-2.5">
           <Link
-            href="/login"
-            className="inline-flex items-center justify-center h-[40px] px-[16px] border border-[#292928] bg-transparent font-[var(--font-mono)] text-[0.68rem] tracking-[0.12em] uppercase text-[var(--bb-white-soft)] hover:text-[var(--bb-white)] hover:border-[#444] transition-all duration-[var(--duration-fast)]"
-          >
-            SIGN IN
-          </Link>
-          <Link
-            href="/signup"
+            href="/dashboard"
             className="inline-flex items-center justify-center h-[40px] px-[16px] bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.68rem] tracking-[0.12em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors duration-[var(--duration-fast)]"
           >
             GET STARTED
@@ -117,14 +111,7 @@ export function SiteHeader() {
             })}
             <div className="mt-4 pt-4 border-t border-[var(--bb-line)] flex flex-col gap-3 px-4">
               <Link
-                href="/login"
-                onClick={() => setMobileOpen(false)}
-                className="inline-flex items-center justify-center h-[44px] px-[18px] border border-[#292928] bg-transparent font-[var(--font-mono)] text-[0.7rem] tracking-[0.12em] uppercase text-[var(--bb-white-soft)] hover:text-[var(--bb-white)] hover:border-[#444] transition-all"
-              >
-                SIGN IN
-              </Link>
-              <Link
-                href="/signup"
+                href="/dashboard"
                 onClick={() => setMobileOpen(false)}
                 className="inline-flex items-center justify-center h-[44px] px-[18px] bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.7rem] tracking-[0.12em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors"
               >

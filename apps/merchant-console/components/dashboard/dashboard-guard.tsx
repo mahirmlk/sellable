@@ -2,21 +2,11 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { isSupabaseConfigured, createClient } from "@/lib/supabase/client";
 import { ApiError, getStore } from "@/lib/api";
 
-const DEMO_COOKIE = "sellable_demo_auth";
-
-function hasDemoCookie(): boolean {
-  if (typeof document === "undefined") return false;
-  // Exact match on the parsed value — a prefix test would also accept
-  // sellable_demo_auth=10, =11, ... if such a cookie ever existed.
-  return document.cookie.split("; ").some((c) => {
-    const [name, ...rest] = c.split("=");
-    return name === DEMO_COOKIE && rest.join("=") === "1";
-  });
-}
-
+// No login wall: the dashboard opens directly. This guard only handles the
+// backend-driven onboarding redirect — a merchant without a store goes to
+// onboarding instead of seeing an empty dashboard.
 export function DashboardGuard() {
   const router = useRouter();
 
@@ -28,38 +18,15 @@ export function DashboardGuard() {
       if (typeof window !== "undefined" && window.location.pathname.startsWith("/dashboard/onboarding")) {
         return;
       }
-      if (!isSupabaseConfigured()) {
-        // Demo mode only: when Supabase is not configured the demo cookie
-        // (set after /login) grants dashboard access.
-        if (!hasDemoCookie()) {
-          router.replace("/login?next=/dashboard");
-        }
-        return;
-      }
+      // Verified user: check real merchant authorization. A user without a
+      // store goes to onboarding instead of seeing any demo data.
       try {
-        const supabase = createClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!cancelled && !user) {
-          router.replace("/login?next=/dashboard");
-          return;
+        await getStore();
+      } catch (err) {
+        if (!cancelled && err instanceof ApiError && err.isOnboardingRequired) {
+          router.replace("/dashboard/onboarding");
         }
-        // Verified user: check real merchant authorization. A user without a
-        // store goes to onboarding instead of seeing any demo data.
-        try {
-          await getStore();
-        } catch (err) {
-          if (!cancelled && err instanceof ApiError && err.isOnboardingRequired) {
-            router.replace("/dashboard/onboarding");
-          }
-          // Other errors (network/5xx) are surfaced by the pages themselves.
-        }
-      } catch {
-        // With Supabase configured there is no demo fallback in production.
-        if (!cancelled) {
-          router.replace("/login?next=/dashboard");
-        }
+        // Other errors (network/5xx) are surfaced by the pages themselves.
       }
     }
 

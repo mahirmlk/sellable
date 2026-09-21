@@ -1,12 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { useSystemStatus } from "@/components/dashboard/use-system-status";
 import { OPEN_COMMAND_MENU_EVENT } from "@/components/dashboard/command-menu";
 import { getStore } from "@/lib/api";
-import { IconSignOut, IconWarning } from "./icons";
+import { IconWarning } from "./icons";
 import type { ComponentState } from "@/lib/api";
 
 const STATE_META: Record<ComponentState, { label: string; dot: string; text: string }> = {
@@ -35,7 +33,6 @@ function Pill({ label, state, detail }: { label: string; state?: ComponentState 
 }
 
 export function DashboardTopBar() {
-  const router = useRouter();
   const { data: status, error } = useSystemStatus();
   const [storeName, setStoreName] = useState<string | null>(null);
 
@@ -53,22 +50,6 @@ export function DashboardTopBar() {
     };
   }, []);
 
-  const handleSignOut = async () => {
-    try {
-      if (isSupabaseConfigured()) {
-        const supabase = createClient();
-        await supabase.auth.signOut();
-      }
-    } catch {
-      // ignore
-    }
-    if (typeof document !== "undefined") {
-      document.cookie = "sellable_demo_auth=; path=/; max-age=0; SameSite=Lax";
-    }
-    router.push("/login");
-    router.refresh();
-  };
-
   return (
     <header className="h-[60px] sticky top-0 z-40 bg-[rgba(255,255,255,0.72)] backdrop-blur-[20px] backdrop-saturate-[180%] border-b border-black/[0.08] flex items-center justify-between pl-16 pr-4 sm:px-6">
       {/* Left: Merchant name */}
@@ -81,7 +62,7 @@ export function DashboardTopBar() {
         </span>
       </div>
 
-      {/* Right: Search trigger + status indicators + sign out */}
+      {/* Right: Search trigger + status indicators */}
       <div className="flex items-center gap-2 sm:gap-3">
         <button
           type="button"
@@ -121,15 +102,6 @@ export function DashboardTopBar() {
             </>
           )}
         </div>
-        <div className="w-px h-5 bg-black/10 hidden sm:block" />
-        <button
-          onClick={handleSignOut}
-          className="inline-flex items-center gap-2 h-8 px-3 rounded-[10px] bg-black/[0.05] hover:bg-black/10 text-[13px] font-medium text-neutral-700 hover:text-neutral-900 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
-          aria-label="Sign out"
-        >
-          <IconSignOut size={14} />
-          <span className="hidden sm:inline">Sign out</span>
-        </button>
       </div>
     </header>
   );
