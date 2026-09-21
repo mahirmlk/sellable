@@ -1,9 +1,7 @@
 "use client";
 
 // Commerce-specific shared UI (badges, tabs, toolbar buttons, saved views).
-// Built on the canonical primitives in ./page-header, ./empty-state,
-// ./loading-skeleton, ./error-banner, ./data-table and the lib helpers in
-// @/lib/csv and @/lib/saved-views — anything generic lives there, not here.
+// Apple premium treatment: pill controls, soft badges, segmented tabs.
 
 import Link from "next/link";
 import { useState } from "react";
@@ -13,7 +11,7 @@ import { useSavedViews } from "@/lib/saved-views";
 export function RefreshButton({
   onRefresh,
   loading,
-  label = "REFRESH",
+  label = "Refresh",
 }: {
   onRefresh: () => void;
   loading?: boolean;
@@ -23,9 +21,9 @@ export function RefreshButton({
     <button
       onClick={onRefresh}
       disabled={loading}
-      className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50"
+      className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
     >
-      <IconRefresh size={12} className={loading ? "animate-spin" : ""} /> {label}
+      <IconRefresh size={14} className={loading ? "animate-spin" : ""} /> {label}
     </button>
   );
 }
@@ -33,9 +31,11 @@ export function RefreshButton({
 /** Amber banner for partial failures: some sections loaded, others did not. */
 export function PartialBanner({ message }: { message: string }) {
   return (
-    <div className="border border-amber-400/30 bg-amber-400/[0.04] px-5 py-3 flex items-start gap-2.5">
-      <IconWarning size={14} className="text-amber-400 mt-0.5 shrink-0" />
-      <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400 leading-relaxed">
+    <div className="rounded-2xl bg-amber-50/80 backdrop-blur-xl border border-amber-200/60 px-4 py-3 flex items-start gap-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+      <span className="flex items-center justify-center size-6 rounded-full bg-amber-100 shrink-0 mt-0.5" aria-hidden>
+        <IconWarning size={13} className="text-amber-800" />
+      </span>
+      <span className="text-[13px] leading-relaxed text-amber-900">
         {message}
       </span>
     </div>
@@ -52,20 +52,22 @@ export function FilterTabs<T extends string>({
   onChange: (key: T) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="inline-flex flex-wrap gap-1 rounded-full bg-black/[0.06] p-1" role="tablist" aria-label="Filters">
       {tabs.map((t) => (
         <button
           key={t.key}
+          role="tab"
+          aria-selected={active === t.key}
           onClick={() => onChange(t.key)}
-          className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase px-3 py-1.5 border transition-all cursor-pointer ${
+          className={`h-8 px-4 rounded-full text-[13px] font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
             active === t.key
-              ? "border-[var(--bb-orange)] bg-[var(--bb-orange)]/10 text-[var(--bb-orange)]"
-              : "border-[var(--bb-line)] bg-transparent text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)]"
+              ? "bg-white shadow-sm text-neutral-900"
+              : "text-neutral-500 hover:text-neutral-900"
           }`}
         >
           {t.label}
           {t.count !== undefined && (
-            <span className="ml-1.5 tabular-nums opacity-80">{t.count}</span>
+            <span className="ml-1.5 tabular-nums text-[12px] opacity-70">{t.count}</span>
           )}
         </button>
       ))}
@@ -76,20 +78,20 @@ export function FilterTabs<T extends string>({
 export function StockBadge({ stock, threshold }: { stock: number; threshold: number }) {
   if (stock <= 0)
     return (
-      <span className="inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 text-red-400 bg-red-400/10 rounded-sm">
-        OUT OF STOCK
+      <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium leading-none bg-red-50 text-red-700">
+        Out of stock
       </span>
     );
   if (stock <= threshold)
     return (
-      <span className="inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 text-amber-400 bg-amber-400/10 rounded-sm">
-        LOW STOCK
+      <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium leading-none bg-amber-50 text-amber-800">
+        Low stock
       </span>
     );
   return (
-    <span className="inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 text-green-400 bg-green-400/10 rounded-sm">
-        IN STOCK
-      </span>
+    <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium leading-none bg-green-50 text-green-700">
+      In stock
+    </span>
   );
 }
 
@@ -97,11 +99,11 @@ export function ChannelBadge({ channel }: { channel: "human_chat" | "agent_to_ag
   const isAi = channel === "agent_to_agent";
   return (
     <span
-      className={`inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 rounded-sm ${
-        isAi ? "text-[var(--bb-orange)] bg-[var(--bb-orange-wash-2)]" : "text-[var(--bb-grey-2)] bg-[var(--bb-panel-2)]"
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${
+        isAi ? "bg-[#fff4e5] text-[#b25e00]" : "bg-neutral-100 text-neutral-600"
       }`}
     >
-      {isAi ? "AI BUYER" : "HUMAN"}
+      {isAi ? "AI buyer" : "Human"}
     </span>
   );
 }
@@ -109,12 +111,12 @@ export function ChannelBadge({ channel }: { channel: "human_chat" | "agent_to_ag
 export function AiBadge({ available }: { available: boolean }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase ${
-        available ? "text-green-400" : "text-[var(--bb-grey-4)]"
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${
+        available ? "bg-green-50 text-green-700" : "bg-neutral-100 text-neutral-500"
       }`}
     >
-      <span className={`w-1.5 h-1.5 rounded-full ${available ? "bg-green-400" : "bg-[var(--bb-grey-4)]"}`} />
-      {available ? "AI AVAILABLE" : "NOT AVAILABLE"}
+      <span className={`size-1.5 rounded-full ${available ? "bg-green-600" : "bg-neutral-400"}`} />
+      {available ? "AI available" : "Not available"}
     </span>
   );
 }
@@ -123,9 +125,9 @@ export function ViewStoreLink() {
   return (
     <Link
       href="/dashboard/storefront"
-      className="inline-flex items-center gap-2 h-[32px] px-3.5 bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
+      className="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-[#0071e3] text-[13px] font-semibold text-white shadow-sm hover:bg-[#0077ed] transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
     >
-      VIEW STORE
+      View store
     </Link>
   );
 }
@@ -155,18 +157,18 @@ export function SavedViewsBar<T>({
       {views.map((v) => (
         <span
           key={v.name}
-          className="inline-flex items-center gap-1 border border-[var(--bb-line)] bg-[var(--bb-panel)] pl-2.5 pr-1 py-1"
+          className="inline-flex items-center gap-1 rounded-full bg-white border border-black/10 shadow-sm pl-3.5 pr-1 py-1"
         >
           <button
             onClick={() => onApply(v.value)}
-            className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] transition-colors cursor-pointer"
+            className="text-[13px] font-medium text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
             title={`Apply saved view "${v.name}"`}
           >
             {v.name}
           </button>
           <button
             onClick={() => deleteView(v.name)}
-            className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-4)] hover:text-red-400 px-1 transition-colors cursor-pointer"
+            className="flex items-center justify-center size-6 rounded-full text-neutral-400 hover:text-red-600 hover:bg-black/[0.05] transition-colors cursor-pointer"
             aria-label={`Delete saved view ${v.name}`}
           >
             ×
@@ -174,7 +176,7 @@ export function SavedViewsBar<T>({
         </span>
       ))}
       {saving ? (
-        <span className="inline-flex items-center gap-1.5">
+        <span className="inline-flex items-center gap-2">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -191,7 +193,7 @@ export function SavedViewsBar<T>({
                 setSaving(false);
               }
             }}
-            className="h-[28px] w-[140px] font-[var(--font-mono)] text-[0.62rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+            className="h-9 w-[160px] rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
           />
           <button
             onClick={() => {
@@ -199,20 +201,19 @@ export function SavedViewsBar<T>({
               setName("");
               setSaving(false);
             }}
-            className="h-[28px] px-2.5 bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.55rem] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
+            className="h-9 px-4 rounded-full bg-neutral-900 text-[13px] font-medium text-white hover:bg-black transition-colors cursor-pointer active:scale-[0.98]"
           >
-            SAVE
+            Save
           </button>
         </span>
       ) : (
         <button
           onClick={() => setSaving(true)}
-          className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-4)] hover:text-[var(--bb-white)] border border-dashed border-[var(--bb-grey-4)] px-2.5 py-1 transition-colors cursor-pointer"
+          className="text-[13px] font-medium text-neutral-400 hover:text-neutral-900 border border-dashed border-black/15 hover:border-black/25 rounded-full px-3.5 py-1.5 transition-colors cursor-pointer"
         >
-          + SAVE VIEW
+          + Save view
         </button>
       )}
     </div>
   );
 }
-

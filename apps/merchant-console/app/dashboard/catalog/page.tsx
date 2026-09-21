@@ -249,24 +249,24 @@ export default function CatalogPage() {
   }, []);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Products"
-        subtitle="THE AGENT CAN ONLY SELL WHAT IS LISTED HERE"
+        subtitle="Everything your AI seller can offer"
         actions={
           <>
             <button
               onClick={handleExport}
               disabled={visible.length === 0}
-              className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50"
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
             >
-              <Download size={12} /> EXPORT
+              <Download size={14} /> Export
             </button>
             <button
               onClick={() => setShowForm((v) => !v)}
-              className="inline-flex items-center gap-2 h-[32px] px-3.5 bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
+              className="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-neutral-900 text-[13px] font-semibold text-white shadow-sm hover:bg-black transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
             >
-              {showForm ? <X size={12} /> : <Plus size={12} />} {showForm ? "CANCEL" : "ADD PRODUCT"}
+              {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? "Cancel" : "Add product"}
             </button>
             <RefreshButton onRefresh={() => fetchData(searchQuery)} loading={loading} />
           </>
@@ -274,21 +274,23 @@ export default function CatalogPage() {
       />
 
       {createdSku && (
-        <div className="border border-green-400/30 bg-green-400/5 px-5 py-3 flex items-center gap-2">
-          <Check size={14} className="text-green-400" />
-          <span className="font-[var(--font-mono)] text-[0.62rem] text-green-400">
+        <div className="rounded-2xl bg-green-50/80 backdrop-blur-xl border border-green-200/60 px-4 py-3 flex items-center gap-2.5">
+          <span className="flex items-center justify-center size-6 rounded-full bg-green-100 shrink-0" aria-hidden>
+            <Check size={13} className="text-green-700" />
+          </span>
+          <span className="text-[13px] text-green-900">
             {createdSku} added — persisted in your store and immediately searchable by the agent.
           </span>
         </div>
       )}
 
       {showForm && (
-        <form onSubmit={handleCreate} className="border border-[var(--bb-line)] bg-[var(--bb-panel)] p-5 space-y-4">
-          <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)]">NEW PRODUCT</div>
+        <form onSubmit={handleCreate} className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-6 space-y-5">
+          <div className="text-[15px] font-semibold tracking-[-0.01em] text-neutral-900">New product</div>
           {formError && (
-            <div className="border border-red-400/30 bg-red-400/5 px-4 py-2.5 flex items-start gap-2">
-              <AlertCircle size={13} className="text-red-400 mt-0.5 shrink-0" />
-              <span className="font-[var(--font-mono)] text-[0.62rem] text-red-400 leading-relaxed">{formError}</span>
+            <div className="rounded-2xl bg-red-50/80 border border-red-200/60 px-4 py-3 flex items-start gap-2.5">
+              <AlertCircle size={14} className="text-red-700 mt-0.5 shrink-0" />
+              <span className="text-[13px] text-red-900 leading-relaxed">{formError}</span>
             </div>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -362,46 +364,48 @@ export default function CatalogPage() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search products…"
-          className="flex-1 min-w-[180px] max-w-[300px] font-[var(--font-mono)] text-[0.7rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          aria-label="Search products"
+          className="flex-1 min-w-[180px] max-w-[320px] h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
         />
         <select
           value={sort}
           onChange={(e) => setSort(e.target.value as SortKey)}
-          className="font-[var(--font-mono)] text-[0.62rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-grey-2)] px-2.5 py-2 cursor-pointer focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          className="h-9 rounded-[10px] bg-white border border-black/[0.12] text-[13px] text-neutral-700 px-2.5 cursor-pointer focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
           aria-label="Sort products"
         >
-          <option value="default">SORT: DEFAULT</option>
-          <option value="name">SORT: NAME A–Z</option>
-          <option value="price-asc">SORT: PRICE LOW–HIGH</option>
-          <option value="price-desc">SORT: PRICE HIGH–LOW</option>
-          <option value="stock-asc">SORT: STOCK LOW–HIGH</option>
-          <option value="stock-desc">SORT: STOCK HIGH–LOW</option>
+          <option value="default">Default</option>
+          <option value="name">Name A–Z</option>
+          <option value="price-asc">Price: low to high</option>
+          <option value="price-desc">Price: high to low</option>
+          <option value="stock-asc">Stock: low to high</option>
+          <option value="stock-desc">Stock: high to low</option>
         </select>
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          className="font-[var(--font-mono)] text-[0.62rem] bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-grey-2)] px-2.5 py-2 cursor-pointer focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+          className="h-9 rounded-[10px] bg-white border border-black/[0.12] text-[13px] text-neutral-700 px-2.5 cursor-pointer focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
           aria-label="Filter by category"
         >
-          <option value="all">CATEGORY: ALL</option>
+          <option value="all">All categories</option>
           {loadedCategories.map((c) => (
-            <option key={c} value={c}>CATEGORY: {c.toUpperCase()}</option>
+            <option key={c} value={c}>{c}</option>
           ))}
         </select>
-        <div className="inline-flex border border-[var(--bb-line)]" role="group" aria-label="View mode">
+        <div className="inline-flex rounded-full bg-black/[0.06] p-1" role="group" aria-label="View mode">
           {(["table", "grid"] as ViewMode[]).map((m) => (
             <button
               key={m}
               onClick={() => setViewMode(m)}
-              className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase px-3 py-2 transition-colors cursor-pointer ${
-                viewMode === m ? "bg-[var(--bb-orange)]/10 text-[var(--bb-orange)]" : "text-[var(--bb-grey-4)] hover:text-[var(--bb-white)]"
+              aria-pressed={viewMode === m}
+              className={`h-8 px-4 rounded-full text-[13px] font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+                viewMode === m ? "bg-white shadow-sm text-neutral-900" : "text-neutral-500 hover:text-neutral-900"
               }`}
             >
-              {m}
+              {m === "table" ? "Table" : "Grid"}
             </button>
           ))}
         </div>
-        <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] ml-auto">
+        <span className="text-[12px] text-neutral-400 ml-auto tabular-nums">
           {visible.length} of {catalog.length} products
         </span>
       </div>
@@ -428,49 +432,49 @@ export default function CatalogPage() {
             catalog.length === 0 && !showForm ? (
               <button
                 onClick={() => setShowForm(true)}
-                className="inline-flex items-center gap-2 h-[32px] px-4 bg-[var(--bb-orange)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-black)] font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-neutral-900 text-[13px] font-semibold text-white shadow-sm hover:bg-black transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
               >
-                <Plus size={12} /> ADD PRODUCT
+                <Plus size={14} /> Add product
               </button>
             ) : undefined
           }
         />
       ) : viewMode === "table" ? (
         <DataTable>
-          <div className="hidden lg:grid grid-cols-[1fr_110px_110px_100px_110px_70px_130px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-            {["PRODUCT", "SKU", "CATEGORY", "PRICE", "MINIMUM PRICE", "STOCK", "AI STATUS"].map((h) => (
-              <div key={h} className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">{h}</div>
+          <div className="hidden lg:grid grid-cols-[1fr_110px_110px_100px_110px_70px_130px] gap-3 px-6 py-3 border-b border-black/[0.06] bg-neutral-50/80">
+            {["Product", "SKU", "Category", "Price", "Minimum", "Stock", "AI status"].map((h) => (
+              <div key={h} className="text-[12px] font-medium text-neutral-500">{h}</div>
             ))}
           </div>
           {visible.map((p, i) => (
             <Link
               key={p.id}
               href={`/dashboard/catalog/${p.sku}`}
-              className={`hidden lg:grid grid-cols-[1fr_110px_110px_100px_110px_70px_130px] gap-3 px-5 py-3 items-center hover:bg-[var(--bb-panel)] transition-colors ${
-                i < visible.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+              className={`hidden lg:grid grid-cols-[1fr_110px_110px_100px_110px_70px_130px] gap-3 px-6 py-4 items-center hover:bg-black/[0.02] transition-colors focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+                i < visible.length - 1 ? "border-b border-black/[0.05]" : ""
               }`}
             >
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)] truncate">{p.title}</div>
-              <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{p.sku}</div>
-              <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">{p.category}</div>
-              <div className="font-[var(--font-mono)] text-[0.75rem] text-[var(--bb-white)] tabular-nums">{formatPaise(p.price_paise)}</div>
-              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-3)] tabular-nums">{formatPaise(p.floor_paise)}</div>
-              <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-grey-2)] tabular-nums">{p.stock}</div>
+              <div className="text-[15px] font-medium text-neutral-900 truncate">{p.title}</div>
+              <div className="text-[13px] text-neutral-500 tabular-nums">{p.sku}</div>
+              <div className="text-[13px] text-neutral-500">{p.category}</div>
+              <div className="text-[15px] font-semibold text-neutral-900 tabular-nums">{formatPaise(p.price_paise)}</div>
+              <div className="text-[13px] text-neutral-500 tabular-nums">{formatPaise(p.floor_paise)}</div>
+              <div className="text-[13px] text-neutral-700 tabular-nums">{p.stock}</div>
               <AiBadge available={aiAvailable(p.stock, p.floor_paise, p.price_paise)} />
             </Link>
           ))}
           {/* Mobile cards */}
-          <div className="lg:hidden divide-y divide-[var(--bb-line-soft)]">
+          <div className="lg:hidden divide-y divide-black/[0.05]">
             {visible.map((p) => (
-              <Link key={p.id} href={`/dashboard/catalog/${p.sku}`} className="block px-5 py-3.5 space-y-1.5">
+              <Link key={p.id} href={`/dashboard/catalog/${p.sku}`} className="block px-5 py-4 space-y-1.5 hover:bg-black/[0.02]">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">{p.sku}</span>
-                  <span className="font-[var(--font-mono)] text-[0.75rem] text-[var(--bb-white)] tabular-nums">{formatPaise(p.price_paise)}</span>
+                  <span className="text-[12px] text-neutral-400 tabular-nums">{p.sku}</span>
+                  <span className="text-[15px] font-semibold text-neutral-900 tabular-nums">{formatPaise(p.price_paise)}</span>
                 </div>
-                <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)] leading-snug">{p.title}</div>
+                <div className="text-[15px] font-medium text-neutral-900 leading-snug">{p.title}</div>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">
-                    MIN {formatPaise(p.floor_paise)} · STOCK {p.stock} · {p.category}
+                  <span className="text-[12px] text-neutral-400">
+                    Min {formatPaise(p.floor_paise)} · Stock {p.stock} · {p.category}
                   </span>
                   <StockBadge stock={p.stock} threshold={LOW_STOCK_THRESHOLD} />
                 </div>
@@ -484,25 +488,25 @@ export default function CatalogPage() {
             <Link
               key={p.id}
               href={`/dashboard/catalog/${p.sku}`}
-              className="border border-[var(--bb-line)] bg-[var(--bb-panel)] p-5 space-y-3 hover:border-[var(--bb-grey-4)] transition-colors group"
+              className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-5 space-y-3 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_12px_40px_-12px_rgba(0,0,0,0.18)]"
             >
               <div className="flex items-start justify-between gap-3">
-                <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase px-2 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-2)]">
+                <span className="inline-flex items-center rounded-full bg-neutral-100 px-2.5 py-1 text-[12px] font-medium text-neutral-600">
                   {p.sku}
                 </span>
                 <StockBadge stock={p.stock} threshold={LOW_STOCK_THRESHOLD} />
               </div>
-              <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)] leading-snug group-hover:text-[var(--bb-orange)] transition-colors">
+              <div className="text-[17px] font-semibold tracking-[-0.01em] text-neutral-900 leading-snug">
                 {p.title}
               </div>
-              <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">
+              <div className="text-[13px] text-neutral-500">
                 {p.category}
               </div>
-              <div className="flex items-end justify-between pt-1 border-t border-[var(--bb-line-soft)]">
+              <div className="flex items-end justify-between pt-3 border-t border-black/[0.06]">
                 <div>
-                  <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)]">PRICE</div>
-                  <div className="font-[var(--font-mono)] text-[1rem] text-[var(--bb-white)] tabular-nums">{formatPaise(p.price_paise)}</div>
-                  <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-4)] tabular-nums">MIN {formatPaise(p.floor_paise)} · STOCK {p.stock}</div>
+                  <div className="text-[12px] text-neutral-400">Price</div>
+                  <div className="text-[20px] font-semibold tracking-tight text-neutral-900 tabular-nums">{formatPaise(p.price_paise)}</div>
+                  <div className="text-[12px] text-neutral-400 tabular-nums">Min {formatPaise(p.floor_paise)} · Stock {p.stock}</div>
                 </div>
                 <AiBadge available={aiAvailable(p.stock, p.floor_paise, p.price_paise)} />
               </div>
@@ -511,10 +515,10 @@ export default function CatalogPage() {
         </div>
       )}
 
-      <div className="border border-[var(--bb-line)] p-5">
-        <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)] leading-relaxed">
-          Offers below the minimum price are blocked by the Policy Engine. Minimum prices are merchant-configured and
-          enforced deterministically — the agent cannot override them. A product is available to the AI Seller only
+      <div className="rounded-2xl bg-neutral-50/80 border border-black/[0.05] p-5">
+        <div className="text-[14px] text-neutral-500 leading-relaxed">
+          Offers below the minimum price are blocked by the policy engine. Minimum prices are merchant-configured and
+          enforced deterministically — the agent cannot override them. A product is available to the AI seller only
           while it has stock.
         </div>
       </div>

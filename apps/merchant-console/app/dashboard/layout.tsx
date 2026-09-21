@@ -5,6 +5,7 @@ import { DashboardGuard } from "@/components/dashboard/dashboard-guard";
 
 export const metadata: Metadata = {
   title: "SELLABLE — Merchant Dashboard",
+  themeColor: "#f5f5f7",
 };
 
 export const dynamic = "force-dynamic";

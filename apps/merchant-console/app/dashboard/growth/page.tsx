@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { RefreshCw } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { formatPaise } from "@/lib/formatters";
 import { getConsoleInsights, type ConsoleGrowthMetrics } from "@/lib/api";
@@ -13,14 +12,15 @@ import {
   Section,
   Tabs,
 } from "@/components/dashboard/tier-fallbacks";
+import { RefreshButton } from "@/components/dashboard/commerce-ui";
 
 type Tab = "overview" | "ai" | "negotiation" | "upsells";
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">{label}</div>
-      <div className="font-[var(--font-sans)] text-[1.3rem] text-[var(--bb-white)] tabular-nums">{value}</div>
+    <div className="rounded-2xl bg-neutral-50/80 border border-black/[0.05] p-4">
+      <div className="text-[13px] font-medium text-neutral-500">{label}</div>
+      <div className="mt-1 text-[22px] font-semibold tracking-tight tabular-nums text-neutral-900">{value}</div>
     </div>
   );
 }
@@ -75,14 +75,12 @@ export default function GrowthPage() {
       : "0";
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Analytics"
-        subtitle="AGENTIC COMMERCE REVENUE ANALYTICS · FROM SALES METRICS ONLY"
+        subtitle="Revenue analytics from your sales"
         actions={
-          <button onClick={() => void fetchData()} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-          </button>
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
         }
       />
 
@@ -110,39 +108,29 @@ export default function GrowthPage() {
         growth && (
           <>
             {tab === "overview" && (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-child">
-                  <MetricCard label="Revenue" value={growth.revenue / 100} prefix="₹" decimals={2} />
-                  <MetricCard label="Orders" value={growth.total_orders} />
-                  <MetricCard label="Avg Order Value" value={growth.avg_order_value / 100} prefix="₹" decimals={2} />
-                  <MetricCard label="AI-Assisted Revenue" value={growth.agent_assisted_revenue / 100} prefix="₹" highlight decimals={2} />
-                </div>
-                <Section title="OVERVIEW" hint="REVENUE · ORDERS · AOV · AI-ASSISTED">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <Stat label="Revenue" value={formatPaise(growth.revenue)} />
-                    <Stat label="Orders" value={String(growth.total_orders)} />
-                    <Stat label="Avg order value" value={formatPaise(growth.avg_order_value)} />
-                    <Stat label="AI-assisted" value={formatPaise(growth.agent_assisted_revenue)} />
-                  </div>
-                </Section>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <MetricCard label="Revenue" value={growth.revenue / 100} prefix="₹" decimals={2} />
+                <MetricCard label="Orders" value={growth.total_orders} />
+                <MetricCard label="Avg order value" value={growth.avg_order_value / 100} prefix="₹" decimals={2} />
+                <MetricCard label="AI-assisted revenue" value={growth.agent_assisted_revenue / 100} prefix="₹" highlight decimals={2} />
               </div>
             )}
 
             {tab === "ai" && (
-              <Section title="AI SALES" hint="AGENT-ASSISTED SHARE OF REVENUE">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <Section title="AI sales" hint="Agent-assisted share of revenue">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <Stat label="AI-assisted revenue" value={formatPaise(growth.agent_assisted_revenue)} />
                   <Stat label="Total revenue" value={formatPaise(growth.revenue)} />
                   <Stat label="AI share" value={`${aiShare}%`} />
                 </div>
-                <p className="mt-4 font-[var(--font-sans)] text-[0.75rem] text-[var(--bb-grey-3)] leading-relaxed">
+                <p className="mt-4 text-[14px] text-neutral-500 leading-relaxed">
                   Revenue from orders where the AI seller assisted discovery, quoting, negotiation, or checkout.
                 </p>
               </Section>
             )}
 
             {tab === "negotiation" && (
-              <Section title="NEGOTIATION" hint="NEGOTIATIONS · ACCEPTED · COUNTERED · WALKED AWAY">
+              <Section title="Negotiation" hint="Accepted, countered and walked away">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   <Stat label="Negotiations" value={String(growth.negotiations)} />
                   <Stat label="Accepted" value={String(growth.negotiated_accepted)} />
@@ -153,14 +141,14 @@ export default function GrowthPage() {
             )}
 
             {tab === "upsells" && (
-              <Section title="UPSELLS" hint="OFFERS · ACCEPTED · ATTACH RATE · UPSELL REVENUE">
+              <Section title="Upsells" hint="Offers, accepted and attach rate">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   <Stat label="Offers" value={String(growth.upsell_offers)} />
                   <Stat label="Accepted" value={String(growth.upsell_accepted)} />
                   <Stat label="Attach rate" value={`${attachRate}%`} />
                   <Stat label="Upsell revenue" value={formatPaise(growth.upsell_revenue)} />
                 </div>
-                <p className="mt-4 font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)]">
+                <p className="mt-4 text-[12px] text-neutral-400">
                   Attach rate = accepted ÷ offers
                 </p>
               </Section>

@@ -1,3 +1,6 @@
+import { ActorBadge } from "@/components/dashboard/actor-badge";
+import { type ActorType } from "@/lib/types/domain";
+
 const events = [
   {
     event_id: "evt_001",
@@ -55,49 +58,53 @@ const events = [
   },
 ];
 
-const actorColors: Record<string, string> = {
-  buyer_agent: "text-blue-400",
-  seller_agent: "text-[var(--bb-orange)]",
-  policy_engine: "text-yellow-400",
-  consent_service: "text-green-400",
-  payment_rail: "text-purple-400",
-  commerce_core: "text-[var(--bb-grey-1)]",
-};
+const KNOWN_ACTORS = new Set<string>([
+  "buyer_agent",
+  "seller_agent",
+  "policy_engine",
+  "consent_service",
+  "human",
+  "razorpay",
+  "commerce_core",
+]);
 
 export function LedgerView() {
   return (
-    <div className="border border-[var(--bb-line)] overflow-hidden">
+    <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between">
-        <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
-          XAI LEDGER — TRACE trc_abc123
+      <div className="px-6 py-4 border-b border-black/[0.05] bg-white flex items-center justify-between">
+        <div className="text-[13px] font-semibold text-neutral-900">
+          XAI Ledger — trace trc_abc123
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">
-          {events.length} EVENTS
+        <div className="text-[13px] text-neutral-500 tabular-nums">
+          {events.length} events
         </div>
       </div>
 
       {/* Events */}
-      {events.map((event, i) => (
+      {events.map((event) => (
         <div
           key={event.event_id}
-          className={`px-5 py-4 ${
-            i < events.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
-          } hover:bg-[var(--bb-panel)] transition-colors`}
+          className="px-6 py-4 border-b border-black/[0.05] last:border-b-0 hover:bg-neutral-50 transition-colors"
         >
           {/* Desktop */}
           <div className="hidden sm:block">
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-4)] w-[50px] flex-shrink-0">
+                <span className="text-[13px] text-neutral-400 w-[50px] flex-shrink-0 tabular-nums">
                   {event.timestamp}
                 </span>
-                <span
-                  className={`font-[var(--font-mono)] text-[0.65rem] tracking-[0.08em] uppercase ${actorColors[event.actor] || "text-[var(--bb-grey-2)]"}`}
-                >
-                  {event.actor}
-                </span>
-                <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">
+                {KNOWN_ACTORS.has(event.actor) ? (
+                  <ActorBadge actor={event.actor as ActorType} />
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none bg-neutral-100 text-neutral-600"
+                    title={event.actor}
+                  >
+                    {event.actor}
+                  </span>
+                )}
+                <span className="text-[14px] font-medium text-neutral-900">
                   {event.action}
                 </span>
               </div>
@@ -105,14 +112,14 @@ export function LedgerView() {
                 {event.policy_refs.map((ref) => (
                   <span
                     key={ref}
-                    className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]"
+                    className="rounded-full bg-neutral-100 px-2.5 py-1 text-[12px] font-medium text-neutral-600"
                   >
                     {ref}
                   </span>
                 ))}
               </div>
             </div>
-            <div className="mt-2 ml-[62px] font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)] leading-relaxed">
+            <div className="mt-2 ml-[62px] text-[14px] text-neutral-600 leading-relaxed">
               {event.reasoning}
             </div>
           </div>
@@ -120,19 +127,24 @@ export function LedgerView() {
           {/* Mobile */}
           <div className="sm:hidden">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">
+              <span className="text-[13px] text-neutral-400 tabular-nums">
                 {event.timestamp}
               </span>
-              <span
-                className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] uppercase ${actorColors[event.actor] || "text-[var(--bb-grey-2)]"}`}
-              >
-                {event.actor}
-              </span>
+              {KNOWN_ACTORS.has(event.actor) ? (
+                <ActorBadge actor={event.actor as ActorType} />
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none bg-neutral-100 text-neutral-600"
+                  title={event.actor}
+                >
+                  {event.actor}
+                </span>
+              )}
             </div>
-            <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)] mb-1">
+            <div className="text-[14px] font-medium text-neutral-900 mb-1">
               {event.action}
             </div>
-            <div className="font-[var(--font-sans)] text-[0.75rem] text-[var(--bb-grey-2)] leading-relaxed mb-2">
+            <div className="text-[14px] text-neutral-600 leading-relaxed mb-2">
               {event.reasoning}
             </div>
             {event.policy_refs.length > 0 && (
@@ -140,7 +152,7 @@ export function LedgerView() {
                 {event.policy_refs.map((ref) => (
                   <span
                     key={ref}
-                    className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]"
+                    className="rounded-full bg-neutral-100 px-2.5 py-1 text-[12px] font-medium text-neutral-600"
                   >
                     {ref}
                   </span>

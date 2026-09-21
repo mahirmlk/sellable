@@ -13,32 +13,32 @@ const upsellCandidates = ["AUDIO-CASE-01", "WORK-WRISTREST-01", "SNACK-MUG-01", 
 
 export function CatalogTable({ products }: CatalogTableProps) {
   return (
-    <div className="border border-[var(--bb-line)] overflow-hidden">
-      {/* Desktop header — spec: SKU, Product, Category, Price, Floor, Stock, AI discoverable, Upsell candidate */}
-      <div className="hidden md:grid grid-cols-[1fr_110px_90px_90px_90px_60px_80px_80px] gap-3 px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
-          PRODUCT
+    <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] overflow-hidden">
+      {/* Desktop header */}
+      <div className="hidden md:grid grid-cols-[1fr_110px_90px_90px_90px_60px_80px_80px] gap-3 px-6 py-3 border-b border-black/[0.06] bg-neutral-50/80">
+        <div className="text-[12px] font-medium text-neutral-500">
+          Product
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
+        <div className="text-[12px] font-medium text-neutral-500">
           SKU
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
-          CATEGORY
+        <div className="text-[12px] font-medium text-neutral-500">
+          Category
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] text-right">
-          PRICE
+        <div className="text-[12px] font-medium text-neutral-500 text-right">
+          Price
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] text-right">
-          FLOOR
+        <div className="text-[12px] font-medium text-neutral-500 text-right">
+          Floor
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] text-right">
-          STOCK
+        <div className="text-[12px] font-medium text-neutral-500 text-right">
+          Stock
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] text-center">
+        <div className="text-[12px] font-medium text-neutral-500 text-center">
           AI
         </div>
-        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] text-center">
-          UPSELL
+        <div className="text-[12px] font-medium text-neutral-500 text-center">
+          Upsell
         </div>
       </div>
 
@@ -46,50 +46,54 @@ export function CatalogTable({ products }: CatalogTableProps) {
       {products.map((product, i) => (
         <div
           key={product.id}
-          className={`hover-panel transition-colors ${
-            i < products.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+          className={`transition-colors hover:bg-black/[0.02] focus-within:bg-black/[0.02] ${
+            i < products.length - 1 ? "border-b border-black/[0.05]" : ""
           }`}
         >
           {/* Desktop row */}
-          <div className="hidden md:grid grid-cols-[1fr_110px_90px_90px_90px_60px_80px_80px] gap-3 px-5 py-3.5 items-center">
+          <div className="hidden md:grid grid-cols-[1fr_110px_90px_90px_90px_60px_80px_80px] gap-3 px-6 py-4 items-center">
             <div className="min-w-0">
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-white)] truncate">
+              <div className="text-[15px] font-medium text-neutral-900 truncate">
                 {product.title}
               </div>
             </div>
-            <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">
+            <div className="text-[13px] text-neutral-500 tabular-nums">
               {product.sku}
             </div>
-            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] uppercase text-[var(--bb-grey-3)]">
+            <div className="text-[13px] text-neutral-500">
               {product.category}
             </div>
-            <div className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-white)] text-right tabular-nums">
+            <div className="text-[15px] font-semibold text-neutral-900 text-right tabular-nums">
               {formatPaise(product.price_paise)}
             </div>
-            <div className="font-[var(--font-mono)] text-[0.8rem] text-[var(--bb-grey-2)] text-right tabular-nums">
+            <div className="text-[13px] text-neutral-500 text-right tabular-nums">
               {formatPaise(product.floor_paise)}
             </div>
-            <div className="font-[var(--font-mono)] text-[0.8rem] text-right tabular-nums">
+            <div className="text-[13px] text-right tabular-nums">
               <span
                 className={
                   product.stock > 20
-                    ? "text-[var(--bb-grey-1)]"
+                    ? "text-neutral-600"
                     : product.stock > 5
-                      ? "text-[var(--bb-orange)]"
-                      : "text-red-500"
+                      ? "inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium bg-amber-50 text-amber-800"
+                      : "inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium bg-red-50 text-red-700"
                 }
               >
                 {product.stock}
               </span>
             </div>
             <div className="flex justify-center">
-              <Check size={14} className="text-green-400" />
+              <span className="flex items-center justify-center size-6 rounded-full bg-green-50" aria-label="AI discoverable">
+                <Check size={13} className="text-green-700" />
+              </span>
             </div>
             <div className="flex justify-center">
               {upsellCandidates.includes(product.sku) ? (
-                <Check size={14} className="text-[var(--bb-orange)]" />
+                <span className="flex items-center justify-center size-6 rounded-full bg-[#fff4e5]" aria-label="Upsell candidate">
+                  <Check size={13} className="text-[#b25e00]" />
+                </span>
               ) : (
-                <span className="text-[var(--bb-grey-4)]">—</span>
+                <span className="text-neutral-300">—</span>
               )}
             </div>
           </div>
@@ -98,24 +102,24 @@ export function CatalogTable({ products }: CatalogTableProps) {
           <div className="md:hidden px-5 py-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-white)]">
+                <div className="text-[15px] font-medium text-neutral-900">
                   {product.title}
                 </div>
-                <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] text-[var(--bb-grey-3)] mt-1 uppercase">
+                <div className="text-[12px] text-neutral-500 mt-1">
                   {product.sku} · {product.category}
                 </div>
               </div>
               <div className="text-right flex-shrink-0">
-                <div className="font-[var(--font-mono)] text-[0.85rem] text-[var(--bb-white)]">
+                <div className="text-[15px] font-semibold text-neutral-900 tabular-nums">
                   {formatPaise(product.price_paise)}
                 </div>
-                <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-3)] mt-0.5">
-                  Floor: {formatPaise(product.floor_paise)}
+                <div className="text-[12px] text-neutral-500 mt-0.5 tabular-nums">
+                  Floor {formatPaise(product.floor_paise)}
                 </div>
-                <div className="flex items-center gap-3 mt-1 justify-end">
-                  <span className="font-[var(--font-mono)] text-[0.5rem] text-green-400">AI ✓</span>
+                <div className="flex items-center gap-1.5 mt-1.5 justify-end">
+                  <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium bg-green-50 text-green-700">AI</span>
                   {upsellCandidates.includes(product.sku) && (
-                    <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-orange)]">UPSELL ✓</span>
+                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium bg-[#fff4e5] text-[#b25e00]">Upsell</span>
                   )}
                 </div>
               </div>

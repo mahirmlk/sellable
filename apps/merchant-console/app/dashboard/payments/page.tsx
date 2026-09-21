@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { RefreshCw, ArrowRight } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import {
   getConsoleTransactions,
   getAgentsStatus,
@@ -19,6 +19,8 @@ import {
   Section,
   PartialBanner,
 } from "@/components/dashboard/tier-fallbacks";
+import { RefreshButton } from "@/components/dashboard/commerce-ui";
+import { PaymentBadge } from "@/components/dashboard/status-badge";
 
 type Bucket = "CAPTURED" | "FAILED" | "PENDING" | "NONE";
 
@@ -74,14 +76,12 @@ export default function PaymentsPage() {
   const pending = records.filter((r) => r.bucket === "PENDING").length;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Payments"
-        subtitle="PROVIDER PAYMENT RECORDS · DERIVED FROM TRANSACTIONS"
+        subtitle="Payment records from your transactions"
         actions={
-          <button onClick={() => void fetchData()} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-          </button>
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
         }
       />
 
@@ -94,29 +94,30 @@ export default function PaymentsPage() {
         <EmptyState title="Payments unavailable" message="Transaction data could not be loaded from the backend." />
       ) : (
         <>
-          <Section title="PAYMENT RAIL" hint="FROM LIVE SYSTEM STATUS">
+          <Section title="Payment rail" hint="Live system status">
             {rail ? (
-              <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)] leading-relaxed">
-                Provider {rail.provider} · {rail.mode} · {rail.configured ? "CONFIGURED" : "NOT CONFIGURED"} ·{" "}
-                webhook {rail.webhook_configured ? "CONFIGURED" : "NOT CONFIGURED"}
+              <div className="text-[14px] text-neutral-600 leading-relaxed">
+                Provider <span className="font-medium text-neutral-900">{rail.provider}</span> · {rail.mode} ·{" "}
+                {rail.configured ? "Configured" : "Not configured"} · webhook{" "}
+                {rail.webhook_configured ? "configured" : "not configured"}
                 {rail.webhook_last_verified_at && (
                   <> · last verified {new Date(rail.webhook_last_verified_at).toLocaleString("en-IN", { hour12: false })}</>
                 )}
               </div>
             ) : (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Payment rail status unavailable.</div>
+              <div className="text-[14px] text-neutral-500">Payment rail status unavailable.</div>
             )}
           </Section>
 
-          <div className="grid grid-cols-3 gap-4 stagger-child">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[
-              { label: "Captured", value: captured, tone: "text-green-400" },
-              { label: "Failed", value: failed, tone: "text-red-400" },
-              { label: "Pending", value: pending, tone: "text-yellow-400" },
+              { label: "Captured", value: captured },
+              { label: "Failed", value: failed },
+              { label: "Pending", value: pending },
             ].map((s) => (
-              <div key={s.label} className="border border-[var(--bb-line)] p-4 bg-[var(--bb-panel)]">
-                <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-3">{s.label}</div>
-                <div className={`font-[var(--font-mono)] text-[1.35rem] leading-none tabular-nums ${s.tone}`}>{s.value}</div>
+              <div key={s.label} className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-5 transition-all duration-200 hover:-translate-y-px">
+                <div className="text-[13px] font-medium text-neutral-500 mb-2">{s.label}</div>
+                <div className="text-[28px] font-semibold leading-none tracking-tight tabular-nums text-neutral-900">{s.value}</div>
               </div>
             ))}
           </div>
@@ -142,18 +143,16 @@ export default function PaymentsPage() {
                 <tbody>
                   {records.map(({ tx, bucket }) => (
                     <tr key={tx.order_id}>
-                      <td data-label="Order" className="font-[var(--font-mono)] text-[0.7rem]">{tx.order_id}</td>
-                      <td data-label="Amount" className="font-[var(--font-mono)] tabular-nums">{formatPaise(tx.amount_paise)}</td>
+                      <td data-label="Order" className="text-[13px] text-neutral-500 tabular-nums">{tx.order_id}</td>
+                      <td data-label="Amount" className="text-[15px] font-semibold text-neutral-900 tabular-nums">{formatPaise(tx.amount_paise)}</td>
                       <td data-label="Status">
-                        <span className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase ${bucket === "CAPTURED" ? "text-green-400" : bucket === "FAILED" ? "text-red-400" : "text-yellow-400"}`}>
-                          {bucket}
-                        </span>
+                        <PaymentBadge status={bucket} />
                       </td>
-                      <td data-label="Provider order" className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-3)]">{tx.payment_order_id ?? "—"}</td>
-                      <td data-label="Updated" className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{formatTimeAgo(tx.created_at)}</td>
+                      <td data-label="Provider order" className="text-[13px] text-neutral-500 tabular-nums">{tx.payment_order_id ?? "—"}</td>
+                      <td data-label="Updated" className="text-[12px] text-neutral-400">{formatTimeAgo(tx.created_at)}</td>
                       <td data-label="Open">
-                        <Link href={`/dashboard/transactions/${tx.order_id}`} className="inline-flex items-center gap-1 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:text-[var(--bb-orange-bright)]">
-                          VIEW <ArrowRight size={10} />
+                        <Link href={`/dashboard/transactions/${tx.order_id}`} className="inline-flex items-center gap-1 text-[13px] font-medium text-[#0071e3] hover:underline">
+                          View <ArrowRight size={12} />
                         </Link>
                       </td>
                     </tr>

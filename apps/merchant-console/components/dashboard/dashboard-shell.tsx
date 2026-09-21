@@ -48,11 +48,11 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="flex min-h-screen">
+    <div className="dashboard-apple flex min-h-screen bg-[#f5f5f7] text-[#1d1d1f]">
       <DashboardSidebar collapsed={collapsed} onToggle={toggleCollapsed} />
       <div
         className={`flex-1 flex flex-col min-h-screen min-w-0 transition-[margin] duration-300 ease-in-out ${
-          collapsed ? "lg:ml-[56px]" : "lg:ml-[240px]"
+          collapsed ? "lg:ml-[72px]" : "lg:ml-[264px]"
         }`}
       >
         {children}
