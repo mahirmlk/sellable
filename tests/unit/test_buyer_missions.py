@@ -559,3 +559,45 @@ def test_continue_after_settlement_verifies_without_new_payment(
     assert snapshot.state is BuyerMissionState.VERIFIED
     assert snapshot.payment_url == attempt.payment_url
     assert core.ledger.count_actions(result.trace_id, "payment.attempted") == 1
+
+
+def test_list_snapshots_matches_single_snapshot_reads(
+    core_and_engine, buyer, mission_service
+) -> None:
+    """list_snapshots batches reads but renders the same payloads as snapshot()."""
+    core, _ = core_and_engine
+    mission_ids: list[str] = []
+    for _ in range(3):
+        result = buyer.run(hitl_mission(), trace_id=new_trace())
+        mission_ids.append(
+            mission_service.record_run(
+                merchant_id=core.merchant_scope, mission=hitl_mission(), result=result
+            )
+        )
+    denied = buyer.run(
+        hitl_mission(budget_ceiling_paise=1_000, requested_sku=None),
+        trace_id=new_trace(),
+    )
+    assert denied.action is BuyerAction.DENIED
+    mission_ids.append(
+        mission_service.record_run(
+            merchant_id=core.merchant_scope, mission=hitl_mission(), result=denied
+        )
+    )
+
+    listed = {
+        item.mission_id: item
+        for item in mission_service.list_snapshots(
+            core=core, merchant_id=core.merchant_scope
+        )
+    }
+    assert set(mission_ids) <= set(listed)
+    for mission_id in mission_ids:
+        single = mission_service.snapshot(
+            core=core, mission_id=mission_id, merchant_id=core.merchant_scope
+        )
+        # updated_at moves on every pointer-touching read; everything else
+        # must be identical between the batched and single-row paths.
+        assert listed[mission_id].model_dump(exclude={"updated_at"}) == (
+            single.model_dump(exclude={"updated_at"})
+        )

@@ -68,6 +68,18 @@ def _to_paise(amount_text: str, kilo: bool = False) -> int:
     return round(value * 100)
 
 
+def _offer_paise(amount_text: str, kilo: bool = False) -> int:
+    """Parse an offer amount, clamped to at least one paise.
+
+    Sub-paise figures (``₹0``, ``₹0.001``) round to 0, which would bypass
+    ``SellerRequest``'s ``buyer_offer_paise gt=0`` contract when threaded
+    through ``model_copy(update=...)`` (which skips validation). Clamping
+    keeps the money path fail-closed: a 1-paise offer still trips the
+    merchant floor and is countered/denied, never treated as free.
+    """
+    return max(1, _to_paise(amount_text, kilo=kilo))
+
+
 # Budget framings: an amount framed as a budget is not an offer.
 _BUDGET_CONTEXT = re.compile(
     r"\b(?:under|below|up\s*to|upto|less\s+than|max(?:imum)?|budget)\b[^.]{0,24}$",
@@ -86,20 +98,20 @@ def parse_offer_paise(message: str) -> int | None:
     for match in _CURRENCY_AMOUNT.finditer(message):
         if _BUDGET_CONTEXT.search(message[max(0, match.start() - 32) : match.start()]):
             continue
-        return _to_paise(match.group(1))
+        return _offer_paise(match.group(1))
     match = _K_AMOUNT.search(message)
     if match:
-        return _to_paise(match.group(1), kilo=True)
+        return _offer_paise(match.group(1), kilo=True)
     match = _RUPEES_AMOUNT.search(message)
     if match:
-        return _to_paise(match.group(1))
+        return _offer_paise(match.group(1))
     # Bare number: only an offer when an offer verb/preposition frames it.
     for match in _BARE_AMOUNT.finditer(message):
         prefix = message[max(0, match.start() - 40) : match.end() + 8]
         if _BUDGET_CONTEXT.search(message[max(0, match.start() - 32) : match.start()]):
             continue
         if _OFFER_CONTEXT.search(prefix):
-            return _to_paise(match.group(1))
+            return _offer_paise(match.group(1))
     return None
 
 

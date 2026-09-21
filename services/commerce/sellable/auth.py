@@ -28,6 +28,13 @@ from sellable.config import settings
 logger = logging.getLogger("sellable.auth")
 
 
+#: Single source of truth for HMAC nonce freshness (seconds). The in-memory
+#: replay guard, the persistent nonce claim, and the timestamp acceptance
+#: window must agree — otherwise a nonce can be valid in one layer while
+#: already pruned in another.
+NONCE_TTL_SECONDS = 300
+
+
 @dataclass(frozen=True)
 class AgentApiKey:
     key_id: str
@@ -45,7 +52,7 @@ _DEMO_MERCHANT_ID = "mrc_demo_store"
 class _ReplayGuard:
     """Thread-safe, time-bounded nonce cache to prevent replay attacks."""
 
-    def __init__(self, ttl_seconds: int = 300) -> None:
+    def __init__(self, ttl_seconds: int = NONCE_TTL_SECONDS) -> None:
         self._ttl = ttl_seconds
         self._seen: dict[tuple[str, str], float] = {}
         self._lock = threading.Lock()
@@ -169,11 +176,17 @@ def _resolve_signed_request(
     if issued is not None:
         issued_merchant = issued.merchant_id
         issued_buyer = issued.buyer_agent_id
-    elif bearer_hash in _configured_hashes():
+    # Constant-time comparison against each configured hash — plain set
+    # membership on hex digests would leak a (small) timing signal. Same
+    # rule as the static-key path above.
+    elif not any(
+        hmac.compare_digest(bearer_hash, candidate)
+        for candidate in _configured_hashes()
+    ):
+        raise HTTPException(status_code=403, detail="Invalid agent API key")
+    else:
         issued_merchant = _DEMO_MERCHANT_ID
         issued_buyer = None
-    else:
-        raise HTTPException(status_code=403, detail="Invalid agent API key")
 
     if not agent_id:
         raise HTTPException(status_code=401, detail="Missing X-Agent-Id header")
@@ -187,7 +200,7 @@ def _resolve_signed_request(
     except (ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Invalid timestamp") from None
 
-    if abs(time.time() - ts) > 300:
+    if abs(time.time() - ts) > NONCE_TTL_SECONDS:
         raise HTTPException(status_code=401, detail="Request timestamp expired")
 
     canonical_parts = [

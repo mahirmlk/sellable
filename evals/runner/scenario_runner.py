@@ -50,6 +50,20 @@ def run_scenario(name: str) -> ScenarioResult:
             duration_ms=(time.perf_counter() - start) * 1000,
             error="Scenario not implemented",
         )
+    except ModuleNotFoundError as exc:
+        # Ran outside an installed checkout (e.g. no `pip install -e ".[dev]"`).
+        message = str(exc)
+        if "sellable" in message:
+            message = (
+                f"{message} — install the package first: "
+                "pip install -e '.[dev]' (from the repo root)"
+            )
+        return ScenarioResult(
+            scenario=name,
+            passed=False,
+            duration_ms=(time.perf_counter() - start) * 1000,
+            error=message,
+        )
     except Exception as exc:
         return ScenarioResult(
             scenario=name,
@@ -88,6 +102,10 @@ def print_report(results: list[ScenarioResult]) -> None:
                     print(f"           {key}: {value}")
 
     print(f"\n{'=' * 60}\n")
+
+    if any("install the package first" in (r.error or "") for r in results):
+        print("  Hint: scenarios need the installed package.")
+        print("        Run: pip install -e '.[dev]' (from the repo root)\n")
 
 
 if __name__ == "__main__":
