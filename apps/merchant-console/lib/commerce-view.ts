@@ -1,19 +1,7 @@
-// Tier-1 local fallback data helpers.
-//
-// A parallel agent owns lib/csv.ts (exportToCsv) and lib/saved-views.ts
-// (useSavedViews). Those files were missing when these pages were built, so
-// this module provides contract-compatible fallbacks:
-//
-//   exportToCsv(filename, rows)
-//   useSavedViews(key)
-//
-// When the owned files land, swap these imports to "@/lib/csv" and
-// "@/lib/saved-views". Everything else here is presentation-only derivation
-// from already-loaded API records (no new backend types, no invented data).
+// Presentation-only derivations from already-loaded API records.
+// No new backend types, no new endpoints, no invented data. Pure functions
+// shared by the commerce pages (Home, Products, Inventory, Orders, Buyers).
 
-"use client";
-
-import { useCallback, useState } from "react";
 import type { ConsoleTransaction } from "@/lib/api";
 import type { Transaction, TransactionStatus } from "@/lib/types/domain";
 
@@ -31,85 +19,6 @@ export function stockState(stock: number, threshold = LOW_STOCK_THRESHOLD): Stoc
 /** AI Seller can only sell what is in stock and priced at or above the floor. */
 export function aiAvailable(stock: number, floorPaise: number, pricePaise: number): boolean {
   return stock > 0 && floorPaise <= pricePaise;
-}
-
-function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  const s = String(value);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-/** Contract-compatible fallback for lib/csv.ts exportToCsv. */
-export function exportToCsv(filename: string, rows: Array<Record<string, unknown>>): void {
-  if (rows.length === 0) return;
-  const headers = Object.keys(rows[0]);
-  const lines = [
-    headers.map(csvCell).join(","),
-    ...rows.map((r) => headers.map((h) => csvCell(r[h])).join(",")),
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-export interface SavedView<T> {
-  name: string;
-  state: T;
-}
-
-/** Contract-compatible fallback for lib/saved-views.ts useSavedViews. */
-export function useSavedViews<T>(key: string): {
-  views: Array<SavedView<T>>;
-  saveView: (name: string, state: T) => void;
-  deleteView: (name: string) => void;
-} {
-  // Lazy initializer reads persisted views once; no render-cascade effect.
-  const [views, setViews] = useState<Array<SavedView<T>>>(() => {
-    try {
-      const raw = window.localStorage.getItem(`mc-views:${key}`);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Array<SavedView<T>>;
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // No saved views yet — start empty.
-    }
-    return [];
-  });
-
-  const persist = useCallback(
-    (next: Array<SavedView<T>>) => {
-      setViews(next);
-      try {
-        window.localStorage.setItem(`mc-views:${key}`, JSON.stringify(next));
-      } catch {
-        // Storage full or unavailable — views just won't persist.
-      }
-    },
-    [key]
-  );
-
-  const saveView = useCallback(
-    (name: string, state: T) => {
-      persist([...views.filter((v) => v.name !== name), { name, state }]);
-    },
-    [views, persist]
-  );
-
-  const deleteView = useCallback(
-    (name: string) => {
-      persist(views.filter((v) => v.name !== name));
-    },
-    [views, persist]
-  );
-
-  return { views, saveView, deleteView };
 }
 
 // --- Shared presentation mapper: ConsoleTransaction -> display Transaction.

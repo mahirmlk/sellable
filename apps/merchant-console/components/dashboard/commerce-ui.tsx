@@ -1,56 +1,14 @@
 "use client";
 
-// Tier-1 local fallback UI kit.
-//
-// A parallel agent owns components/dashboard/{page-header,empty-state,
-// loading-skeleton,error-banner,data-table}.tsx, lib/csv.ts and
-// lib/saved-views.ts. Those files were missing when these pages were built,
-// so this module provides contract-compatible fallbacks with the exact prop
-// shapes the task specifies:
-//
-//   PageHeader({title, subtitle?, actions?})
-//   EmptyState({title, message, action?})
-//   TableSkeleton({rows?})
-//   ErrorBanner({message, onRetry?})
-//   DataTable({children})
-//   exportToCsv(filename, rows)          (in ./tier1-data)
-//   useSavedViews(key)                   (in ./tier1-data)
-//
-// When the owned files land, swap these imports to those paths. The extra
-// exports here (PartialBanner, FilterTabs, SavedViewsBar, StockBadge,
-// ChannelBadge, AiBadge, RefreshButton) are tier-1-local helpers.
+// Commerce-specific shared UI (badges, tabs, toolbar buttons, saved views).
+// Built on the canonical primitives in ./page-header, ./empty-state,
+// ./loading-skeleton, ./error-banner, ./data-table and the lib helpers in
+// @/lib/csv and @/lib/saved-views — anything generic lives there, not here.
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { IconRefresh, IconWarning } from "@/components/dashboard/icons";
-import { SkeletonLine } from "@/components/dashboard/skeleton";
-import { useSavedViews } from "./tier1-data";
-
-export function PageHeader({
-  title,
-  subtitle,
-  actions,
-}: {
-  title: string;
-  subtitle?: string;
-  actions?: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">
-            {subtitle}
-          </p>
-        )}
-      </div>
-      {actions && <div className="flex items-center gap-2.5">{actions}</div>}
-    </div>
-  );
-}
+import { useSavedViews } from "@/lib/saved-views";
 
 export function RefreshButton({
   onRefresh,
@@ -72,72 +30,6 @@ export function RefreshButton({
   );
 }
 
-export function EmptyState({
-  title,
-  message,
-  action,
-}: {
-  title: string;
-  message: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="border border-[var(--bb-line)] px-5 py-12 text-center">
-      <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)]">
-        {title}
-      </div>
-      <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)] leading-relaxed mt-2 max-w-[420px] mx-auto">
-        {message}
-      </div>
-      {action && <div className="mt-5 flex items-center justify-center gap-3">{action}</div>}
-    </div>
-  );
-}
-
-export function TableSkeleton({ rows = 6 }: { rows?: number }) {
-  return (
-    <div className="border border-[var(--bb-line)] overflow-hidden" aria-label="Loading">
-      <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-        <SkeletonLine className="h-3 w-32" />
-      </div>
-      {Array.from({ length: rows }).map((_, i) => (
-        <div
-          key={i}
-          className={`px-5 py-4 ${i < rows - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}
-        >
-          <div className="flex items-center gap-4">
-            <SkeletonLine className="h-3 w-20" />
-            <SkeletonLine className="h-3 w-32" />
-            <SkeletonLine className="h-3 w-16" />
-            <SkeletonLine className="h-3 w-12 ml-auto" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-export function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  return (
-    <div className="border border-red-400/30 bg-red-400/5 px-5 py-4 flex items-start justify-between gap-4">
-      <div className="flex items-start gap-2.5">
-        <IconWarning size={14} className="text-red-400 mt-0.5 shrink-0" />
-        <span className="font-[var(--font-mono)] text-[0.62rem] text-red-400 leading-relaxed">
-          {message}
-        </span>
-      </div>
-      {onRetry && (
-        <button
-          onClick={onRetry}
-          className="shrink-0 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-red-400 border border-red-400/40 px-3 py-1.5 hover:bg-red-400/10 transition-colors cursor-pointer"
-        >
-          RETRY
-        </button>
-      )}
-    </div>
-  );
-}
-
 /** Amber banner for partial failures: some sections loaded, others did not. */
 export function PartialBanner({ message }: { message: string }) {
   return (
@@ -148,10 +40,6 @@ export function PartialBanner({ message }: { message: string }) {
       </span>
     </div>
   );
-}
-
-export function DataTable({ children }: { children: ReactNode }) {
-  return <div className="border border-[var(--bb-line)] overflow-hidden">{children}</div>;
 }
 
 export function FilterTabs<T extends string>({
@@ -243,9 +131,8 @@ export function ViewStoreLink() {
 }
 
 /**
- * Local fallback for useSavedViews(key): named filter presets persisted to
- * localStorage. Rendered next to a toolbar; onApply receives the stored
- * state for the page to set.
+ * Named filter presets persisted to localStorage (UI prefs only).
+ * Rendered next to a toolbar; onApply receives the stored state.
  */
 export function SavedViewsBar<T>({
   storageKey,
@@ -256,7 +143,10 @@ export function SavedViewsBar<T>({
   current: T;
   onApply: (state: T) => void;
 }) {
-  const { views, saveView, deleteView } = useSavedViews<T>(storageKey);
+  // Keep the legacy "mc-views:" prefix so views saved before the
+  // canonical lib/saved-views.ts landed continue to load.
+  const { getViews, saveView, deleteView } = useSavedViews<T>(`mc-views:${storageKey}`);
+  const views = getViews();
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -268,7 +158,7 @@ export function SavedViewsBar<T>({
           className="inline-flex items-center gap-1 border border-[var(--bb-line)] bg-[var(--bb-panel)] pl-2.5 pr-1 py-1"
         >
           <button
-            onClick={() => onApply(v.state)}
+            onClick={() => onApply(v.value)}
             className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.08em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] transition-colors cursor-pointer"
             title={`Apply saved view "${v.name}"`}
           >
@@ -325,3 +215,4 @@ export function SavedViewsBar<T>({
     </div>
   );
 }
+

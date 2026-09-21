@@ -12,23 +12,23 @@ import { StatusBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatTimeAgo } from "@/lib/formatters";
 import { getConsoleApprovals, getConsoleTransactions } from "@/lib/api";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { DataTable } from "@/components/dashboard/data-table";
 import {
   ChannelBadge,
-  DataTable,
-  EmptyState,
-  ErrorBanner,
   FilterTabs,
-  PageHeader,
   RefreshButton,
   SavedViewsBar,
-} from "../_components/tier1-ui";
+} from "@/components/dashboard/commerce-ui";
+import { exportToCsv } from "@/lib/csv";
 import {
-  exportToCsv,
   itemsSummary,
   mapConsoleTx,
   orderTabOf,
   type OrderTab,
-} from "../_components/tier1-data";
+} from "@/lib/commerce-view";
 import type { Transaction } from "@/lib/types/domain";
 
 type ChannelFilter = "all" | "agent_to_agent" | "human_chat";

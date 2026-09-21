@@ -9,22 +9,22 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download } from "lucide-react";
 import { getConsoleCatalog, type Product } from "@/lib/api";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { DataTable } from "@/components/dashboard/data-table";
 import {
-  DataTable,
-  EmptyState,
-  ErrorBanner,
   FilterTabs,
-  PageHeader,
   RefreshButton,
   StockBadge,
-  TableSkeleton,
-} from "../_components/tier1-ui";
+} from "@/components/dashboard/commerce-ui";
+import { exportToCsv } from "@/lib/csv";
 import {
   LOW_STOCK_THRESHOLD,
-  exportToCsv,
   stockState,
   type StockState,
-} from "../_components/tier1-data";
+} from "@/lib/commerce-view";
 
 type InventoryTab = "all" | StockState;
 

@@ -9,15 +9,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatTimeAgo } from "@/lib/formatters";
 import { getConsoleTransactions, type ConsoleTransaction } from "@/lib/api";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { DataTable } from "@/components/dashboard/data-table";
 import {
   ChannelBadge,
-  DataTable,
-  EmptyState,
-  ErrorBanner,
   FilterTabs,
-  PageHeader,
   RefreshButton,
-} from "../_components/tier1-ui";
+} from "@/components/dashboard/commerce-ui";
 
 type BuyerFilter = "all" | "human" | "agent";
 

@@ -22,15 +22,15 @@ import {
   type ConsoleTransactionDetail,
   type LedgerEvent as ApiLedgerEvent,
 } from "@/lib/api";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { DataTable } from "@/components/dashboard/data-table";
 import {
   ChannelBadge,
-  DataTable,
-  EmptyState,
-  ErrorBanner,
   RefreshButton,
-  TableSkeleton,
-} from "../../_components/tier1-ui";
-import { mapConsoleTx } from "../../_components/tier1-data";
+} from "@/components/dashboard/commerce-ui";
+import { mapConsoleTx } from "@/lib/commerce-view";
 import type { LedgerEvent, Transaction } from "@/lib/types/domain";
 
 type DetailTab = "overview" | "items" | "negotiation" | "payment" | "approval" | "activity";

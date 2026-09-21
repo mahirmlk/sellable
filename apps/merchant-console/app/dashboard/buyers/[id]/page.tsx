@@ -18,15 +18,15 @@ import {
   type ConsoleTransaction,
   type LedgerEvent,
 } from "@/lib/api";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { DataTable } from "@/components/dashboard/data-table";
 import {
   ChannelBadge,
-  DataTable,
-  EmptyState,
-  ErrorBanner,
   RefreshButton,
-  TableSkeleton,
-} from "../../_components/tier1-ui";
-import { itemsSummary, mapConsoleTx } from "../../_components/tier1-data";
+} from "@/components/dashboard/commerce-ui";
+import { itemsSummary, mapConsoleTx } from "@/lib/commerce-view";
 import type { Transaction } from "@/lib/types/domain";
 
 export default function BuyerDetailPage() {

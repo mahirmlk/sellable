@@ -11,16 +11,16 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Package, ShieldAlert, ArrowRight } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
 import { getConsoleCatalogItem, ApiError, type Product } from "@/lib/api";
+import { PageHeader } from "@/components/dashboard/page-header";
+import { EmptyState } from "@/components/dashboard/empty-state";
+import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
 import {
   AiBadge,
-  EmptyState,
-  ErrorBanner,
-  PageHeader,
   RefreshButton,
   StockBadge,
-  TableSkeleton,
-} from "../../_components/tier1-ui";
-import { LOW_STOCK_THRESHOLD, aiAvailable } from "../../_components/tier1-data";
+} from "@/components/dashboard/commerce-ui";
+import { LOW_STOCK_THRESHOLD, aiAvailable } from "@/lib/commerce-view";
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
