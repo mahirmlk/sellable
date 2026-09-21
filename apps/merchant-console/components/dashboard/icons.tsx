@@ -167,3 +167,47 @@ export function IconSend(p: IconProps) {
     </svg>
   );
 }
+
+/* Inventory — stacked boxes */
+export function IconInventory(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M8 1.5L14.5 5 8 8.5 1.5 5z" />
+      <path d="M1.5 8.5L8 12l6.5-3.5" />
+      <path d="M1.5 11.5L8 15l6.5-3.5" opacity={0.5} />
+    </svg>
+  );
+}
+
+/* Buyers — two person outlines */
+export function IconBuyers(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <circle cx="5.5" cy="5" r="2.5" />
+      <path d="M1.5 13.5c0-2.5 1.8-4 4-4s4 1.5 4 4" />
+      <circle cx="11.5" cy="6" r="2" opacity={0.6} />
+      <path d="M11 9.7c1.8 0.3 3.5 1.6 3.5 3.8" opacity={0.6} />
+    </svg>
+  );
+}
+
+/* Payments — card with stripe */
+export function IconPayments(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <rect x="1.5" y="3.5" width="13" height="9" />
+      <path d="M1.5 6.5h13" />
+      <path d="M3.5 10.5h4" />
+    </svg>
+  );
+}
+
+/* Developers — angle brackets */
+export function IconDevelopers(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M6 3.5L2.5 8 6 12.5" />
+      <path d="M10 3.5L13.5 8 10 12.5" />
+    </svg>
+  );
+}

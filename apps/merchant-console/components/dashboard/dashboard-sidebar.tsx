@@ -6,29 +6,7 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getAgentsStatus, type AgentsStatusResponse, type ComponentState } from "@/lib/api";
-import {
-  IconOverview,
-  IconChat,
-  IconActivity,
-  IconTransactions,
-  IconApprovals,
-  IconCatalog,
-  IconGrowth,
-  IconStorefront,
-  IconSettings,
-} from "./icons";
-
-const sidebarLinks = [
-  { label: "Overview", href: "/dashboard", icon: IconOverview },
-  { label: "Chat", href: "/dashboard/chat", icon: IconChat },
-  { label: "Activity", href: "/dashboard/activity", icon: IconActivity },
-  { label: "Transactions", href: "/dashboard/transactions", icon: IconTransactions },
-  { label: "Approvals", href: "/dashboard/approvals", icon: IconApprovals },
-  { label: "Catalog", href: "/dashboard/catalog", icon: IconCatalog },
-  { label: "Growth", href: "/dashboard/growth", icon: IconGrowth },
-  { label: "AI Storefront", href: "/dashboard/storefront", icon: IconStorefront },
-  { label: "Settings", href: "/dashboard/settings", icon: IconSettings },
-];
+import { NAV_SECTIONS } from "./nav-config";
 
 const STATE_DOT: Record<ComponentState, string> = {
   CONNECTED: "bg-green-500",
@@ -64,9 +42,12 @@ function MobileIcon({ open }: { open: boolean }) {
 export function DashboardSidebar({
   collapsed = false,
   onToggle,
+  badges,
 }: {
   collapsed?: boolean;
   onToggle?: () => void;
+  /** Optional live counts keyed by NavItem.badgeKey (e.g. { approvals: 3 }). */
+  badges?: Record<string, number | string>;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -86,8 +67,10 @@ export function DashboardSidebar({
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
-    return pathname.startsWith(href);
+    return pathname === href || pathname.startsWith(`${href}/`);
   };
+
+  let linkIndex = 0;
 
   return (
     <>
@@ -157,64 +140,86 @@ export function DashboardSidebar({
           </span>
         </div>
 
-        {/* Nav links — when collapsed, icons only with hover name tooltips.
-            Collapsed + lg drops the scroll clipping (overflow-x-hidden would
-            clip the hover labels that escape the 56px rail). */}
+        {/* Nav — rendered from nav-config. When collapsed, icons only with
+            hover name tooltips. Collapsed + lg drops the scroll clipping
+            (overflow-x-hidden would clip the hover labels). */}
         <nav
-          className={`flex-1 py-2 ${collapsed ? "lg:overflow-visible" : "overflow-y-auto overflow-x-hidden"}`}
+          className={`flex-1 overflow-y-auto py-2 ${collapsed ? "lg:overflow-visible" : "overflow-x-hidden"}`}
           aria-label="Dashboard navigation"
         >
-          {sidebarLinks.map((link, index) => {
-            const Icon = link.icon;
-            const active = isActive(link.href);
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={() => setMobileOpen(false)}
-                className={`relative flex items-center gap-3 group transition-colors duration-150 cursor-pointer ${
-                  collapsed ? "lg:justify-center lg:px-0 lg:py-[11px]" : "pl-5 pr-3 py-[9px]"
-                } ${
-                  active ? "text-[var(--bb-white)]" : "text-[var(--bb-grey-2)] hover:text-[var(--bb-white)]"
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.label} className="mb-1">
+              <div
+                className={`px-5 pt-3 pb-1 font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] ${
+                  collapsed ? "lg:hidden" : ""
                 }`}
-                aria-current={active ? "page" : undefined}
-                // Accessible name for the icon-only rail: screen readers and
-                // native tooltips must never depend on the hover label CSS.
-                aria-label={collapsed ? link.label : undefined}
-                title={collapsed ? link.label : undefined}
+                aria-hidden
               >
-                <span
-                  className={`absolute left-0 top-1/2 -translate-y-1/2 w-[2px] transition-all duration-150 ${
-                    active ? "h-[18px] bg-[var(--bb-orange)]" : "h-0 group-hover:h-[18px] bg-[var(--bb-grey-4)]"
-                  }`}
-                />
-                <span
-                  className={`font-[var(--font-mono)] text-[0.52rem] w-[16px] tabular-nums ${
-                    collapsed ? "lg:hidden" : ""
-                  } ${
-                    active ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-4)]"
-                  }`}
-                >
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <Icon
-                  size={15}
-                  className={`shrink-0 transition-colors ${active ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-3)] group-hover:text-[var(--bb-grey-1)]"}`}
-                />
-                <span className={`font-[var(--font-sans)] text-[0.82rem] ${collapsed ? "lg:hidden" : ""}`}>
-                  {link.label}
-                </span>
-                {/* Hover label — only rendered when the rail is collapsed.
-                    z-index sits inside the aside's own stacking context, so
-                    labels always paint above page content. */}
-                {collapsed && (
-                  <span className="hidden lg:flex absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 z-[70] items-center px-2 py-1 bg-[var(--bb-panel)] border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-white)] whitespace-nowrap pointer-events-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 shadow-lg">
-                    {link.label}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
+                {section.label}
+              </div>
+              {section.items.map((link) => {
+                const Icon = link.icon;
+                const active = isActive(link.href);
+                const badge =
+                  link.badgeKey && badges ? badges[link.badgeKey] : undefined;
+                const index = ++linkIndex;
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    onClick={() => setMobileOpen(false)}
+                    className={`relative flex items-center gap-3 group transition-colors duration-150 cursor-pointer ${
+                      collapsed ? "lg:justify-center lg:px-0 lg:py-[11px]" : "pl-5 pr-3 py-[9px]"
+                    } ${
+                      active ? "text-[var(--bb-white)]" : "text-[var(--bb-grey-2)] hover:text-[var(--bb-white)]"
+                    }`}
+                    aria-current={active ? "page" : undefined}
+                    // Accessible name for the icon-only rail: screen readers and
+                    // native tooltips must never depend on the hover label CSS.
+                    aria-label={collapsed ? link.label : undefined}
+                    title={collapsed ? link.label : undefined}
+                  >
+                    <span
+                      className={`absolute left-0 top-1/2 -translate-y-1/2 w-[2px] transition-all duration-150 ${
+                        active ? "h-[18px] bg-[var(--bb-orange)]" : "h-0 group-hover:h-[18px] bg-[var(--bb-grey-4)]"
+                      }`}
+                    />
+                    <span
+                      className={`font-[var(--font-mono)] text-[0.52rem] w-[16px] tabular-nums ${
+                        collapsed ? "lg:hidden" : ""
+                      } ${
+                        active ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-4)]"
+                      }`}
+                    >
+                      {String(index).padStart(2, "0")}
+                    </span>
+                    <Icon
+                      size={15}
+                      className={`shrink-0 transition-colors ${active ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-3)] group-hover:text-[var(--bb-grey-1)]"}`}
+                    />
+                    <span className={`font-[var(--font-sans)] text-[0.82rem] ${collapsed ? "lg:hidden" : ""}`}>
+                      {link.label}
+                    </span>
+                    {badge !== undefined && (
+                      <span
+                        className={`ml-auto font-[var(--font-mono)] text-[0.58rem] px-1.5 py-0.5 border border-[var(--bb-orange)]/40 text-[var(--bb-orange)] ${collapsed ? "lg:hidden" : ""}`}
+                      >
+                        {badge}
+                      </span>
+                    )}
+                    {/* Hover label — only rendered when the rail is collapsed.
+                        z-index sits inside the aside's own stacking context, so
+                        labels always paint above page content. */}
+                    {collapsed && (
+                      <span className="hidden lg:flex absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 z-[70] items-center px-2 py-1 bg-[var(--bb-panel)] border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-white)] whitespace-nowrap pointer-events-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 shadow-lg">
+                        {link.label}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* Collapse toggle (desktop only) */}

@@ -1218,6 +1218,106 @@ a:active:not([aria-disabled="true"]) {
   100% { transform: translate3d(28px, 28px, 0); }
 }
 /* --------------------------------------------------
+   DASHBOARD FOUNDATION — data tables, stacked cards on mobile
+   -------------------------------------------------- */
+.data-table {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--bb-line);
+  background: var(--bb-black);
+}
+
+.data-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.data-table thead th {
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--bb-grey-2);
+  background: var(--bb-panel);
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bb-line);
+  white-space: nowrap;
+}
+
+.data-table tbody td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--bb-line-soft);
+  color: var(--bb-white-soft);
+  vertical-align: top;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr:hover td {
+  background: var(--bb-panel);
+}
+
+@media (max-width: 640px) {
+  /* Stacked cards: no horizontal page overflow on narrow screens. */
+  .data-table {
+    overflow: visible;
+    border: none;
+    background: transparent;
+  }
+
+  .data-table table,
+  .data-table tbody,
+  .data-table tr,
+  .data-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .data-table thead {
+    display: none;
+  }
+
+  .data-table tbody tr {
+    border: 1px solid var(--bb-line);
+    background: var(--bb-panel);
+    margin-bottom: 8px;
+  }
+
+  .data-table tbody tr:hover td {
+    background: transparent;
+  }
+
+  .data-table tbody td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--bb-line-soft);
+  }
+
+  .data-table tbody td:last-child {
+    border-bottom: none;
+  }
+
+  .data-table tbody td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: var(--text-micro);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--bb-grey-3);
+  }
+}
+
+/* --------------------------------------------------
    REDUCED MOTION — stop ambient layers for users who opt out
    -------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { useSystemStatus } from "@/components/dashboard/use-system-status";
+import { OPEN_COMMAND_MENU_EVENT } from "@/components/dashboard/command-menu";
 import { getStore } from "@/lib/api";
 import { IconSignOut, IconWarning } from "./icons";
 import type { ComponentState } from "@/lib/api";
@@ -80,8 +81,17 @@ export function DashboardTopBar() {
         </span>
       </div>
 
-      {/* Right: Status indicators + sign out */}
+      {/* Right: Search trigger + status indicators + sign out */}
       <div className="flex items-center gap-4">
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_MENU_EVENT))}
+          aria-label="Search pages (Command K)"
+          className="hidden sm:inline-flex items-center gap-2 h-7 px-3 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors cursor-pointer"
+        >
+          <span aria-hidden>⌘K</span>
+          <span>Go to…</span>
+        </button>
         <div className="hidden md:flex items-center gap-4">
           {error ? (
             <div
