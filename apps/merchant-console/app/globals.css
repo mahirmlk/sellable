@@ -1,4 +1,8 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+/* shadcn `dark:` utilities follow our data-theme instead of .dark class */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
   /* --------------------------------------------------
@@ -111,6 +115,20 @@
   --color-bb-orange-deep: var(--bb-orange-deep);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+
+  /* Aurora Glass semantic palette — theme-aware via --c-* tokens */
+  --color-canvas: var(--c-canvas);
+  --color-panel: var(--c-panel);
+  --color-panel-2: var(--c-panel-2);
+  --color-panel-3: var(--c-panel-3);
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-hairline: var(--c-hairline);
+  --color-accent: var(--c-accent);
+  --color-accent-strong: var(--c-accent-strong);
+  --color-accent-soft: var(--c-accent-soft);
 }
 
 /* --------------------------------------------------
@@ -1329,182 +1347,597 @@ a:active:not([aria-disabled="true"]) {
   .hero-video-grad,
   .hero-video-grid,
   .ambient-grain,
-  .dashboard-apple *,
-  .dashboard-apple *::before,
-  .dashboard-apple *::after {
+  .dashboard-app *,
+  .dashboard-app *::before,
+  .dashboard-app *::after {
     animation: none !important;
     transition-duration: 0.01ms !important;
   }
 }
 
+/* ==================================================
+   SOLID SURFACE DESIGN SYSTEM (dashboard only)
+   Material rule: chrome surfaces (sidebar, topbar,
+   popovers, toasts, pills) are SOLID bg-panel —
+   no translucency, no backdrop-blur anywhere.
+   Content surfaces — tables, forms, long text —
+   stay opaque so text always clears WCAG 4.5:1.
+   --------------------------------------------------
+   Scoping: --c-* semantic tokens live on [data-theme]
+   (harmless elsewhere); the Tailwind palette overrides
+   live on [data-theme] .dashboard-app so the dark
+   marketing site keeps default Tailwind colors.
+   ================================================== */
+
 /* --------------------------------------------------
-   PHASE 1 — APPLE PREMIUM LIGHT FOUNDATION (dashboard only)
-   Scope: .dashboard-apple isolates the light system so the
-   dark marketing site keeps its --bb-* values untouched.
+   SEMANTIC TOKENS — LIGHT
    -------------------------------------------------- */
-.dashboard-apple {
-  /* Page + surfaces */
-  --bb-black: #f5f5f7;
-  --bb-black-2: #ececf0;
-  --bb-panel: #ffffff;
-  --bb-panel-2: #f9f9fb;
-  --bb-panel-3: #f1f1f4;
+:root,
+[data-theme="light"] {
+  --c-canvas: #f5f5f7;
+  --c-panel: #ffffff;
+  --c-panel-2: #f5f5f7;
+  --c-panel-3: #e8e8ed;
+  --c-ink: #1d1d1f;
+  --c-ink-2: #3a3a3c;
+  --c-muted: #6e6e73;
+  --c-faint: #8e8e93;
+  --c-hairline: rgba(0, 0, 0, 0.08);
+  --c-accent: #0071e3;
+  --c-accent-strong: #0068d1;
+  --c-accent-soft: rgba(0, 113, 227, 0.1);
 
-  /* Text — Apple ink scale */
-  --bb-white: #1d1d1f;
-  --bb-white-soft: #2c2c2e;
-  --bb-grey-1: #515154;
-  --bb-grey-2: #6e6e73;
-  --bb-grey-3: #8e8e93;
-  --bb-grey-4: #aeaeb2;
-  --bb-line: rgba(0, 0, 0, 0.08);
-  --bb-line-soft: rgba(0, 0, 0, 0.06);
+  /* shadcn chart palette — Apple system colors (light). Recharts series
+     read these via var(--chart-N) / var(--color-*) so charts flip with the
+     theme. Never .dark selectors in this app (see @custom-variant). */
+  --chart-1: #0071e3;
+  --chart-2: #34c759;
+  --chart-3: #ff9500;
+  --chart-4: #af52de;
+  --chart-5: #ff3b30;
 
-  /* Brand stays orange; Apple blue added for links/focus */
-  --bb-orange-wash: rgba(255, 105, 0, 0.1);
-  --bb-orange-wash-2: rgba(255, 105, 0, 0.07);
-  --apple-blue: #0071e3;
-  --apple-blue-ring: rgba(0, 113, 227, 0.22);
-  --apple-bg: #f5f5f7;
-  --apple-card: #ffffff;
-  --apple-nav: rgba(255, 255, 255, 0.72);
-  --apple-sidebar: rgba(251, 251, 253, 0.92);
-  --apple-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
-  --apple-shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.12);
-  --apple-radius-lg: 16px;
-  --apple-radius-md: 12px;
-  --apple-radius-sm: 10px;
-  --apple-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px -16px rgba(0, 0, 0, 0.12);
+  --shadow-lift: 0 16px 40px -20px rgba(0, 0, 0, 0.22);
+  --shadow-pop: 0 24px 64px -24px rgba(0, 0, 0, 0.28);
 
-  --font-sans: var(--font-inter), -apple-system, "SF Pro Text", "SF Pro Display", "Inter", system-ui, sans-serif;
+  /* Whisper aurora — Apple white needs only a breath of color behind glass */
+  --aurora:
+    radial-gradient(1100px 620px at 8% -10%, rgba(0, 113, 227, 0.05), transparent 60%),
+    radial-gradient(900px 560px at 104% 4%, rgba(175, 82, 222, 0.04), transparent 62%),
+    radial-gradient(1000px 700px at 60% 116%, rgba(90, 200, 250, 0.05), transparent 60%);
 
-  background: var(--apple-bg);
-  color: var(--bb-white);
   color-scheme: light;
+}
+
+/* --------------------------------------------------
+   SEMANTIC TOKENS — DARK
+   -------------------------------------------------- */
+[data-theme="dark"] {
+  --c-canvas: #000000;
+  --c-panel: #000000;
+  --c-panel-2: #0a0a0c;
+  --c-panel-3: #1c1c1e;
+  --c-ink: #ffffff;
+  --c-ink-2: #ebebf5;
+  --c-muted: rgba(235, 235, 245, 0.6);
+  --c-faint: rgba(235, 235, 245, 0.35);
+  --c-hairline: rgba(255, 255, 255, 0.15);
+  --c-accent: #2997ff;
+  --c-accent-strong: #53a9ff;
+  --c-accent-soft: rgba(41, 151, 255, 0.16);
+
+  /* shadcn chart palette — Apple system colors (dark). */
+  --chart-1: #2997ff;
+  --chart-2: #30d158;
+  --chart-3: #ff9f0a;
+  --chart-4: #bf5af2;
+  --chart-5: #ff453a;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 14px 34px -16px rgba(0, 0, 0, 0.5);
+  --shadow-lift: 0 18px 44px -20px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
+
+  /* Flat black — no aurora wash in dark mode */
+  --aurora: none;
+
+  color-scheme: dark;
+}
+
+/* --------------------------------------------------
+   TAILWIND PALETTE OVERRIDES — LIGHT
+   Scoped to the dashboard so marketing keeps defaults.
+   -------------------------------------------------- */
+[data-theme="light"] .dashboard-app {
+  --color-white: var(--c-panel);
+  --color-black: var(--c-ink);
+  --color-neutral-50: #f5f5f7;
+  --color-neutral-100: #e8e8ed;
+  --color-neutral-200: #d2d2d7;
+  --color-neutral-300: #c7c7cc;
+  --color-neutral-400: #aeaeb2;
+  --color-neutral-500: #8e8e93;
+  --color-neutral-600: #6e6e73;
+  --color-neutral-700: #515154;
+  --color-neutral-800: #3a3a3c;
+  --color-neutral-900: #2c2c2e;
+  --color-neutral-950: #1d1d1f;
+
+  /* Apple systemGreen (#34C759) light scale */
+  --color-green-50: #ecf9ef;
+  --color-green-100: #d7f0dd;
+  --color-green-200: #b2e3bd;
+  --color-green-300: #82d392;
+  --color-green-400: #55bd6b;
+  --color-green-500: #34c759;
+  --color-green-600: #26a244;
+  --color-green-700: #1f8437;
+  --color-green-800: #1c6b30;
+  --color-green-900: #183f24;
+  --color-green-950: #0c2415;
+
+  /* Apple systemOrange (#FF9500) light scale */
+  --color-amber-50: #fff5eb;
+  --color-amber-100: #ffe8d1;
+  --color-amber-200: #ffcf9e;
+  --color-amber-300: #ffae63;
+  --color-amber-400: #ff8f2b;
+  --color-amber-500: #ff9500;
+  --color-amber-600: #d97a00;
+  --color-amber-700: #b25e00;
+  --color-amber-800: #8a4a08;
+  --color-amber-900: #5c3408;
+  --color-amber-950: #331d05;
+
+  /* Apple systemRed (#FF3B30) light scale */
+  --color-red-50: #ffefed;
+  --color-red-100: #ffd9d4;
+  --color-red-200: #ffb3ab;
+  --color-red-300: #ff8377;
+  --color-red-400: #ff5a4d;
+  --color-red-500: #ff3b30;
+  --color-red-600: #d92d20;
+  --color-red-700: #b3271e;
+  --color-red-800: #8c231b;
+  --color-red-900: #5c1a14;
+  --color-red-950: #330d0a;
+
+  --color-blue-50: #f0f7ff;
+  --color-blue-100: #dcebfc;
+  --color-blue-200: #b9d9fa;
+  --color-blue-300: #8ac1f6;
+  --color-blue-400: #549df0;
+  --color-blue-500: #1f7ae8;
+  --color-blue-600: #0071e3;
+  --color-blue-700: #0060c9;
+  --color-blue-800: #0052ab;
+  --color-blue-900: #00468f;
+  --color-blue-950: #002d5c;
+
+  /* Apple systemPurple (#AF52DE) light scale */
+  --color-purple-50: #f7eefc;
+  --color-purple-100: #eeddfa;
+  --color-purple-200: #ddbdf5;
+  --color-purple-300: #c693ec;
+  --color-purple-400: #b06fe0;
+  --color-purple-500: #af52de;
+  --color-purple-600: #9340c4;
+  --color-purple-700: #77339e;
+  --color-purple-800: #602a7f;
+  --color-purple-900: #421f58;
+  --color-purple-950: #261334;
+
+  /* Apple systemTeal (#5AC8FA) light scale — cyan aliases below follow it */
+  --color-teal-50: #ecf8fe;
+  --color-teal-100: #d3eefd;
+  --color-teal-200: #a5ddfb;
+  --color-teal-300: #74c8f8;
+  --color-teal-400: #5ac8fa;
+  --color-teal-500: #36b1f0;
+  --color-teal-600: #1f8fd0;
+  --color-teal-700: #1a74ab;
+  --color-teal-800: #185f89;
+  --color-teal-900: #143f59;
+  --color-teal-950: #0b2536;
+}
+
+/* --------------------------------------------------
+   TAILWIND PALETTE OVERRIDES — DARK
+   Ramps invert: 50 = surface tone, 900 = text tone.
+   -------------------------------------------------- */
+[data-theme="dark"] .dashboard-app {
+  --color-white: var(--c-panel);
+  --color-black: var(--c-ink);
+  --color-neutral-50: #0a0a0c;
+  --color-neutral-100: #131315;
+  --color-neutral-200: #1c1c1e;
+  --color-neutral-300: #48484a;
+  --color-neutral-400: #636366;
+  --color-neutral-500: #8e8e93;
+  --color-neutral-600: #aeaeb2;
+  --color-neutral-700: #c7c7cc;
+  --color-neutral-800: #d1d1d6;
+  --color-neutral-900: #f2f2f7;
+  --color-neutral-950: #ffffff;
+
+  /* Apple systemGreen dark (#30D158) inverted scale */
+  --color-green-50: #0e2417;
+  --color-green-100: #12301e;
+  --color-green-200: #184027;
+  --color-green-300: #1f5636;
+  --color-green-400: #297a48;
+  --color-green-500: #35a05c;
+  --color-green-600: #30d158;
+  --color-green-700: #4fd96e;
+  --color-green-800: #7fe394;
+  --color-green-900: #b9efc4;
+  --color-green-950: #e9f9ed;
+
+  /* Apple systemOrange dark (#FF9F0A) inverted scale */
+  --color-amber-50: #271605;
+  --color-amber-100: #331e07;
+  --color-amber-200: #452a0c;
+  --color-amber-300: #5d3a12;
+  --color-amber-400: #7d4f1c;
+  --color-amber-500: #a06a28;
+  --color-amber-600: #c98a37;
+  --color-amber-700: #e8a94e;
+  --color-amber-800: #f2c078;
+  --color-amber-900: #f9dbab;
+  --color-amber-950: #fdeeda;
+
+  /* Apple systemRed dark (#FF453A) inverted scale */
+  --color-red-50: #2a100d;
+  --color-red-100: #371511;
+  --color-red-200: #4a1d17;
+  --color-red-300: #62271f;
+  --color-red-400: #85352a;
+  --color-red-500: #ab4739;
+  --color-red-600: #cb6151;
+  --color-red-700: #e07f6d;
+  --color-red-800: #efa894;
+  --color-red-900: #f8d0c3;
+  --color-red-950: #fde9e2;
+
+  --color-blue-50: #0b1526;
+  --color-blue-100: #10233f;
+  --color-blue-200: #16345c;
+  --color-blue-300: #1f4c82;
+  --color-blue-400: #2b67ab;
+  --color-blue-500: #3b86d4;
+  --color-blue-600: #4f9cf0;
+  --color-blue-700: #66aef5;
+  --color-blue-800: #8cc4f8;
+  --color-blue-900: #b4d9fb;
+  --color-blue-950: #e3f0fd;
+
+  /* Apple systemPurple dark (#BF5AF2) inverted scale */
+  --color-purple-50: #200f2e;
+  --color-purple-100: #2b1440;
+  --color-purple-200: #3a1d55;
+  --color-purple-300: #4d276f;
+  --color-purple-400: #68378f;
+  --color-purple-500: #874bb0;
+  --color-purple-600: #a468cc;
+  --color-purple-700: #bc87da;
+  --color-purple-800: #d2a9e6;
+  --color-purple-900: #e7cff3;
+  --color-purple-950: #f6ebfb;
+
+  /* Apple systemTeal dark (#64D2FF) inverted scale */
+  --color-teal-50: #0b1e29;
+  --color-teal-100: #102939;
+  --color-teal-200: #16374c;
+  --color-teal-300: #1f4c66;
+  --color-teal-400: #2b6688;
+  --color-teal-500: #3a87ad;
+  --color-teal-600: #4ca6cf;
+  --color-teal-700: #64d2ff;
+  --color-teal-800: #8fd2ef;
+  --color-teal-900: #bce4f7;
+  --color-teal-950: #e6f5fd;
+}
+
+/* shadcn token bridge — maps the default shadcn palette onto the Apple
+   system tokens so vendored shadcn components flip with the theme.
+   NOTE: --color-accent intentionally stays Apple blue (menu/item highlight
+   renders blue bg + panel text, like native macOS menus). */
+[data-theme="light"] .dashboard-app,
+[data-theme="dark"] .dashboard-app {
+  --color-background: var(--c-panel);
+  --color-foreground: var(--c-ink);
+  --color-muted: var(--c-panel-2);
+  --color-muted-foreground: var(--c-muted);
+  --color-popover: var(--c-panel);
+  --color-popover-foreground: var(--c-ink);
+  --color-card: var(--c-panel);
+  --color-card-foreground: var(--c-ink);
+  --color-primary: var(--c-ink);
+  --color-primary-foreground: var(--c-panel);
+  --color-secondary: var(--c-panel-2);
+  --color-secondary-foreground: var(--c-ink-2);
+  --color-accent-foreground: var(--c-panel);
+  --color-border: var(--c-hairline);
+  --color-input: var(--c-hairline);
+  --color-ring: var(--c-accent);
+  --color-destructive: var(--color-red-600);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+}
+
+/* Secondary families: only aliases with real usages stay.
+   Used: cyan (3x, follows the Apple teal ramp).
+   Removed (zero usages): gray/zinc/stone/slate, emerald, yellow,
+   orange, rose, pink, fuchsia, indigo. Direct ramps kept:
+   neutral, green, amber, red, blue, purple, teal. */
+[data-theme="light"] .dashboard-app,
+[data-theme="dark"] .dashboard-app {
+  --color-cyan-50: var(--color-teal-50);
+  --color-cyan-100: var(--color-teal-100);
+  --color-cyan-200: var(--color-teal-200);
+  --color-cyan-300: var(--color-teal-300);
+  --color-cyan-400: var(--color-teal-400);
+  --color-cyan-500: var(--color-teal-500);
+  --color-cyan-600: var(--color-teal-600);
+  --color-cyan-700: var(--color-teal-700);
+  --color-cyan-800: var(--color-teal-800);
+  --color-cyan-900: var(--color-teal-900);
+  --color-cyan-950: var(--color-teal-950);
+}
+
+/* --------------------------------------------------
+   EDITORIAL DISPLAY TYPE — shadcn-style Geist headlines
+   (Geist semibold, tight tracking). No serif, no italics.
+   -------------------------------------------------- */
+.font-display {
+  font-family: var(--font-geist-sans), "Geist", "Inter", system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.font-display-italic {
+  font-family: var(--font-geist-sans), "Geist", "Inter", system-ui, sans-serif;
+  font-weight: 600;
+  font-style: normal;
+  letter-spacing: -0.02em;
+}
+
+/* --------------------------------------------------
+   APP SHELL — aurora canvas + type
+   -------------------------------------------------- */
+.dashboard-app {
+  /* shadcn Geist stack first; system fonts only fill gaps on devices without Geist */
+  --font-sans: var(--font-geist-sans), "Geist", "Inter", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "Geist Mono", ui-monospace, "JetBrains Mono", Consolas, monospace;
+
+  background:
+    var(--aurora),
+    var(--c-canvas);
+  background-attachment: fixed;
+  color: var(--c-ink);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-.dashboard-apple ::selection {
-  background: rgba(0, 113, 227, 0.16);
-  color: #1d1d1f;
+.dashboard-app ::selection {
+  background: var(--c-accent-soft);
+  color: var(--c-ink);
 }
 
-.dashboard-apple :focus-visible {
-  outline: 2px solid var(--apple-blue);
+.dashboard-app :focus-visible {
+  outline: 2px solid var(--c-accent);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
-/* Soft premium cards + frosted glass */
-.dashboard-apple .apple-card {
-  background: var(--apple-card);
-  border: 0.5px solid rgba(0, 0, 0, 0.08);
-  border-radius: var(--apple-radius-md);
-  box-shadow: var(--apple-shadow-card);
+/* Numeric discipline — money and counts never wriggle */
+.dashboard-app .tabular-nums,
+.dashboard-app .data-table td,
+.dashboard-app [data-numeric] {
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
-.dashboard-apple .apple-glass {
-  background: rgba(255, 255, 255, 0.7);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  border: 0.5px solid rgba(255, 255, 255, 0.4);
-  box-shadow: var(--apple-shadow-card);
+/* --------------------------------------------------
+   MATERIAL TIERS (solid surfaces — no translucency)
+   1) chrome  — navigation/chrome surfaces (bg-panel)
+   2) pop     — popovers, modals, toasts (bg-panel + shadow-pop)
+   3) card    — opaque content surface (bg-panel + shadow-card)
+   -------------------------------------------------- */
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
-/* Light scrollbars */
-.dashboard-apple ::-webkit-scrollbar {
+/* Shadow utilities driven by theme tokens */
+.dashboard-app .shadow-card {
+  box-shadow: var(--shadow-card);
+}
+.dashboard-app .shadow-lift {
+  box-shadow: var(--shadow-lift);
+}
+.dashboard-app .shadow-pop {
+  box-shadow: var(--shadow-pop);
+}
+
+/* Brand logo swap — dark-text logo on light theme, white logo on dark */
+.dashboard-app .logo-for-light {
+  display: block;
+}
+.dashboard-app .logo-for-dark {
+  display: none;
+}
+[data-theme="dark"] .dashboard-app .logo-for-light {
+  display: none;
+}
+[data-theme="dark"] .dashboard-app .logo-for-dark {
+  display: block;
+}
+
+/* Hidden-scrollbar scroll region (macOS overlay style) — content still
+   scrolls via wheel/touch, but no visible track line. */
+.dashboard-app .scroll-overlay {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.dashboard-app .scroll-overlay::-webkit-scrollbar {
+  display: none;
+}
+.dashboard-app .kbd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--c-panel-2);
+  border: 1px solid var(--c-hairline);
+  box-shadow: 0 1px 2px rgba(20, 24, 38, 0.06);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-muted);
+  white-space: nowrap;
+}
+
+/* Hover lift for cards */
+.dashboard-app .hover-lift {
+  transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.35s ease;
+}
+.dashboard-app .hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lift);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-app .hover-lift:hover {
+    transform: none;
+  }
+}
+
+/* --------------------------------------------------
+   SCROLLBARS
+   -------------------------------------------------- */
+.dashboard-app ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-.dashboard-apple ::-webkit-scrollbar-thumb {
-  background: #d1d1d6;
+.dashboard-app ::-webkit-scrollbar-thumb {
+  background: var(--color-neutral-300);
   border-radius: 8px;
-  border: 2px solid #f5f5f7;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
-.dashboard-apple ::-webkit-scrollbar-track {
+.dashboard-app ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Dashboard tables — light Apple treatment */
-.dashboard-apple .data-table {
-  background: #fff;
-  border: 0.5px solid rgba(0, 0, 0, 0.08);
-  border-radius: 12px;
+/* --------------------------------------------------
+   DATA TABLES — opaque rows, hairline separators
+   -------------------------------------------------- */
+.dashboard-app .data-table {
+  background: var(--c-panel);
+  border: 1px solid var(--c-hairline);
+  border-radius: 18px;
   overflow: hidden;
-  box-shadow: var(--apple-shadow-card);
+  box-shadow: var(--shadow-card);
 }
-.dashboard-apple .data-table thead th {
+.dashboard-app .data-table thead th {
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
   text-transform: none;
-  color: rgba(0, 0, 0, 0.45);
-  background: #f9f9fb;
-  padding: 10px 14px;
-  border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
-  height: 36px;
+  color: var(--c-muted);
+  background: var(--c-panel-2);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--c-hairline);
+  height: 38px;
 }
-.dashboard-apple .data-table tbody td {
-  color: #1d1d1f;
-  border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+.dashboard-app .data-table tbody td {
+  color: var(--c-ink);
+  border-bottom: 1px solid var(--c-hairline);
   font-family: var(--font-sans);
 }
-.dashboard-apple .data-table tbody tr:hover td {
-  background: rgba(0, 0, 0, 0.025);
+.dashboard-app .data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.dashboard-app .data-table tbody tr:hover td {
+  background: var(--c-panel-2);
 }
 @media (max-width: 640px) {
-  .dashboard-apple .data-table tbody tr {
-    background: #fff;
-    border: 0.5px solid rgba(0, 0, 0, 0.08);
+  .dashboard-app .data-table tbody tr {
+    background: var(--c-panel);
+    border: 1px solid var(--c-hairline);
     border-radius: 12px;
-    box-shadow: var(--apple-shadow-card);
+    box-shadow: var(--shadow-card);
   }
-  .dashboard-apple .data-table tbody td::before {
+  .dashboard-app .data-table tbody td::before {
     font-family: var(--font-sans);
     text-transform: none;
     letter-spacing: 0;
     font-size: 12px;
-    color: rgba(0, 0, 0, 0.45);
+    color: var(--c-muted);
   }
 }
 
-/* Skeleton shimmer — light */
-.dashboard-apple .skeleton,
-.dashboard-apple [class*="skeleton"] {
-  background: rgba(0, 0, 0, 0.06) !important;
-  border-radius: 8px;
+/* Skeleton shimmer */
+.dashboard-app .skeleton,
+.dashboard-app [class*="skeleton"] {
+  background: var(--c-panel-3) !important;
+  border-radius: 10px;
+}
+
+/* Toast entrance */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.dashboard-app .toast-item {
+  animation: toast-in 0.28s cubic-bezier(0.25, 1, 0.5, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-app .toast-item {
+    animation: none;
+  }
 }
 
 /* --------------------------------------------------
-   PHASE 4 — legacy page softening (auto Apple-fy remaining routes)
-   These attribute selectors catch old dark cards/buttons/inputs
-   that still use var(--bb-*) utilities, giving them radius +
-   shadow until each page is individually rewritten.
+   LEGACY SOFTENING — auto-restyle old var(--bb-*) bits
    -------------------------------------------------- */
-.dashboard-apple div[class*="bg-[var(--bb-panel)]"][class*="border-[var(--bb-line)]"] {
-  border-radius: 16px;
-  border-color: rgba(0, 0, 0, 0.08);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.12);
+.dashboard-app div[class*="bg-[var(--bb-panel)]"][class*="border-[var(--bb-line)]"] {
+  border-radius: 18px;
+  border-color: var(--c-hairline);
+  box-shadow: var(--shadow-card);
 }
-.dashboard-apple button[class*="bg-[var(--bb-orange)]"],
-.dashboard-apple a[class*="bg-[var(--bb-orange)]"] {
+.dashboard-app button[class*="bg-[var(--bb-orange)]"],
+.dashboard-app a[class*="bg-[var(--bb-orange)]"] {
   border-radius: 999px !important;
 }
-.dashboard-apple button[class*="border-[var(--bb-line)]"],
-.dashboard-apple a[class*="border-[var(--bb-line)]"] {
+.dashboard-app button[class*="border-[var(--bb-line)]"],
+.dashboard-app a[class*="border-[var(--bb-line)]"] {
   border-radius: 999px;
 }
-.dashboard-apple input,
-.dashboard-apple select,
-.dashboard-apple textarea {
-  border-radius: 10px !important;
-  background: #fff !important;
-  border-color: rgba(0, 0, 0, 0.12) !important;
-  color: #1d1d1f !important;
+.dashboard-app input,
+.dashboard-app select,
+.dashboard-app textarea {
+  border-radius: 12px !important;
+  background: var(--c-panel) !important;
+  border-color: var(--c-hairline) !important;
+  color: var(--c-ink) !important;
 }
-.dashboard-apple input::placeholder,
-.dashboard-apple textarea::placeholder {
-  color: rgba(0, 0, 0, 0.35) !important;
+.dashboard-app input::placeholder,
+.dashboard-app textarea::placeholder {
+  color: var(--c-faint) !important;
 }
