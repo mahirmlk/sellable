@@ -135,7 +135,7 @@ class MerchantRegistry:
         """The demo store is a real DB record used by the agent gateway."""
         repo = MerchantRepository(engine=self._engine)
         if repo.get(DEMO_MERCHANT_ID) is None:
-            repo.create(DEMO_MERCHANT_ID, "SELLABLE Demo Store")
+            repo.create(DEMO_MERCHANT_ID, "Sellable store")
         seed_demo_catalog_if_empty(engine=self._engine)
 
     def create_merchant(self, *, name: str) -> tuple[str, MerchantPolicy]:
