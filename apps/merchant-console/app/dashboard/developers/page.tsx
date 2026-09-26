@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Copy,
   Check,
-  RefreshCw,
   ExternalLink,
   KeyRound,
   Plus,
@@ -28,10 +27,24 @@ import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import { DataTable } from "@/components/dashboard/data-table";
+import { RefreshButton } from "@/components/dashboard/commerce-ui";
+import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
+import { toast } from "@/components/dashboard/toasts";
 import {
   Section,
   PartialBanner,
 } from "@/components/dashboard/tier-fallbacks";
+
+const SECONDARY_PILL =
+  "inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
+const SMALL_PILL =
+  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-white border border-black/10 shadow-sm text-[12px] font-medium text-neutral-600 hover:text-neutral-900 hover:shadow transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
+const SMALL_DANGER_PILL =
+  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-red-50 border border-red-200/70 shadow-sm text-[12px] font-medium text-red-700 hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
+const PRIMARY_PILL =
+  "inline-flex items-center gap-2 h-9 px-5 rounded-full bg-ink text-white text-[13px] font-semibold shadow-sm hover:bg-ink-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
+const APPLE_INPUT =
+  "h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow";
 
 export default function DevelopersPage() {
   const [copied, setCopied] = useState<string | null>(null);
@@ -51,6 +64,9 @@ export default function DevelopersPage() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [freshKey, setFreshKey] = useState<{ plaintext: string; prefix: string } | null>(null);
   const [keyActionError, setKeyActionError] = useState<string | null>(null);
+  // Revocation is irreversible — the confirm dialog names the exact key
+  // (label + prefix) before the DELETE goes out.
+  const [revokeTarget, setRevokeTarget] = useState<AgentApiKeyView | null>(null);
 
   const fetchKeys = useCallback(async () => {
     setKeysLoading(true);
@@ -87,32 +103,53 @@ export default function DevelopersPage() {
     }
   };
 
-  const handleRotateKey = async (keyId: string) => {
+  const handleRotateKey = async (key: AgentApiKeyView) => {
     if (busyKey) return;
-    setBusyKey(keyId);
+    setBusyKey(key.key_id);
     setKeyActionError(null);
     try {
-      const created = await rotateAgentKey(keyId);
+      const created = await rotateAgentKey(key.key_id);
       setFreshKey({ plaintext: created.plaintext, prefix: created.key.key_prefix });
+      toast({
+        tone: "success",
+        title: "API key rotated",
+        description: `New secret issued for ${key.label || key.key_prefix} — copy it now, it is shown once.`,
+      });
       await fetchKeys();
     } catch {
       setKeyActionError("Rotation failed — the old key is still active. Try again.");
+      toast({
+        tone: "error",
+        title: "Rotation failed",
+        description: "The old key is still active. Try again.",
+      });
     } finally {
       setBusyKey(null);
     }
   };
 
-  const handleRevokeKey = async (keyId: string) => {
+  const handleRevokeKey = async (key: AgentApiKeyView) => {
     if (busyKey) return;
-    setBusyKey(keyId);
+    setBusyKey(key.key_id);
     setKeyActionError(null);
     try {
-      await revokeAgentKey(keyId);
+      await revokeAgentKey(key.key_id);
+      toast({
+        tone: "success",
+        title: "API key revoked",
+        description: key.label || key.key_prefix,
+      });
       await fetchKeys();
     } catch {
       setKeyActionError("Revocation failed — the key is still active. Try again.");
+      toast({
+        tone: "error",
+        title: "Revocation failed",
+        description: "The key is still active. Try again.",
+      });
     } finally {
       setBusyKey(null);
+      setRevokeTarget(null);
     }
   };
 
@@ -157,14 +194,12 @@ export default function DevelopersPage() {
   ];
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Developers"
-        subtitle="AGENT API · WEBHOOKS · KEYS · DISCOVERY · ENDPOINTS"
+        subtitle="API, webhooks, keys and discovery"
         actions={
-          <button onClick={() => void fetchData()} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-          </button>
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
         }
       />
 
@@ -178,81 +213,85 @@ export default function DevelopersPage() {
       ) : (
         <>
           {/* Agent API */}
-          <Section title="AGENT API" hint="EXISTING BACKEND CONTRACTS ONLY">
-            <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)] leading-relaxed mb-3">
-              External AI buyers authenticate with an agent key (<span className="font-[var(--font-mono)] text-[0.72rem]">X-Agent-Key</span>) on
+          <Section title="Agent API" hint="Existing backend contracts only">
+            <div className="text-[14px] text-neutral-600 leading-relaxed mb-3">
+              External AI buyers authenticate with an agent key (<code className="rounded-[6px] bg-neutral-100 border border-black/[0.06] px-1.5 py-0.5 text-[12px] text-neutral-700">X-Agent-Key</code>) on
               discovery and transaction endpoints. Transactional requests use timestamp + nonce + body-bound HMAC signatures with replay protection.
             </div>
-            <div className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-3)]">
-              Base URL: <span className="text-[var(--bb-white)]">{apiBaseUrl()}</span>
+            <div className="text-[13px] text-neutral-500">
+              Base URL: <span className="font-medium text-neutral-900">{apiBaseUrl()}</span>
             </div>
           </Section>
 
           {/* Webhooks */}
-          <Section title="WEBHOOKS" hint="FROM LIVE PAYMENT RAIL STATUS">
+          <Section title="Webhooks" hint="From live payment rail status">
             {status ? (
-              <div className="space-y-2 font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">
+              <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="uppercase text-[var(--bb-grey-4)]">Webhook configured</span>
-                  <span className={status.payment_rail.webhook_configured ? "text-green-400" : "text-amber-400"}>
-                    {status.payment_rail.webhook_configured ? "YES" : "NO"}
+                  <span className="text-[13px] text-neutral-500">Webhook configured</span>
+                  <span className={`text-[13px] font-semibold ${status.payment_rail.webhook_configured ? "text-green-700" : "text-amber-600"}`}>
+                    {status.payment_rail.webhook_configured ? "Yes" : "No"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
-                  <span className="uppercase text-[var(--bb-grey-4)]">Last verified</span>
-                  <span className="text-[var(--bb-white)]">
+                  <span className="text-[13px] text-neutral-500">Last verified</span>
+                  <span className="text-[13px] font-medium text-neutral-900 tabular-nums">
                     {status.payment_rail.webhook_last_verified_at
                       ? new Date(status.payment_rail.webhook_last_verified_at).toLocaleString("en-IN", { hour12: false })
                       : "—"}
                   </span>
                 </div>
-                <div className="font-[var(--font-sans)] text-[0.75rem] text-[var(--bb-grey-3)] leading-relaxed pt-1">
+                <div className="text-[13px] text-neutral-500 leading-relaxed pt-1">
                   Settlement is confirmed exclusively by the signed provider webhook — the browser can never mark an order paid itself.
                 </div>
               </div>
             ) : (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Webhook status unavailable — system status could not be loaded.</div>
+              <div className="text-[14px] text-neutral-500">Webhook status unavailable — system status could not be loaded.</div>
             )}
           </Section>
 
           {/* API keys — primary surface */}
-          <Section title="API KEYS" hint="PRIMARY MANAGEMENT SURFACE · PLAINTEXT SHOWN ONCE">
+          <Section title="API keys" hint="Primary management surface · plaintext shown once">
             {keyActionError && (
-              <div className="mb-3 px-4 py-2.5 border border-red-400/30 bg-red-400/5">
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-red-400">{keyActionError}</span>
+              <div className="mb-4">
+                <ErrorBanner message={keyActionError} />
               </div>
             )}
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">Keys are stored hashed server-side.</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <span className="text-[12px] text-neutral-400">Keys are stored hashed server-side.</span>
               <div className="flex items-center gap-2">
-                <button onClick={() => void fetchKeys()} disabled={keysLoading} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-                  <RefreshCw size={10} className={keysLoading ? "animate-spin" : ""} /> REFRESH
-                </button>
-                <button onClick={() => setCreateOpen((v) => !v)} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-orange)]/40 bg-[var(--bb-orange)]/10 font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:bg-[var(--bb-orange)]/20 transition-all cursor-pointer">
-                  {createOpen ? <Ban size={10} /> : <Plus size={10} />} {createOpen ? "CANCEL" : "GENERATE KEY"}
-                </button>
+                <RefreshButton onRefresh={() => void fetchKeys()} loading={keysLoading} />
+                {createOpen ? (
+                  <button onClick={() => setCreateOpen((v) => !v)} className={SECONDARY_PILL}>
+                    <Ban size={13} /> Cancel
+                  </button>
+                ) : (
+                  <button onClick={() => setCreateOpen((v) => !v)} className={PRIMARY_PILL}>
+                    <Plus size={13} /> Generate key
+                  </button>
+                )}
               </div>
             </div>
 
             {createOpen && (
-              <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] px-4 py-3 mb-3 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <label className="flex flex-col gap-1">
-                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">LABEL (OPTIONAL)</span>
+              <div className="rounded-2xl bg-panel-2 border border-black/[0.06] px-4 py-4 mb-4 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[13px] text-neutral-500">Label (optional)</span>
                     <input
                       value={keyLabel}
                       onChange={(e) => setKeyLabel(e.target.value)}
                       placeholder="perplexity shopping agent"
-                      className="font-[var(--font-sans)] text-[0.75rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+                      className={`${APPLE_INPUT} w-full`}
                     />
                   </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">BUYER AGENT ID (OPTIONAL)</span>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[13px] text-neutral-500">Buyer agent ID (optional)</span>
                     <input
                       value={keyBuyerId}
                       onChange={(e) => setKeyBuyerId(e.target.value.toLowerCase())}
                       placeholder="perplexity_buyer_01"
-                      className="font-[var(--font-mono)] text-[0.72rem] bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] px-3 py-2 placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)]"
+                      className={`${APPLE_INPUT} w-full tabular-nums`}
                     />
                   </label>
                 </div>
@@ -260,63 +299,61 @@ export default function DevelopersPage() {
                   <button
                     onClick={() => void handleCreateKey()}
                     disabled={busyKey === "__create__"}
-                    className="inline-flex items-center gap-2 h-[32px] px-4 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase hover:bg-[var(--bb-orange-bright)] transition-colors cursor-pointer disabled:opacity-50"
+                    className={PRIMARY_PILL}
                   >
-                    <KeyRound size={11} /> {busyKey === "__create__" ? "GENERATING…" : "GENERATE"}
+                    <KeyRound size={13} /> {busyKey === "__create__" ? "Generating…" : "Generate"}
                   </button>
                 </div>
               </div>
             )}
 
             {freshKey && (
-              <div className="px-4 py-3 border border-green-400/30 bg-green-400/5 mb-3">
+              <div className="rounded-2xl bg-green-50 border border-green-200/60 px-4 py-4 mb-4">
                 <div className="flex items-start gap-2 mb-2">
-                  <ShieldAlert size={14} className="text-green-400 mt-0.5 shrink-0" />
-                  <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.08em] uppercase text-green-400">COPY NOW — SHOWN ONLY THIS ONCE ({freshKey.prefix}…)</span>
+                  <ShieldAlert size={14} className="text-green-700 mt-0.5 shrink-0" />
+                  <span className="text-[13px] font-medium text-green-800">Copy now — shown only this once ({freshKey.prefix}…)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-white)] bg-[var(--bb-black)] border border-[var(--bb-line)] px-3 py-2 overflow-x-auto whitespace-nowrap">{freshKey.plaintext}</code>
-                  <button onClick={() => handleCopy(freshKey.plaintext)} className="inline-flex items-center gap-1 h-[32px] px-3 border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-2)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
-                    {copied === freshKey.plaintext ? <><Check size={10} /> COPIED</> : <><Copy size={10} /> COPY</>}
+                  <code className="flex-1 rounded-[10px] bg-neutral-50 border border-black/[0.06] text-neutral-800 text-[13px] px-3 py-2 overflow-x-auto whitespace-nowrap tabular-nums">{freshKey.plaintext}</code>
+                  <button onClick={() => handleCopy(freshKey.plaintext)} className={SMALL_PILL}>
+                    {copied === freshKey.plaintext ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
                   </button>
                 </div>
               </div>
             )}
 
             {keysLoading ? (
-              <div className="py-6 text-center font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">Loading keys…</div>
+              <div className="py-6 text-center text-[13px] text-neutral-400">Loading keys…</div>
             ) : keysError ? (
-              <div className="px-4 py-3 border border-amber-400/30 bg-amber-400/5">
-                <span className="font-[var(--font-mono)] text-[0.62rem] text-amber-400">{keysError}</span>
-              </div>
+              <PartialBanner message={keysError} />
             ) : keys.length === 0 ? (
               <div className="py-6 text-center">
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] mb-1">No agent keys issued yet.</div>
-                <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-4)]">Generate a key and hand it to an external AI buyer.</div>
+                <div className="text-[15px] font-semibold text-neutral-900 mb-1">No agent keys issued yet</div>
+                <div className="text-[14px] text-neutral-500">Generate a key and hand it to an external AI buyer.</div>
               </div>
             ) : (
               keys.map((k) => (
-                <div key={k.key_id} className="py-3 border-b border-[var(--bb-line-soft)] last:border-b-0 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+                <div key={k.key_id} className="py-4 border-b border-black/[0.06] last:border-b-0 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex items-center gap-3 mb-1 flex-wrap">
-                      <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)]">{k.key_prefix}…</span>
-                      <span className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase px-1.5 py-0.5 border ${k.revoked_at ? "border-red-400/40 text-red-400" : "border-green-400/40 text-green-400"}`}>
-                        {k.revoked_at ? "REVOKED" : "ACTIVE"}
+                      <span className="text-[13px] font-semibold text-neutral-900 tabular-nums">{k.key_prefix}…</span>
+                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${k.revoked_at ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
+                        {k.revoked_at ? "Revoked" : "Active"}
                       </span>
-                      {k.label && <span className="font-[var(--font-sans)] text-[0.72rem] text-[var(--bb-grey-2)] truncate">{k.label}</span>}
+                      {k.label && <span className="text-[13px] text-neutral-600 truncate">{k.label}</span>}
                     </div>
-                    <div className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)]">
+                    <div className="text-[12px] text-neutral-400">
                       {k.buyer_agent_id ? `buyer: ${k.buyer_agent_id} · ` : ""}created {new Date(k.created_at).toLocaleString()}
                       {k.last_used_at ? ` · last used ${new Date(k.last_used_at).toLocaleString()}` : " · never used"}
                     </div>
                   </div>
                   {!k.revoked_at && (
                     <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => void handleRotateKey(k.key_id)} disabled={busyKey !== null} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-                        <RotateCw size={10} /> {busyKey === k.key_id ? "WORKING…" : "ROTATE"}
+                      <button onClick={() => void handleRotateKey(k)} disabled={busyKey !== null} className={SMALL_PILL}>
+                        <RotateCw size={12} /> {busyKey === k.key_id ? "Working…" : "Rotate"}
                       </button>
-                      <button onClick={() => void handleRevokeKey(k.key_id)} disabled={busyKey !== null} className="inline-flex items-center gap-1 h-[28px] px-2 border border-red-400/30 bg-red-400/5 font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-red-400 hover:bg-red-400/10 transition-all cursor-pointer disabled:opacity-50">
-                        <Ban size={10} /> REVOKE
+                      <button onClick={() => setRevokeTarget(k)} disabled={busyKey !== null} className={SMALL_DANGER_PILL}>
+                        <Ban size={12} /> Revoke
                       </button>
                     </div>
                   )}
@@ -326,7 +363,7 @@ export default function DevelopersPage() {
           </Section>
 
           {/* Agent discovery */}
-          <Section title="AGENT DISCOVERY" hint="LIVE MANIFEST">
+          <Section title="Agent discovery" hint="Live manifest">
             {manifest ? (
               <div className="space-y-2">
                 {[{ label: "Manifest", path: "/.well-known/agents.json" }, ...Object.entries(discovery).map(([label, path]) => ({ label, path }))].map((row) => {
@@ -334,16 +371,16 @@ export default function DevelopersPage() {
                   return (
                     <div key={row.path} className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
-                        <span className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)] break-all">{row.path}</span>
-                        <span className="ml-3 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">{row.label}</span>
+                        <span className="text-[13px] font-medium text-neutral-900 break-all">{row.path}</span>
+                        <span className="ml-3 text-[12px] text-neutral-500">{row.label}</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => handleCopy(url)} className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
-                          {copied === url ? <><Check size={10} /> COPIED</> : <><Copy size={10} /> COPY</>}
+                        <button onClick={() => handleCopy(url)} className={SMALL_PILL}>
+                          {copied === url ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
                         </button>
                         {!row.path.includes("{") && (
-                          <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 h-[28px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all">
-                            <ExternalLink size={10} /> OPEN
+                          <a href={url} target="_blank" rel="noopener noreferrer" className={SMALL_PILL}>
+                            <ExternalLink size={12} /> Open
                           </a>
                         )}
                       </div>
@@ -352,7 +389,7 @@ export default function DevelopersPage() {
                 })}
               </div>
             ) : (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Discovery surfaces unknown — the live manifest could not be fetched.</div>
+              <div className="text-[14px] text-neutral-500">Discovery surfaces unknown — the live manifest could not be fetched.</div>
             )}
           </Section>
 
@@ -370,10 +407,12 @@ export default function DevelopersPage() {
                 <tbody>
                   {endpointRows.map((row) => (
                     <tr key={`${row.kind}-${row.path}`}>
-                      <td data-label="Endpoint" className="font-[var(--font-mono)] text-[0.65rem]">{row.name}</td>
-                      <td data-label="Path" className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)] break-all">{row.path}</td>
+                      <td data-label="Endpoint" className="text-[13px] font-medium text-neutral-900">{row.name}</td>
+                      <td data-label="Path" className="text-[13px] text-neutral-600 break-all tabular-nums">{row.path}</td>
                       <td data-label="Kind">
-                        <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">{row.kind}</span>
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${row.kind === "TRANSACTION" ? "bg-blue-50 text-blue-700" : "bg-neutral-100 text-neutral-600"}`}>
+                          {row.kind === "TRANSACTION" ? "Transaction" : "Discovery"}
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -383,6 +422,26 @@ export default function DevelopersPage() {
           )}
         </>
       )}
+
+      {/* Revocation confirm — names the exact key before the irreversible DELETE. */}
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        tone="danger"
+        title={
+          revokeTarget
+            ? `Revoke ${revokeTarget.label ? `“${revokeTarget.label}”` : "agent key"} (${revokeTarget.key_prefix}…)?`
+            : ""
+        }
+        description="Agent requests using this key will start failing immediately. This cannot be undone."
+        confirmLabel="Revoke key"
+        busy={revokeTarget !== null && busyKey === revokeTarget.key_id}
+        onConfirm={() => {
+          if (revokeTarget) void handleRevokeKey(revokeTarget);
+        }}
+        onCancel={() => {
+          if (!busyKey) setRevokeTarget(null);
+        }}
+      />
     </div>
   );
 }

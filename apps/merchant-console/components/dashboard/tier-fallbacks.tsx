@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export { PartialBanner } from "./commerce-ui";
 
@@ -24,18 +25,18 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section className="border border-[var(--bb-line)] overflow-hidden">
-      <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between gap-3">
-        <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
+    <section className="rounded-[18px] bg-card text-card-foreground border border-hairline shadow-card overflow-hidden">
+      <CardHeader className="flex items-center justify-between gap-3 rounded-t-[18px] border-b border-hairline bg-panel-2 px-6 py-4">
+        <CardTitle className="font-display text-[21px] leading-none tracking-[-0.005em] text-ink">
           {title}
-        </div>
+        </CardTitle>
         {hint && (
-          <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-4)] text-right">
+          <div className="text-[13px] text-muted text-right">
             {hint}
           </div>
         )}
-      </div>
-      <div className="px-5 py-4">{children}</div>
+      </CardHeader>
+      <CardContent className="px-6 py-5">{children}</CardContent>
     </section>
   );
 }
@@ -50,17 +51,24 @@ export function Tabs<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2" role="tablist">
+    <div className="inline-flex flex-wrap gap-1 rounded-full bg-black/[0.06] p-1" role="tablist">
       {options.map((o) => (
         <button
           key={o.value}
           role="tab"
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
-          className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase px-3 py-1.5 border transition-all cursor-pointer ${
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+            e.preventDefault();
+            const idx = options.findIndex((x) => x.value === value);
+            const next = e.key === "ArrowRight" ? (idx + 1) % options.length : (idx - 1 + options.length) % options.length;
+            onChange(options[next].value);
+          }}
+          className={`h-8 px-4 rounded-full text-[13px] font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-accent ${
             value === o.value
-              ? "border-[var(--bb-orange)] bg-[var(--bb-orange)]/10 text-[var(--bb-orange)]"
-              : "border-[var(--bb-line)] bg-transparent text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)]"
+              ? "bg-white shadow-sm text-neutral-900"
+              : "text-neutral-500 hover:text-neutral-900"
           }`}
         >
           {o.label}

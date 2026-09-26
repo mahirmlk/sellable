@@ -8,8 +8,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft } from "lucide-react";
 import { StatusBadge } from "@/components/dashboard/status-badge";
+import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatPaiseDecimal, formatTimeAgo, formatTimestamp } from "@/lib/formatters";
 import {
@@ -36,6 +36,13 @@ export default function BuyerDetailPage() {
   const [events, setEvents] = useState<LedgerEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Ledger pagination: offset = global events fetched so far; dedupe by
+  // event_id is the contract (live-tail has no SSE here, just paged reads).
+  const [feedOffset, setFeedOffset] = useState(0);
+  const [feedHasMore, setFeedHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const BUYER_FEED_PAGE = 200;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -43,10 +50,13 @@ export default function BuyerDetailPage() {
     try {
       const [txData, eventData] = await Promise.all([
         getConsoleTransactions(),
-        getConsoleEvents(200).catch(() => null),
+        getConsoleEvents(BUYER_FEED_PAGE, 0).catch(() => null),
       ]);
       setTransactions(txData);
-      setEvents(eventData?.events ?? []);
+      const fetched = eventData?.events ?? [];
+      setEvents(fetched);
+      setFeedOffset(fetched.length);
+      setFeedHasMore(fetched.length >= BUYER_FEED_PAGE);
     } catch (err) {
       setTransactions([]);
       setEvents([]);
@@ -59,6 +69,26 @@ export default function BuyerDetailPage() {
       setLoading(false);
     }
   }, []);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !feedHasMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await getConsoleEvents(BUYER_FEED_PAGE, feedOffset);
+      const incoming = data.events ?? [];
+      setEvents((prev) => {
+        const seen = new Set(prev.map((e) => e.event_id));
+        const fresh = incoming.filter((e) => !seen.has(e.event_id));
+        return fresh.length > 0 ? [...prev, ...fresh] : prev;
+      });
+      setFeedOffset((prev) => prev + incoming.length);
+      if (incoming.length < BUYER_FEED_PAGE) setFeedHasMore(false);
+    } catch {
+      // Keep the button visible so the user can retry.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, feedHasMore, feedOffset]);
 
   useEffect(() => {
     const t = window.setTimeout(() => void fetchData(), 0);
@@ -88,19 +118,19 @@ export default function BuyerDetailPage() {
     return latest?.channel === "human_chat" ? "human_chat" : "agent_to_agent";
   }, [buyerOrders]);
 
-  // Recent activity: ledger events on this buyer's order traces.
+  // Recent activity: ledger events on this buyer's order traces (grows as
+  // older global windows are paged in via Load more).
   const activity = useMemo(() => {
     const traces = new Set(buyerOrders.map((t) => t.trace_id));
     return events
       .filter((e) => traces.has(e.trace_id))
-      .sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp))
-      .slice(0, 10);
+      .sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
   }, [events, buyerOrders]);
 
   if (loading) {
     return (
-      <div className="p-6 space-y-6">
-        <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">Loading buyer…</div>
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+        <div className="text-[13px] text-neutral-500">Loading buyer…</div>
         <TableSkeleton rows={6} />
       </div>
     );
@@ -108,13 +138,10 @@ export default function BuyerDetailPage() {
 
   if (loadError) {
     return (
-      <div className="p-6 space-y-6">
-        <Link
-          href="/dashboard/buyers"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
-        >
-          <ArrowLeft size={14} /> BACK TO BUYERS
-        </Link>
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+        <Breadcrumbs
+          items={[{ label: "Buyers", href: "/dashboard/buyers" }, { label: buyerId, mono: true }]}
+        />
         <ErrorBanner message={loadError} onRetry={() => void fetchData()} />
       </div>
     );
@@ -122,13 +149,10 @@ export default function BuyerDetailPage() {
 
   if (buyerOrders.length === 0) {
     return (
-      <div className="p-6 space-y-6">
-        <Link
-          href="/dashboard/buyers"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
-        >
-          <ArrowLeft size={14} /> BACK TO BUYERS
-        </Link>
+      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+        <Breadcrumbs
+          items={[{ label: "Buyers", href: "/dashboard/buyers" }, { label: buyerId, mono: true }]}
+        />
         <EmptyState
           title="Buyer not found"
           message="No orders exist for this buyer in your store."
@@ -138,22 +162,19 @@ export default function BuyerDetailPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <div className="flex items-center justify-between gap-3">
-        <Link
-          href="/dashboard/buyers"
-          className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
-        >
-          <ArrowLeft size={14} /> BACK TO BUYERS
-        </Link>
+        <Breadcrumbs
+          items={[{ label: "Buyers", href: "/dashboard/buyers" }, { label: buyerId, mono: true }]}
+        />
         <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
       </div>
 
       {/* Buyer header: id, type, orders, total value */}
-      <div className="border border-[var(--bb-line)] p-6">
+      <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)] break-all">
+            <h1 className="text-[22px] font-semibold tracking-tight text-neutral-900 break-all">
               {buyerId}
             </h1>
             <div className="mt-2">
@@ -162,18 +183,14 @@ export default function BuyerDetailPage() {
           </div>
           <div className="flex items-center gap-8 shrink-0">
             <div>
-              <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-1.5">
-                ORDERS
-              </div>
-              <div className="font-[var(--font-mono)] text-[1.35rem] text-[var(--bb-white)] tabular-nums">
+              <div className="text-[12px] text-neutral-500 mb-1.5">Orders</div>
+              <div className="text-[20px] font-semibold text-neutral-900 tabular-nums">
                 {buyerOrders.length}
               </div>
             </div>
             <div>
-              <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-1.5">
-                TOTAL VALUE
-              </div>
-              <div className="font-[var(--font-mono)] text-[1.35rem] text-[var(--bb-orange)] tabular-nums">
+              <div className="text-[12px] text-neutral-500 mb-1.5">Total value</div>
+              <div className="text-[20px] font-semibold text-neutral-900 tabular-nums">
                 {formatPaiseDecimal(totalPaise)}
               </div>
             </div>
@@ -185,10 +202,8 @@ export default function BuyerDetailPage() {
         {/* Order history */}
         <div>
           <div className="flex items-baseline gap-2.5 mb-3">
-            <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-orange)] tabular-nums">01</span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)]">
-              ORDER HISTORY
-            </span>
+            <span className="text-[12px] font-medium text-neutral-400 tabular-nums">01</span>
+            <span className="text-[13px] font-medium text-neutral-600">Order history</span>
           </div>
           <DataTable>
             {mapped.map((tx, i) => {
@@ -197,15 +212,15 @@ export default function BuyerDetailPage() {
                 <Link
                   key={tx.id}
                   href={`/dashboard/transactions/${tx.id}`}
-                  className={`px-5 py-3.5 flex items-center justify-between gap-3 hover:bg-[var(--bb-panel)] transition-colors group ${
-                    i < mapped.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
+                  className={`px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-neutral-50 transition-colors group ${
+                    i < mapped.length - 1 ? "border-b border-black/[0.06]" : ""
                   }`}
                 >
                   <div className="min-w-0">
-                    <div className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-grey-1)] group-hover:text-[var(--bb-white)] transition-colors truncate">
+                    <div className="text-[13px] font-medium text-neutral-700 group-hover:text-neutral-900 transition-colors truncate">
                       #{tx.id}
                     </div>
-                    <div className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] mt-0.5 truncate">
+                    <div className="text-[12px] text-neutral-400 mt-0.5 truncate">
                       {itemsSummary(
                         tx.items,
                         raw?.items?.map((it) => ({ sku: it.sku, quantity: it.quantity }))
@@ -228,33 +243,47 @@ export default function BuyerDetailPage() {
         {/* Recent activity for this buyer */}
         <div>
           <div className="flex items-baseline gap-2.5 mb-3">
-            <span className="font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-orange)] tabular-nums">02</span>
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)]">
-              RECENT ACTIVITY
-            </span>
+            <span className="text-[12px] font-medium text-neutral-400 tabular-nums">02</span>
+            <span className="text-[13px] font-medium text-neutral-600">Recent activity</span>
           </div>
           {activity.length === 0 ? (
-            <div className="border border-[var(--bb-line)] px-5 py-8 text-center font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-4)]">
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card px-6 py-8 text-center text-[13px] text-neutral-400">
               No ledger activity recorded for this buyer&apos;s orders yet.
             </div>
           ) : (
-            <DataTable>
-              {activity.map((e, i) => (
-                <div
-                  key={e.event_id}
-                  className={`px-5 py-[11px] flex items-center gap-3 ${
-                    i < activity.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""
-                  }`}
-                >
-                  <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] w-[58px] flex-shrink-0 tabular-nums">
-                    {formatTimestamp(e.timestamp)}
-                  </span>
-                  <span className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)]">
-                    {e.actor} — {e.action}
-                  </span>
-                </div>
-              ))}
-            </DataTable>
+            <>
+              <DataTable>
+                {activity.map((e, i) => (
+                  <div
+                    key={e.event_id}
+                    className={`px-6 py-[11px] flex items-center gap-3 ${
+                      i < activity.length - 1 ? "border-b border-black/[0.06]" : ""
+                    }`}
+                  >
+                    <span className="text-[12px] text-neutral-400 w-[58px] flex-shrink-0 tabular-nums">
+                      {formatTimestamp(e.timestamp)}
+                    </span>
+                    <span className="text-[13px] text-neutral-600">
+                      {e.actor} — {e.action}
+                    </span>
+                  </div>
+                ))}
+              </DataTable>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="font-mono text-[0.6rem] text-muted tabular-nums">
+                  Showing {activity.length} events
+                </span>
+                {feedHasMore && (
+                  <button
+                    onClick={() => void handleLoadMore()}
+                    disabled={loadingMore}
+                    className="inline-flex items-center h-9 px-4 rounded-full bg-panel border border-hairline text-[13px] font-medium text-ink-2 hover:text-ink transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {loadingMore ? "LOADING…" : "LOAD MORE"}
+                  </button>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>

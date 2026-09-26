@@ -1,39 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { getAgentsStatus, type AgentsStatusResponse, type ComponentState } from "@/lib/api";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { NAV_SECTIONS } from "./nav-config";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
-const STATE_DOT: Record<ComponentState, string> = {
-  CONNECTED: "bg-green-500",
-  UNCONFIGURED: "bg-yellow-400",
-  DEGRADED: "bg-amber-400",
-  ERROR: "bg-red-400",
-  OFFLINE: "bg-red-400",
-};
-
-function HealthRow({ name, state, detail, compact }: { name: string; state?: ComponentState | null; detail?: string; compact?: boolean }) {
-  const dot = state ? STATE_DOT[state] : "bg-[var(--bb-grey-4)]";
-  return (
-    <div
-      className={`flex items-center justify-between gap-2 ${compact ? "lg:justify-center lg:w-full" : ""}`}
-      title={detail || undefined}
-    >
-      <span className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.12em] uppercase text-[var(--bb-grey-4)] ${compact ? "lg:hidden" : ""}`}>
-        {name}
-      </span>
-      <span className={`w-[5px] h-[5px] ${dot}`} />
-    </div>
-  );
-}
+/* Apple-style sidebar: white frosted glass, small caps group labels,
+   soft pill rows, ink count badge. Assumes the .dashboard-app scope. */
 
 function MobileIcon({ open }: { open: boolean }) {
   return (
-    <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" strokeWidth="1.25" aria-hidden>
+    <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden>
       {open ? <path d="M3 3l10 10M13 3L3 13" /> : <path d="M2 4h12M2 8h12M2 12h12" />}
     </svg>
   );
@@ -51,211 +37,234 @@ export function DashboardSidebar({
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [status, setStatus] = useState<AgentsStatusResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    getAgentsStatus()
-      .then((s) => {
-        if (!cancelled) setStatus(s);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const isActive = (href: string) => {
     if (href === "/dashboard") return pathname === "/dashboard";
     return pathname === href || pathname.startsWith(`${href}/`);
   };
 
-  let linkIndex = 0;
-
   return (
     <>
-      {/* Mobile hamburger */}
+      {/* Mobile hamburger — floating glass button */}
       <button
-        className="lg:hidden fixed top-4 left-4 z-[60] w-10 h-10 flex items-center justify-center bg-[var(--bb-panel)] border border-[var(--bb-line)] text-[var(--bb-white)] cursor-pointer"
+        className="lg:hidden fixed top-4 left-4 z-[60] w-10 h-10 flex items-center justify-center rounded-full bg-panel border border-hairline shadow-lift text-ink cursor-pointer active:scale-95 transition-transform"
         onClick={() => setMobileOpen(!mobileOpen)}
         aria-label={mobileOpen ? "Close menu" : "Open menu"}
       >
         <MobileIcon open={mobileOpen} />
       </button>
 
-      {/* Mobile overlay */}
-      {mobileOpen && (
-        <div
-          className="lg:hidden fixed inset-0 z-40 bg-black/60"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
+      {/* Mobile drawer — same nav as the desktop rail, always expanded. */}
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetContent
+          side="left"
+          showCloseButton={false}
+          className="w-[240px] max-w-[85vw] gap-0 border-r border-hairline bg-panel p-0"
+        >
+          <SheetTitle className="sr-only">Dashboard navigation</SheetTitle>
+          <SidebarBody
+            collapsed={false}
+            showCollapseControls={false}
+            badges={badges}
+            pathname={pathname}
+            isActive={isActive}
+            onNavigate={() => setMobileOpen(false)}
+          />
+        </SheetContent>
+      </Sheet>
 
-      {/* Sidebar — collapsed mode is desktop-only (lg:) so the mobile drawer
-          stays a full-width list even when the user collapsed the rail. */}
+      {/* Desktop rail — collapsed mode is desktop-only (hidden below lg so
+          the mobile drawer stays a full-width list even when the user
+          collapsed the rail). */}
       <aside
-        className={`fixed top-0 left-0 z-50 h-full w-[240px] bg-[var(--bb-black)] border-r border-[var(--bb-line)] flex flex-col transition-[transform,width] duration-300 ease-in-out ${
-          collapsed ? "lg:w-[56px]" : ""
-        } ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
+        data-lenis-prevent
+        className={`fixed top-0 left-0 z-50 hidden h-full w-[240px] bg-panel border-r border-hairline lg:flex flex-col transition-[width] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+          collapsed ? "lg:w-[64px]" : ""
+        }`}
       >
-        {/* Logo (compact monogram replaces the wordmark when collapsed) */}
-        <div
-          className={`h-[60px] flex items-center border-b border-[var(--bb-line)] ${
-            collapsed ? "lg:justify-center lg:px-0" : "px-5"
-          }`}
-        >
-          <Link href="/" className={`flex items-center gap-2.5 ${collapsed ? "lg:hidden" : ""}`} aria-label="SELLABLE home">
-            <Image
-              src="/sellable-logo.png"
-              alt="SELLABLE"
-              width={130}
-              height={28}
-              className="h-[22px] w-auto"
-              priority
-            />
-          </Link>
-          {collapsed && (
-            <Link
-              href="/"
-              className="hidden lg:flex items-center justify-center w-full h-full"
-              aria-label="SELLABLE home"
-            >
-              <span className="font-[var(--font-mono)] text-[0.85rem] text-[var(--bb-orange)] border border-[var(--bb-orange)]/40 px-[7px] py-[2px]">
-                S
-              </span>
-            </Link>
-          )}
-        </div>
+        <SidebarBody
+          collapsed={collapsed}
+          showCollapseControls
+          onToggle={onToggle}
+          badges={badges}
+          pathname={pathname}
+          isActive={isActive}
+        />
+      </aside>
+    </>
+  );
+}
 
-        {/* Environment badge */}
-        <div
-          className={`py-3 border-b border-[var(--bb-line)] flex items-center gap-2 ${
-            collapsed ? "lg:justify-center lg:px-0" : "px-5"
-          }`}
-          title="Test Mode"
-        >
-          <span className="w-[5px] h-[5px] bg-yellow-400 animate-[blink_2s_ease-in-out_infinite]" />
-          <span className={`font-[var(--font-mono)] text-[0.52rem] tracking-[0.16em] uppercase text-[var(--bb-grey-3)] ${collapsed ? "lg:hidden" : ""}`}>
-            Test Mode
-          </span>
-        </div>
+function SidebarBody({
+  collapsed,
+  showCollapseControls,
+  onToggle,
+  onNavigate,
+  badges,
+  pathname,
+  isActive,
+}: {
+  collapsed: boolean;
+  showCollapseControls: boolean;
+  onToggle?: () => void;
+  onNavigate?: () => void;
+  badges?: Record<string, number | string>;
+  pathname: string;
+  isActive: (href: string) => boolean;
+}) {
+  const navRef = useRef<HTMLElement>(null);
 
-        {/* Nav — rendered from nav-config. When collapsed, icons only with
-            hover name tooltips. Collapsed + lg drops the scroll clipping
-            (overflow-x-hidden would clip the hover labels). */}
-        <nav
-          className={`flex-1 overflow-y-auto py-2 ${collapsed ? "lg:overflow-visible" : "overflow-x-hidden"}`}
-          aria-label="Dashboard navigation"
+  // Keep the active destination visible when the route changes.
+  useEffect(() => {
+    navRef.current
+      ?.querySelector('[aria-current="page"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [pathname]);
+
+  return (
+    <>
+      {/* Logo row — expanded shows the theme-aware brand mark plus the
+          collapse control; collapsed shows an explicit expand button so
+          the rail can always be reopened. */}
+      <div
+        className={`h-[56px] flex items-center border-b border-hairline ${
+          collapsed ? "lg:justify-center lg:px-0" : "pl-4 pr-2 justify-between"
+        }`}
+      >
+        <Link
+          href="/"
+          onClick={onNavigate}
+          className={`flex items-center min-w-0 ${collapsed ? "lg:hidden" : ""}`}
+          aria-label="SELLABLE home"
         >
-          {NAV_SECTIONS.map((section) => (
-            <div key={section.label} className="mb-1">
-              <div
-                className={`px-5 pt-3 pb-1 font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] ${
-                  collapsed ? "lg:hidden" : ""
-                }`}
-                aria-hidden
+          <Image
+            src="/sellable-logo-dark.png"
+            alt="SELLABLE"
+            width={130}
+            height={28}
+            className="logo-for-light h-[22px] w-auto"
+            priority
+          />
+          <Image
+            src="/sellable-logo.png"
+            alt="SELLABLE"
+            width={130}
+            height={28}
+            className="logo-for-dark h-[22px] w-auto"
+            priority
+          />
+        </Link>
+        {showCollapseControls && !collapsed && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                type="button"
+                onClick={onToggle}
+                aria-label="Collapse sidebar"
+                aria-pressed={false}
+                className="hidden lg:flex items-center justify-center size-8 rounded-full text-faint hover:text-ink hover:bg-ink/[0.05] transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent"
               >
-                {section.label}
-              </div>
-              {section.items.map((link) => {
-                const Icon = link.icon;
-                const active = isActive(link.href);
-                const badge =
-                  link.badgeKey && badges ? badges[link.badgeKey] : undefined;
-                const index = ++linkIndex;
-                return (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    onClick={() => setMobileOpen(false)}
-                    className={`relative flex items-center gap-3 group transition-colors duration-150 cursor-pointer ${
-                      collapsed ? "lg:justify-center lg:px-0 lg:py-[11px]" : "pl-5 pr-3 py-[9px]"
-                    } ${
-                      active ? "text-[var(--bb-white)]" : "text-[var(--bb-grey-2)] hover:text-[var(--bb-white)]"
-                    }`}
-                    aria-current={active ? "page" : undefined}
-                    // Accessible name for the icon-only rail: screen readers and
-                    // native tooltips must never depend on the hover label CSS.
-                    aria-label={collapsed ? link.label : undefined}
-                    title={collapsed ? link.label : undefined}
-                  >
+                <PanelLeftClose size={17} aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent
+                side="right"
+                className="bg-ink text-panel text-[12px]"
+              >
+                Collapse sidebar
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+        {showCollapseControls && collapsed && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger
+                type="button"
+                onClick={onToggle}
+                aria-label="Expand sidebar"
+                aria-pressed
+                className="hidden lg:flex items-center justify-center size-9 rounded-full text-muted hover:text-ink hover:bg-ink/[0.05] transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <PanelLeftOpen size={18} aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent
+                side="right"
+                className="bg-ink text-panel text-[12px]"
+              >
+                Expand sidebar
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+      </div>
+
+      {/* Nav — independent overlay-scroll region (wheel/touch scroll here
+          never chains into the page). Active item scrolls into view. */}
+      <nav
+        ref={navRef}
+        data-lenis-prevent
+        className={`scroll-overlay flex-1 overflow-y-auto overscroll-contain py-2.5 px-2 ${collapsed ? "lg:overflow-visible lg:px-2" : "overflow-x-hidden"}`}
+        aria-label="Dashboard navigation"
+      >
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label} className="mb-2">
+            <div
+              className={`px-3 pt-1 pb-1 text-[11px] font-semibold tracking-[0.08em] uppercase text-faint ${
+                collapsed ? "lg:hidden" : ""
+              }`}
+              aria-hidden
+            >
+              {section.label}
+            </div>
+            <div className="space-y-px">
+            {section.items.map((link) => {
+              const Icon = link.icon;
+              const active = isActive(link.href);
+              const badge =
+                link.badgeKey && badges ? badges[link.badgeKey] : undefined;
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={onNavigate}
+                  className={`relative flex items-center gap-2.5 rounded-[12px] min-h-[36px] px-3 transition-all duration-150 cursor-pointer focus-visible:outline-2 focus-visible:outline-accent ${
+                    collapsed ? "lg:justify-center lg:px-0" : ""
+                  } ${
+                    active
+                      ? "bg-panel text-ink shadow-lift"
+                      : "text-muted hover:bg-ink/[0.04] hover:text-ink"
+                  }`}
+                  aria-current={active ? "page" : undefined}
+                  aria-label={collapsed ? link.label : undefined}
+                  title={collapsed ? link.label : undefined}
+                >
+                  <Icon
+                    size={17}
+                    className={`shrink-0 transition-colors ${active ? "text-ink" : "text-faint"}`}
+                  />
+                  <span className={`text-[14px] leading-tight tracking-[-0.005em] truncate ${collapsed ? "lg:hidden" : ""}`}>
+                    {link.label}
+                  </span>
+                  {badge !== undefined && badge !== 0 && badge !== "" && (
                     <span
-                      className={`absolute left-0 top-1/2 -translate-y-1/2 w-[2px] transition-all duration-150 ${
-                        active ? "h-[18px] bg-[var(--bb-orange)]" : "h-0 group-hover:h-[18px] bg-[var(--bb-grey-4)]"
-                      }`}
-                    />
-                    <span
-                      className={`font-[var(--font-mono)] text-[0.52rem] w-[16px] tabular-nums ${
-                        collapsed ? "lg:hidden" : ""
-                      } ${
-                        active ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-4)]"
-                      }`}
+                      className={`ml-auto min-w-[22px] h-[22px] inline-flex items-center justify-center rounded-full px-1.5 text-[12px] font-semibold tabular-nums bg-ink text-panel-2 ${collapsed ? "lg:hidden" : ""}`}
                     >
-                      {String(index).padStart(2, "0")}
+                      {badge}
                     </span>
-                    <Icon
-                      size={15}
-                      className={`shrink-0 transition-colors ${active ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-3)] group-hover:text-[var(--bb-grey-1)]"}`}
-                    />
-                    <span className={`font-[var(--font-sans)] text-[0.82rem] ${collapsed ? "lg:hidden" : ""}`}>
+                  )}
+                  {/* Hover label — only rendered when the rail is collapsed. */}
+                  {collapsed && (
+                    <span className="hidden lg:flex absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 z-[70] items-center px-3 py-1.5 rounded-[10px] bg-panel border border-hairline shadow-lift text-[13px] font-medium text-ink whitespace-nowrap pointer-events-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150">
                       {link.label}
                     </span>
-                    {badge !== undefined && (
-                      <span
-                        className={`ml-auto font-[var(--font-mono)] text-[0.58rem] px-1.5 py-0.5 border border-[var(--bb-orange)]/40 text-[var(--bb-orange)] ${collapsed ? "lg:hidden" : ""}`}
-                      >
-                        {badge}
-                      </span>
-                    )}
-                    {/* Hover label — only rendered when the rail is collapsed.
-                        z-index sits inside the aside's own stacking context, so
-                        labels always paint above page content. */}
-                    {collapsed && (
-                      <span className="hidden lg:flex absolute left-[calc(100%+12px)] top-1/2 -translate-y-1/2 z-[70] items-center px-2 py-1 bg-[var(--bb-panel)] border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-white)] whitespace-nowrap pointer-events-none opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-150 shadow-lg">
-                        {link.label}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
+                  )}
+                </Link>
+              );
+            })}
             </div>
-          ))}
-        </nav>
-
-        {/* Collapse toggle (desktop only) */}
-        <button
-          onClick={onToggle}
-          className={`hidden lg:flex items-center w-full h-[36px] border-t border-[var(--bb-line)] text-[var(--bb-grey-4)] hover:text-[var(--bb-white)] transition-colors cursor-pointer ${
-            collapsed ? "justify-center" : "justify-end px-4"
-          }`}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-pressed={collapsed}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? (
-            <ChevronRight size={14} />
-          ) : (
-            <>
-              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.12em] uppercase mr-1.5">COLLAPSE</span>
-              <ChevronLeft size={14} />
-            </>
-          )}
-        </button>
-
-        {/* System health strip */}
-        <div
-          className={`py-4 border-t border-[var(--bb-line)] space-y-[7px] ${
-            collapsed ? "lg:px-0 lg:flex lg:flex-col lg:items-center" : "px-5"
-          }`}
-        >
-          <div className={`font-[var(--font-mono)] text-[0.45rem] tracking-[0.18em] uppercase text-[var(--bb-grey-4)] mb-2 ${collapsed ? "lg:hidden" : ""}`}>
-            System
           </div>
-          <HealthRow compact={collapsed} name="Gateway" state={status?.agent_gateway.state} detail={status?.agent_gateway.detail} />
-          <HealthRow compact={collapsed} name="Policy" state={status?.policy_engine.state} detail={status?.policy_engine.detail} />
-          <HealthRow compact={collapsed} name="Ledger" state={status?.ledger.state} detail={status?.ledger.detail} />
-        </div>
-      </aside>
+        ))}
+      </nav>
     </>
   );
 }

@@ -1,19 +1,27 @@
+import { Skeleton as ShadcnSkeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
 export function SkeletonLine({ className = "" }: { className?: string }) {
-  return <div className={`skeleton ${className}`} />;
+  return (
+    <ShadcnSkeleton
+      aria-hidden
+      className={cn("rounded-lg bg-black/[0.06]", className)}
+    />
+  );
 }
 
 export function SkeletonCard() {
   return (
-    <div className="border border-[var(--bb-line)] p-5 space-y-3">
+    <div className="rounded-2xl bg-panel border border-black/[0.05] p-6 space-y-3 shadow-card">
       <SkeletonLine className="h-3 w-24" />
-      <SkeletonLine className="h-8 w-32" />
+      <SkeletonLine className="h-7 w-32 rounded-lg" />
     </div>
   );
 }
 
 export function SkeletonRow() {
   return (
-    <div className="px-5 py-4 flex items-center gap-4">
+    <div className="px-6 py-4 flex items-center gap-4" aria-hidden>
       <SkeletonLine className="h-3 w-16" />
       <SkeletonLine className="h-3 w-24" />
       <SkeletonLine className="h-3 w-20" />
@@ -24,14 +32,14 @@ export function SkeletonRow() {
 
 export function SkeletonTable({ rows = 5 }: { rows?: number }) {
   return (
-    <div className="border border-[var(--bb-line)] overflow-hidden">
-      <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
+    <div className="rounded-2xl bg-panel border border-black/[0.05] overflow-hidden shadow-card" role="status" aria-label="Loading">
+      <div className="px-6 py-4 border-b border-black/[0.06] bg-panel-2">
         <SkeletonLine className="h-3 w-32" />
       </div>
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
-          className={`px-5 py-4 ${i < rows - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}`}
+          className={`px-6 py-4 ${i < rows - 1 ? "border-b border-black/[0.05]" : ""}`}
         >
           <div className="flex items-center gap-4">
             <SkeletonLine className="h-3 w-20" />
@@ -47,13 +55,13 @@ export function SkeletonTable({ rows = 5 }: { rows?: number }) {
 
 export function DashboardSkeleton() {
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]" aria-hidden>
       <div className="space-y-2">
-        <SkeletonLine className="h-6 w-40" />
-        <SkeletonLine className="h-3 w-64" />
+        <SkeletonLine className="h-7 w-48 rounded-lg" />
+        <SkeletonLine className="h-4 w-72" />
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        {Array.from({ length: 5 }).map((_, i) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
           <SkeletonCard key={i} />
         ))}
       </div>

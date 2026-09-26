@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Store, AlertCircle } from "lucide-react";
+import { Loader2, Store } from "lucide-react";
 import { onboardMerchant, ApiError } from "@/lib/api";
+import { ErrorBanner } from "@/components/dashboard/error-banner";
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -42,34 +43,28 @@ export default function OnboardingPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-canvas">
       <div className="w-full max-w-[440px]">
-        <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] overflow-hidden">
-          <div className="h-[2px] bg-[var(--bb-orange)] w-full" />
+        <div className="rounded-3xl bg-white border border-black/[0.06] shadow-card overflow-hidden">
           <form onSubmit={handleSubmit} className="p-7 space-y-5">
-            <div className="flex items-center gap-2.5 mb-1">
-              <Store size={18} className="text-[var(--bb-orange)]" />
-              <h1 className="font-[var(--font-sans)] text-[1.2rem] tracking-[-0.02em] text-[var(--bb-white)]">
+            <div className="flex items-center gap-3 mb-1">
+              <span className="flex items-center justify-center size-10 rounded-2xl bg-blue-50 shrink-0" aria-hidden>
+                <Store size={18} className="text-ink" />
+              </span>
+              <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-neutral-900">
                 Create your store
               </h1>
             </div>
-            <p className="font-[var(--font-mono)] text-[0.65rem] leading-relaxed text-[var(--bb-grey-3)]">
+            <p className="text-[14px] leading-relaxed text-neutral-500">
               Your verified account doesn&apos;t have a merchant store yet. Name your store to
               continue — you&apos;ll get your own catalog, policy, ledger, and analytics. No demo
               data is involved.
             </p>
 
-            {error && (
-              <div className="flex items-start gap-2.5 border border-red-500/30 bg-red-500/[0.07] px-4 py-3">
-                <AlertCircle size={14} className="text-red-400 mt-[1px] shrink-0" />
-                <span className="font-[var(--font-mono)] text-[0.65rem] leading-relaxed text-red-300">
-                  {error}
-                </span>
-              </div>
-            )}
+            {error && <ErrorBanner message={error} />}
 
-            <div className="space-y-2">
-              <label className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
+            <div className="space-y-1.5">
+              <label className="text-[13px] text-neutral-500">
                 Store name
               </label>
               <input
@@ -81,18 +76,18 @@ export default function OnboardingPage() {
                 maxLength={80}
                 autoFocus
                 placeholder="e.g. Acme Desk Supplies"
-                className="w-full h-[44px] px-3.5 bg-[var(--bb-black)] border border-[var(--bb-line)] text-[var(--bb-white)] font-[var(--font-mono)] text-[0.8rem] placeholder:text-[var(--bb-grey-4)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors"
+                className="w-full h-11 rounded-[12px] bg-white border border-black/[0.12] text-[15px] text-neutral-900 px-3.5 placeholder:text-neutral-400 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full h-[46px] inline-flex items-center justify-center gap-2.5 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.7rem] tracking-[0.14em] uppercase font-semibold hover:bg-[var(--bb-orange-bright)] transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="w-full h-11 inline-flex items-center justify-center gap-2 rounded-full bg-ink text-white text-[15px] font-semibold hover:bg-ink-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.99]"
             >
               {loading ? (
                 <>
-                  <Loader2 size={16} className="animate-spin" /> Creating store...
+                  <Loader2 size={16} className="animate-spin" /> Creating store…
                 </>
               ) : (
                 "Create store"

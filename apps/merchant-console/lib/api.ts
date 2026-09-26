@@ -927,8 +927,22 @@ export async function createConsoleProduct(body: {
 
 // --- Console commerce flow (merchant JWT, never agent keys) ---
 
-export async function refundOrder(orderId: string, reason = "merchant_initiated"): Promise<{ status: string; order_id: string }> {
-  return apiFetch<{ status: string; order_id: string }>(`/orders/${orderId}/refund?reason=${encodeURIComponent(reason)}`, {
+export async function refundOrder(
+  orderId: string,
+  reason = "merchant_initiated",
+  options?: { amountPaise?: number; idempotencyKey?: string }
+): Promise<{ status: string; order_id: string }> {
+  const params = new URLSearchParams({ reason });
+  if (options?.amountPaise !== undefined) params.set("amount_paise", String(options.amountPaise));
+  if (options?.idempotencyKey) params.set("idempotency_key", options.idempotencyKey);
+  return apiFetch<{ status: string; order_id: string }>(`/orders/${orderId}/refund?${params.toString()}`, {
+    method: "POST",
+  });
+}
+
+/** Mark a paid order FULFILLED (merchant confirmation of delivery). */
+export async function fulfillOrder(orderId: string): Promise<{ status: string; order_id: string }> {
+  return apiFetch<{ status: string; order_id: string }>(`/console/orders/${orderId}/fulfill`, {
     method: "POST",
   });
 }

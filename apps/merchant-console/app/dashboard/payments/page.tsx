@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { RefreshCw, ArrowRight } from "lucide-react";
+import { ArrowRight, Download } from "lucide-react";
 import {
   getConsoleTransactions,
   getAgentsStatus,
@@ -19,8 +19,18 @@ import {
   Section,
   PartialBanner,
 } from "@/components/dashboard/tier-fallbacks";
+import { RefreshButton, FilterTabs, SavedViewsBar } from "@/components/dashboard/commerce-ui";
+import { PaymentBadge } from "@/components/dashboard/status-badge";
+import { exportToCsv } from "@/lib/csv";
+import { toast } from "@/components/dashboard/toasts";
 
 type Bucket = "CAPTURED" | "FAILED" | "PENDING" | "NONE";
+
+type BucketFilter = "ALL" | Bucket;
+
+interface PaymentView {
+  bucket: BucketFilter;
+}
 
 function bucketOf(tx: ConsoleTransaction): Bucket {
   const s = (tx.payment_status ?? "").toUpperCase();
@@ -39,6 +49,7 @@ export default function PaymentsPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [partialError, setPartialError] = useState<string | null>(null);
+  const [bucket, setBucket] = useState<BucketFilter>("ALL");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -73,15 +84,45 @@ export default function PaymentsPage() {
   const failed = records.filter((r) => r.bucket === "FAILED").length;
   const pending = records.filter((r) => r.bucket === "PENDING").length;
 
+  const visible = useMemo(
+    () => (bucket === "ALL" ? records : records.filter((r) => r.bucket === bucket)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [transactions, bucket]
+  );
+
+  const handleExport = useCallback(() => {
+    const rows = visible.map(({ tx, bucket: b }) => ({
+      order_id: tx.order_id,
+      amount_inr: (tx.amount_paise / 100).toFixed(2),
+      status: b,
+      provider_order_id: tx.payment_order_id ?? "",
+      payment_id: tx.payment_id ?? "",
+      updated_at: tx.created_at,
+    }));
+    exportToCsv("payments.csv", rows);
+    toast({ tone: "success", title: "Exported payments.csv", description: `${rows.length} rows` });
+  }, [visible]);
+
+  const applyView = useCallback((v: PaymentView) => {
+    setBucket(v.bucket);
+  }, []);
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <PageHeader
         title="Payments"
-        subtitle="PROVIDER PAYMENT RECORDS · DERIVED FROM TRANSACTIONS"
+        subtitle="Payment records from your transactions"
         actions={
-          <button onClick={() => void fetchData()} disabled={loading} className="inline-flex items-center gap-2 h-[32px] px-3 border border-[var(--bb-line)] bg-[var(--bb-panel)] font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer disabled:opacity-50">
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
-          </button>
+          <>
+            <button
+              onClick={handleExport}
+              disabled={visible.length === 0}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
+            >
+              <Download size={14} /> Export
+            </button>
+            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+          </>
         }
       />
 
@@ -94,29 +135,30 @@ export default function PaymentsPage() {
         <EmptyState title="Payments unavailable" message="Transaction data could not be loaded from the backend." />
       ) : (
         <>
-          <Section title="PAYMENT RAIL" hint="FROM LIVE SYSTEM STATUS">
+          <Section title="Payment rail" hint="Live system status">
             {rail ? (
-              <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-2)] leading-relaxed">
-                Provider {rail.provider} · {rail.mode} · {rail.configured ? "CONFIGURED" : "NOT CONFIGURED"} ·{" "}
-                webhook {rail.webhook_configured ? "CONFIGURED" : "NOT CONFIGURED"}
+              <div className="text-[14px] text-neutral-600 leading-relaxed">
+                Provider <span className="font-medium text-neutral-900">{rail.provider}</span> · {rail.mode} ·{" "}
+                {rail.configured ? "Configured" : "Not configured"} · webhook{" "}
+                {rail.webhook_configured ? "configured" : "not configured"}
                 {rail.webhook_last_verified_at && (
                   <> · last verified {new Date(rail.webhook_last_verified_at).toLocaleString("en-IN", { hour12: false })}</>
                 )}
               </div>
             ) : (
-              <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-3)]">Payment rail status unavailable.</div>
+              <div className="text-[14px] text-neutral-500">Payment rail status unavailable.</div>
             )}
           </Section>
 
-          <div className="grid grid-cols-3 gap-4 stagger-child">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {[
-              { label: "Captured", value: captured, tone: "text-green-400" },
-              { label: "Failed", value: failed, tone: "text-red-400" },
-              { label: "Pending", value: pending, tone: "text-yellow-400" },
+              { label: "Captured", value: captured },
+              { label: "Failed", value: failed },
+              { label: "Pending", value: pending },
             ].map((s) => (
-              <div key={s.label} className="border border-[var(--bb-line)] p-4 bg-[var(--bb-panel)]">
-                <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-3">{s.label}</div>
-                <div className={`font-[var(--font-mono)] text-[1.35rem] leading-none tabular-nums ${s.tone}`}>{s.value}</div>
+              <div key={s.label} className="rounded-[18px] bg-panel border border-hairline shadow-card p-5 transition-all duration-200 hover:-translate-y-px">
+                <div className="text-[13px] font-medium text-neutral-500 mb-2">{s.label}</div>
+                <div className="text-[28px] font-semibold leading-none tracking-tight tabular-nums text-neutral-900">{s.value}</div>
               </div>
             ))}
           </div>
@@ -127,6 +169,30 @@ export default function PaymentsPage() {
               message="Payment records appear here once orders reach the payment stage — start a checkout in AI Sales."
             />
           ) : (
+            <>
+              <FilterTabs<BucketFilter>
+                tabs={[
+                  { key: "ALL", label: "All", count: records.length },
+                  { key: "CAPTURED", label: "Captured", count: captured },
+                  { key: "FAILED", label: "Failed", count: failed },
+                  { key: "PENDING", label: "Pending", count: pending },
+                ]}
+                active={bucket}
+                onChange={setBucket}
+              />
+
+              <SavedViewsBar<PaymentView>
+                storageKey="payments"
+                current={{ bucket }}
+                onApply={applyView}
+              />
+
+              {visible.length === 0 ? (
+                <EmptyState
+                  title="No payments match"
+                  message="No payment records match the current filter."
+                />
+              ) : (
             <DataTable>
               <table>
                 <thead>
@@ -140,20 +206,18 @@ export default function PaymentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {records.map(({ tx, bucket }) => (
+                  {visible.map(({ tx, bucket }) => (
                     <tr key={tx.order_id}>
-                      <td data-label="Order" className="font-[var(--font-mono)] text-[0.7rem]">{tx.order_id}</td>
-                      <td data-label="Amount" className="font-[var(--font-mono)] tabular-nums">{formatPaise(tx.amount_paise)}</td>
+                      <td data-label="Order" className="text-[13px] text-neutral-500 tabular-nums">{tx.order_id}</td>
+                      <td data-label="Amount" className="text-[15px] font-semibold text-neutral-900 tabular-nums">{formatPaise(tx.amount_paise)}</td>
                       <td data-label="Status">
-                        <span className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase ${bucket === "CAPTURED" ? "text-green-400" : bucket === "FAILED" ? "text-red-400" : "text-yellow-400"}`}>
-                          {bucket}
-                        </span>
+                        <PaymentBadge status={bucket} />
                       </td>
-                      <td data-label="Provider order" className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-3)]">{tx.payment_order_id ?? "—"}</td>
-                      <td data-label="Updated" className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)]">{formatTimeAgo(tx.created_at)}</td>
+                      <td data-label="Provider order" className="text-[13px] text-neutral-500 tabular-nums">{tx.payment_order_id ?? "—"}</td>
+                      <td data-label="Updated" className="text-[12px] text-neutral-400">{formatTimeAgo(tx.created_at)}</td>
                       <td data-label="Open">
-                        <Link href={`/dashboard/transactions/${tx.order_id}`} className="inline-flex items-center gap-1 font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-orange)] hover:text-[var(--bb-orange-bright)]">
-                          VIEW <ArrowRight size={10} />
+                        <Link href={`/dashboard/transactions/${tx.order_id}`} className="inline-flex items-center gap-1 text-[13px] font-medium text-accent-strong hover:underline">
+                          View <ArrowRight size={12} />
                         </Link>
                       </td>
                     </tr>
@@ -161,6 +225,8 @@ export default function PaymentsPage() {
                 </tbody>
               </table>
             </DataTable>
+              )}
+            </>
           )}
         </>
       )}

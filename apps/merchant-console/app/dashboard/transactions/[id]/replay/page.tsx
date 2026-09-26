@@ -1,9 +1,9 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, ShieldCheck, ShieldAlert, XCircle, RefreshCw } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { ShieldCheck, ShieldAlert, XCircle, RefreshCw, Download } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { ActorBadge } from "@/components/dashboard/actor-badge";
 import { formatTimestamp } from "@/lib/formatters";
 import { type LedgerEvent } from "@/lib/types/domain";
@@ -11,6 +11,8 @@ import { getConsoleTransactionDetail, type LedgerEvent as ApiLedgerEvent, type C
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { exportToCsv } from "@/lib/csv";
+import { toast } from "@/components/dashboard/toasts";
 
 interface ReplayStage {
   key: string;
@@ -65,8 +67,8 @@ function decisionOf(event: LedgerEvent): string {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">{label}</div>
-      <div className="font-[var(--font-mono)] text-[0.7rem] text-[var(--bb-white)] break-all">{children}</div>
+      <div className="text-[12px] text-neutral-500 mb-1">{label}</div>
+      <div className="text-[13px] text-neutral-900 break-all">{children}</div>
     </div>
   );
 }
@@ -134,21 +136,36 @@ export default function ReplayPage() {
 
   const selected = txEvents.find((e) => e.eventId === selectedId) ?? null;
 
+  const handleExport = useCallback(() => {
+    const rows = txEvents.map((e) => ({
+      time: e.timestamp,
+      actor: e.actor,
+      action: e.action,
+      reasoning: e.reasoningSummary ?? "",
+      policy_refs: (e.policyRefs ?? []).join(";"),
+      provider_ref: e.provider_ref ?? "",
+      event_id: e.eventId,
+    }));
+    exportToCsv(`replay_${id}_events.csv`, rows);
+    toast({ tone: "success", title: `Exported replay_${id}_events.csv`, description: `${rows.length} rows` });
+  }, [txEvents, id]);
+
   return (
-    <div className="p-6 space-y-6">
-      <Link
-        href={`/dashboard/transactions/${id}`}
-        className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] transition-colors"
-      >
-        <ArrowLeft size={14} /> BACK TO TRANSACTION
-      </Link>
+    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+      <Breadcrumbs
+        items={[
+          { label: "Orders", href: "/dashboard/transactions" },
+          { label: `#${id}`, href: `/dashboard/transactions/${id}` },
+          { label: "Replay" },
+        ]}
+      />
 
       <div className="stagger-child">
-        <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">
-          Transaction Replay
+        <h1 className="text-[22px] font-semibold tracking-tight text-neutral-900">
+          Transaction replay
         </h1>
-        <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">
-          {id} · COMPLETE DECISION AND PAYMENT TRAIL
+        <p className="text-[13px] text-neutral-500 mt-1">
+          {id} · Complete decision and payment trail
         </p>
       </div>
 
@@ -164,11 +181,11 @@ export default function ReplayPage() {
       ) : (
         <>
           {isDenied && (
-            <div className="border border-red-400/30 bg-red-400/5 p-5 flex items-start gap-3">
-              <XCircle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="rounded-2xl bg-red-50 border border-red-200/60 p-6 flex items-start gap-3">
+              <XCircle size={18} className="text-red-700 flex-shrink-0 mt-0.5" />
               <div>
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-red-400 mb-1">DENIED TRANSACTION</div>
-                <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-2)] leading-relaxed">
+                <div className="mb-1"><span className="inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-red-50 text-red-700 border border-red-200/60">Denied transaction</span></div>
+                <div className="text-[13px] text-neutral-600 leading-relaxed">
                   The agent proposal was rejected by the deterministic Policy Engine. No Razorpay order was created and no money moved. The proposal is not an executed financial action.
                 </div>
               </div>
@@ -176,11 +193,11 @@ export default function ReplayPage() {
           )}
 
           {isFailed && (
-            <div className="border border-red-400/30 bg-red-400/5 p-5 flex items-start gap-3">
-              <ShieldAlert size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="rounded-2xl bg-red-50 border border-red-200/60 p-6 flex items-start gap-3">
+              <ShieldAlert size={18} className="text-red-700 flex-shrink-0 mt-0.5" />
               <div>
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-red-400 mb-1">FAILED TRANSACTION</div>
-                <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-2)] leading-relaxed">
+                <div className="mb-1"><span className="inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-red-50 text-red-700 border border-red-200/60">Failed transaction</span></div>
+                <div className="text-[13px] text-neutral-600 leading-relaxed">
                   The payment attempt failed, was classified, and either retried within the bounded limit or aborted cleanly. No duplicate settlement occurred.
                 </div>
               </div>
@@ -188,23 +205,23 @@ export default function ReplayPage() {
           )}
 
           {isPaid && (
-            <div className="border border-green-400/30 bg-green-400/5 p-5 flex items-start gap-3">
-              <ShieldCheck size={18} className="text-green-400 flex-shrink-0 mt-0.5" />
+            <div className="rounded-2xl bg-green-50 border border-green-200/60 p-6 flex items-start gap-3">
+              <ShieldCheck size={18} className="text-green-700 flex-shrink-0 mt-0.5" />
               <div>
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-green-400 mb-1">SUCCESSFUL TRANSACTION</div>
-                <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-2)] leading-relaxed">
-                  The full loop completed: intent → discovery → catalog → quote → negotiation → upsell → policy ALLOW → consent → Razorpay order → verified webhook → PAID.
+                <div className="mb-1"><span className="inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-green-50 text-green-700 border border-green-200/60">Successful transaction</span></div>
+                <div className="text-[13px] text-neutral-600 leading-relaxed">
+                  The full loop completed: intent → discovery → catalog → quote → negotiation → upsell → policy allow → consent → Razorpay order → verified webhook → paid.
                 </div>
               </div>
             </div>
           )}
 
           {isRefunded && (
-            <div className="border border-purple-400/30 bg-purple-400/5 p-5 flex items-start gap-3">
-              <ShieldCheck size={18} className="text-purple-400 flex-shrink-0 mt-0.5" />
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-6 flex items-start gap-3">
+              <ShieldCheck size={18} className="text-neutral-500 flex-shrink-0 mt-0.5" />
               <div>
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-purple-400 mb-1">REFUNDED TRANSACTION</div>
-                <div className="font-[var(--font-sans)] text-[0.78rem] text-[var(--bb-grey-2)] leading-relaxed">
+                <div className="mb-1"><span className="inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-neutral-100 text-neutral-700">Refunded transaction</span></div>
+                <div className="text-[13px] text-neutral-600 leading-relaxed">
                   The order was captured and later refunded through the provider rail. The refund event below carries the provider refund reference.
                 </div>
               </div>
@@ -213,18 +230,27 @@ export default function ReplayPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
             {/* Timeline */}
-            <div className="border border-[var(--bb-line)] overflow-hidden stagger-child">
-              <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)] flex items-center justify-between gap-3">
-                <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
-                  TIMELINE — {stages.length} STAGES · {txEvents.length} EVENTS
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden stagger-child">
+              <div className="px-6 py-4 border-b border-black/[0.06] flex items-center justify-between gap-3">
+                <div className="text-[15px] font-semibold text-neutral-900">
+                  Timeline — {stages.length} stages · {txEvents.length} events
                 </div>
-                <button onClick={fetchData} className="inline-flex items-center gap-1 h-[26px] px-2 border border-[var(--bb-line)] bg-transparent font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-all cursor-pointer">
-                  <RefreshCw size={10} /> REFRESH
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleExport}
+                    disabled={txEvents.length === 0}
+                    className="inline-flex items-center gap-1 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-600 hover:bg-neutral-50 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Download size={12} /> Export
+                  </button>
+                  <button onClick={fetchData} className="inline-flex items-center gap-1 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-600 hover:bg-neutral-50 transition-all cursor-pointer">
+                    <RefreshCw size={10} /> Refresh
+                  </button>
+                </div>
               </div>
               {stages.map(({ stage, events }, i) => (
-                <div key={stage.key} className={i < stages.length - 1 ? "border-b border-[var(--bb-line-soft)]" : ""}>
-                  <div className="px-5 pt-3 pb-1 font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-4)]">
+                <div key={stage.key} className={i < stages.length - 1 ? "border-b border-black/[0.06]" : ""}>
+                  <div className="px-6 pt-3 pb-1 text-[12px] text-neutral-400">
                     {String(i + 1).padStart(2, "0")} · {stage.label}
                   </div>
                   {events.map((event) => {
@@ -233,20 +259,20 @@ export default function ReplayPage() {
                       <button
                         key={event.eventId}
                         onClick={() => setSelectedId(event.eventId)}
-                        className={`w-full text-left px-5 py-2.5 flex items-center gap-3 transition-colors cursor-pointer border-l-2 ${
+                        className={`w-full text-left px-6 py-2.5 flex items-center gap-3 transition-colors cursor-pointer border-l-2 ${
                           active
-                            ? "border-[var(--bb-orange)] bg-[var(--bb-orange)]/5"
-                            : "border-transparent hover:bg-[var(--bb-panel)]"
+                            ? "border-hairline bg-ink/5"
+                            : "border-transparent hover:bg-neutral-50"
                         }`}
                       >
-                        <span className="font-[var(--font-mono)] text-[0.55rem] text-[var(--bb-grey-4)] shrink-0 w-[62px]">
+                        <span className="text-[12px] text-neutral-400 shrink-0 w-[62px] tabular-nums">
                           {formatTimestamp(event.timestamp)}
                         </span>
-                        <span className="font-[var(--font-mono)] text-[0.68rem] text-[var(--bb-white)] truncate flex-1">
+                        <span className="text-[13px] text-neutral-900 truncate flex-1">
                           {event.action}
                         </span>
                         {event.policyRefs.length > 0 && (
-                          <span className="hidden sm:inline font-[var(--font-mono)] text-[0.48rem] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)] shrink-0">
+                          <span className="hidden sm:inline text-[12px] font-medium px-2.5 py-1 rounded-full bg-neutral-100 text-neutral-600 shrink-0">
                             {event.policyRefs[0]}
                           </span>
                         )}
@@ -258,42 +284,42 @@ export default function ReplayPage() {
             </div>
 
             {/* Selected event */}
-            <div className="border border-[var(--bb-line)] overflow-hidden lg:sticky lg:top-4">
-              <div className="px-5 py-3 border-b border-[var(--bb-line)] bg-[var(--bb-panel)]">
-                <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">SELECTED EVENT</div>
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden lg:sticky lg:top-4">
+              <div className="px-6 py-4 border-b border-black/[0.06]">
+                <div className="text-[15px] font-semibold text-neutral-900">Selected event</div>
               </div>
               {!selected ? (
-                <div className="px-5 py-8 text-center font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">
+                <div className="px-6 py-8 text-center text-[13px] text-neutral-400">
                   Select an event in the timeline.
                 </div>
               ) : (
-                <div className="px-5 py-4 space-y-4">
+                <div className="px-6 py-4 space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Actor</div>
+                      <div className="text-[12px] text-neutral-500 mb-1">Actor</div>
                       <ActorBadge actor={selected.actor} />
                     </div>
                     <Field label="Action">{selected.action}</Field>
                   </div>
                   <Field label="Decision">{decisionOf(selected)}</Field>
                   <div>
-                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Reason</div>
-                    <div className="font-[var(--font-sans)] text-[0.8rem] text-[var(--bb-grey-2)] leading-relaxed">
+                    <div className="text-[12px] text-neutral-500 mb-1">Reason</div>
+                    <div className="text-[13px] text-neutral-600 leading-relaxed">
                       {selected.reasoningSummary ?? "No reasoning recorded for this event."}
                     </div>
                   </div>
                   <div>
-                    <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Policy refs</div>
+                    <div className="text-[12px] text-neutral-500 mb-1">Policy refs</div>
                     {selected.policyRefs.length > 0 ? (
                       <div className="flex flex-wrap gap-1.5">
                         {selected.policyRefs.map((ref) => (
-                          <span key={ref} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 border border-[var(--bb-grey-4)] text-[var(--bb-grey-3)]">
+                          <span key={ref} className="text-[12px] font-medium px-2.5 py-1 rounded-full bg-neutral-100 text-neutral-600">
                             {ref}
                           </span>
                         ))}
                       </div>
                     ) : (
-                      <div className="font-[var(--font-mono)] text-[0.65rem] text-[var(--bb-grey-4)]">—</div>
+                      <div className="text-[13px] text-neutral-400">—</div>
                     )}
                   </div>
                   <Field label="Provider ref">{selected.provider_ref ?? "—"}</Field>
@@ -301,10 +327,10 @@ export default function ReplayPage() {
                   <Field label="Event ID">{selected.eventId}</Field>
                   {selected.flags.length > 0 && (
                     <div>
-                      <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-[var(--bb-grey-4)] mb-1">Flags</div>
+                      <div className="text-[12px] text-neutral-500 mb-1">Flags</div>
                       <div className="flex flex-wrap gap-1.5">
                         {selected.flags.map((flag) => (
-                          <span key={flag} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 bg-[var(--bb-orange-wash-2)] text-[var(--bb-orange)]">
+                          <span key={flag} className="text-[12px] font-medium px-2.5 py-1 rounded-full bg-amber-50 text-amber-800">
                             {flag}
                           </span>
                         ))}
@@ -312,10 +338,10 @@ export default function ReplayPage() {
                     </div>
                   )}
                   <details>
-                    <summary className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)] hover:text-[var(--bb-white)] cursor-pointer transition-colors">
-                      INPUTS / OUTPUT
+                    <summary className="text-[13px] font-medium text-neutral-500 hover:text-neutral-900 cursor-pointer transition-colors">
+                      Inputs / output
                     </summary>
-                    <pre className="mt-2 font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)] bg-[var(--bb-panel)] p-3 border border-[var(--bb-line)] overflow-x-auto max-h-[300px] overflow-y-auto">
+                    <pre className="mt-2 text-[12px] text-neutral-600 bg-neutral-50 p-3 rounded-xl border border-black/[0.06] overflow-x-auto max-h-[300px] overflow-y-auto">
                       {JSON.stringify({ inputs: selected.inputs, output: selected.output }, null, 2)}
                     </pre>
                   </details>

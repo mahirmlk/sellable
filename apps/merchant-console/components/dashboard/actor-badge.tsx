@@ -1,21 +1,25 @@
 import { type ActorType } from "@/lib/types/domain";
 
-const actorConfig: Record<ActorType, { label: string; color: string }> = {
-  buyer_agent: { label: "BUYER AGENT", color: "text-blue-400" },
-  seller_agent: { label: "SELLER AGENT", color: "text-[var(--bb-orange)]" },
-  policy_engine: { label: "POLICY ENGINE", color: "text-yellow-400" },
-  consent_service: { label: "CONSENT SERVICE", color: "text-cyan-400" },
-  human: { label: "HUMAN", color: "text-green-400" },
-  razorpay: { label: "RAZORPAY", color: "text-purple-400" },
-  commerce_core: { label: "COMMERCE CORE", color: "text-[var(--bb-grey-2)]" },
+const actorConfig: Record<ActorType, { label: string; dot: string; bg: string; text: string }> = {
+  buyer_agent: { label: "Buyer agent", dot: "bg-blue-600", bg: "bg-blue-50", text: "text-blue-700" },
+  seller_agent: { label: "Seller agent", dot: "bg-accent", bg: "bg-amber-100", text: "text-amber-600" },
+  policy_engine: { label: "Policy engine", dot: "bg-amber-600", bg: "bg-amber-50", text: "text-amber-800" },
+  consent_service: { label: "Consent", dot: "bg-cyan-600", bg: "bg-cyan-50", text: "text-cyan-800" },
+  human: { label: "Human", dot: "bg-green-600", bg: "bg-green-50", text: "text-green-700" },
+  razorpay: { label: "Razorpay", dot: "bg-purple-600", bg: "bg-purple-50", text: "text-purple-700" },
+  commerce_core: { label: "Commerce core", dot: "bg-neutral-400", bg: "bg-neutral-100", text: "text-neutral-600" },
 };
 
-const unknownActorConfig = { label: "UNKNOWN ACTOR", color: "text-[var(--bb-grey-2)]" };
+const unknownActorConfig = { label: "Unknown", dot: "bg-neutral-400", bg: "bg-neutral-100", text: "text-neutral-600" };
 
 export function ActorBadge({ actor }: { actor: ActorType }) {
   const cfg = actorConfig[actor] || unknownActorConfig;
   return (
-    <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase ${cfg.color}`}>
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${cfg.bg} ${cfg.text}`}
+      title={actor}
+    >
+      <span className={`size-1.5 rounded-full ${cfg.dot}`} />
       {cfg.label}
     </span>
   );
@@ -33,7 +37,10 @@ export function ActorIcon({ actor }: { actor: ActorType }) {
     : actor === "commerce_core" ? "X"
     : "·";
   return (
-    <span className={`inline-flex items-center justify-center w-5 h-5 text-[0.55rem] font-[var(--font-mono)] border border-current rounded-sm ${cfg.color}`}>
+    <span
+      className="inline-flex items-center justify-center size-6 text-[12px] font-semibold rounded-full bg-gradient-to-b from-white to-neutral-100 border border-black/10 shadow-sm text-neutral-700"
+      title={cfg.label}
+    >
       {glyph}
     </span>
   );

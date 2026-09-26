@@ -44,6 +44,63 @@ function writeStored<T>(storageKey: string, views: SavedView<T>[]): void {
   }
 }
 
+/**
+ * One-way, best-effort migration of saved views from a legacy storage key
+ * into the canonical `mc-views:*` key. Entries already present under the new
+ * key win on name conflicts; the legacy key is removed after a successful
+ * copy so a later delete cannot resurrect. Idempotent — safe to call on
+ * every mount, but callers should run it synchronously before the
+ * `SavedViewsBar` mounts so the migrated views render on first paint.
+ */
+export function migrateSavedViews<T>(legacyKey: string, newKey: string): void {
+  try {
+    if (typeof window === "undefined") return;
+    if (legacyKey === newKey) return;
+    const rawLegacy = window.localStorage.getItem(legacyKey);
+    if (!rawLegacy) return;
+    const parsed = JSON.parse(rawLegacy) as unknown;
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      window.localStorage.removeItem(legacyKey);
+      return;
+    }
+    const incoming = parsed.filter(
+      (v): v is SavedView<T> =>
+        typeof v === "object" &&
+        v !== null &&
+        typeof (v as SavedView<T>).name === "string" &&
+        "value" in v
+    );
+    if (incoming.length === 0) {
+      window.localStorage.removeItem(legacyKey);
+      return;
+    }
+    let existing: SavedView<T>[] = [];
+    try {
+      const rawNew = window.localStorage.getItem(newKey);
+      if (rawNew) {
+        const parsedNew = JSON.parse(rawNew) as unknown;
+        if (Array.isArray(parsedNew)) {
+          existing = parsedNew.filter(
+            (v): v is SavedView<T> =>
+              typeof v === "object" &&
+              v !== null &&
+              typeof (v as SavedView<T>).name === "string" &&
+              "value" in v
+          );
+        }
+      }
+    } catch {
+      existing = [];
+    }
+    const names = new Set(existing.map((v) => v.name));
+    const merged = [...existing, ...incoming.filter((v) => !names.has(v.name))];
+    window.localStorage.setItem(newKey, JSON.stringify(merged));
+    window.localStorage.removeItem(legacyKey);
+  } catch {
+    // Migration is best-effort — the bar simply starts empty.
+  }
+}
+
 export function useSavedViews<T>(storageKey: string): SavedViews<T> {
   const [views, setViews] = useState<SavedView<T>[]>(() =>
     readStored<T>(storageKey)
