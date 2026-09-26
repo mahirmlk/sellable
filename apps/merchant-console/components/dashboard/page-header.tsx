@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 
+/* Page masthead — editorial display serif title over a muted lede,
+   matching the golden-hour reference. Assumes .dashboard-app scope. */
 export function PageHeader({
   title,
   subtitle,
@@ -14,11 +16,11 @@ export function PageHeader({
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
-        <h1 className="text-[24px] sm:text-[28px] font-bold leading-tight tracking-[-0.02em] text-neutral-900">
+        <h1 className="font-display text-[32px] sm:text-[38px] leading-[1.08] tracking-[-0.01em] text-ink">
           {title}
         </h1>
         {subtitle ? (
-          <p className="mt-1 max-w-[46rem] text-[15px] leading-relaxed text-neutral-500">
+          <p className="mt-2 max-w-[46rem] text-[15px] leading-relaxed text-muted">
             {subtitle}
           </p>
         ) : null}
