@@ -8,9 +8,10 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Package, ShieldAlert, ArrowRight } from "lucide-react";
+import { Package, ShieldAlert, ArrowRight } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
 import { getConsoleCatalogItem, ApiError, type Product } from "@/lib/api";
+import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
@@ -39,7 +40,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+    <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden">
       <div className="px-6 py-4 border-b border-black/[0.06]">
         <div className="text-[15px] font-semibold text-neutral-900">{title}</div>
       </div>
@@ -113,12 +114,9 @@ export default function ProductDetailPage() {
   if (loadError) {
     return (
       <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-        <Link
-          href="/dashboard/catalog"
-          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
-        >
-          <ArrowLeft size={14} /> Back to products
-        </Link>
+        <Breadcrumbs
+          items={[{ label: "Products", href: "/dashboard/catalog" }, { label: sku }]}
+        />
         <ErrorBanner message={loadError} onRetry={() => void fetchData()} />
       </div>
     );
@@ -127,12 +125,9 @@ export default function ProductDetailPage() {
   if (notFound || !product) {
     return (
       <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-        <Link
-          href="/dashboard/catalog"
-          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
-        >
-          <ArrowLeft size={14} /> Back to products
-        </Link>
+        <Breadcrumbs
+          items={[{ label: "Products", href: "/dashboard/catalog" }, { label: sku }]}
+        />
         <EmptyState
           title="Product not found"
           message={`Product ${sku} was not found in your catalog. It may have been removed.`}
@@ -150,20 +145,17 @@ export default function ProductDetailPage() {
   return (
     <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <div className="flex items-center justify-between gap-3">
-        <Link
-          href="/dashboard/catalog"
-          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
-        >
-          <ArrowLeft size={14} /> Back to products
-        </Link>
+        <Breadcrumbs
+          items={[{ label: "Products", href: "/dashboard/catalog" }, { label: product.title }]}
+        />
         <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
       </div>
 
-      <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6">
+      <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-6">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div>
             <div className="flex items-center gap-3 mb-1">
-              <Package size={18} className="text-[#0071e3]" />
+              <Package size={18} className="text-ink" />
               <h1 className="text-[22px] font-semibold tracking-tight text-neutral-900">
                 {product.title}
               </h1>
@@ -233,10 +225,10 @@ export default function ProductDetailPage() {
                     <div className="text-[12px] text-neutral-500 mb-2">Paired upsell product</div>
                     <Link
                       href={`/dashboard/catalog/${upsellSku}`}
-                      className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] hover:bg-neutral-50 transition-colors group"
+                      className="flex items-center justify-between gap-3 p-3 rounded-[18px] bg-panel border border-hairline shadow-card hover:bg-neutral-50 transition-colors group"
                     >
                       <span className="text-[13px] font-medium text-neutral-900">{upsellSku}</span>
-                      <ArrowRight size={14} className="text-neutral-400 group-hover:text-[#0071e3] transition-colors" />
+                      <ArrowRight size={14} className="text-neutral-400 group-hover:text-ink transition-colors" />
                     </Link>
                   </div>
                 )}
@@ -265,7 +257,7 @@ export default function ProductDetailPage() {
               }
             />
             <div className="px-6 py-4 border-t border-black/[0.06] flex items-start gap-2">
-              <ShieldAlert size={14} className="text-[#0071e3] mt-0.5 flex-shrink-0" />
+              <ShieldAlert size={14} className="text-ink mt-0.5 flex-shrink-0" />
               <p className="text-[13px] text-neutral-500 leading-relaxed">
                 Offers below the minimum price are rejected by the deterministic Policy Engine. This is a
                 configured boundary, not a UI field.

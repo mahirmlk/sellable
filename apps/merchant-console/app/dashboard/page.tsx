@@ -18,10 +18,20 @@ import {
   getConsoleTransactions,
   getStore,
   type ConsoleGrowthMetrics,
+  type ConsoleTransaction,
   type LedgerEvent,
   type Product,
   type StoreInfo,
 } from "@/lib/api";
+import { DeltaBadge, type MetricDelta } from "@/components/dashboard/metric-card";
+import {
+  Sparkline,
+  comparePeriods,
+  dailySeries,
+  sparkSeries,
+  type MetricKey,
+} from "@/components/dashboard/charts";
+import { SalesTimeChart } from "@/components/dashboard/sales-charts";
 import { IconWarning } from "@/components/dashboard/icons";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
@@ -31,6 +41,7 @@ import { DataTable } from "@/components/dashboard/data-table";
 import {
   PartialBanner,
   RefreshButton,
+  StockBadge,
   ViewStoreLink,
 } from "@/components/dashboard/commerce-ui";
 import {
@@ -58,21 +69,39 @@ function Metric({
   label,
   value,
   sub,
+  accent = false,
+  delta,
+  spark,
 }: {
   label: string;
   value: string;
   sub?: string;
+  accent?: boolean;
+  // Period-over-period change + daily trend from real order history.
+  // Omitted entirely when there is not enough history to compare.
+  delta?: MetricDelta;
+  spark?: number[];
 }) {
   return (
-    <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-5 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_12px_40px_-12px_rgba(0,0,0,0.18)]">
-      <div className="text-[13px] font-medium text-neutral-500 mb-2 truncate">
+    <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-5 transition-all duration-200 hover:-translate-y-px hover:shadow-lift">
+      <div className="text-[13px] font-medium text-muted mb-2 truncate">
         {label}
       </div>
-      <div className="text-[28px] font-semibold leading-none tracking-tight tabular-nums text-neutral-900">
+      <div className={`text-[28px] font-semibold leading-none tracking-tight tabular-nums ${accent ? "text-accent-strong" : "text-ink"}`}>
         {value}
       </div>
+      {delta || (spark && spark.length > 0) ? (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          {delta ? <DeltaBadge delta={delta} /> : <span aria-hidden="true" />}
+          {spark && spark.length > 0 ? (
+            <div className={`w-[92px] shrink-0 ${accent ? "text-accent-strong" : "text-ink-2"}`}>
+              <Sparkline points={spark} ariaLabel={`${label} trend, previous and current period`} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {sub && (
-        <div className="text-[12px] text-neutral-400 mt-2 normal-case tracking-normal">
+        <div className="text-[12px] text-faint mt-2 normal-case tracking-normal">
           {sub.charAt(0) + sub.slice(1).toLowerCase()}
         </div>
       )}
@@ -90,7 +119,7 @@ function SectionLabel({
 }) {
   return (
     <div className="flex items-center justify-between mb-3">
-      <div className="text-[15px] font-semibold tracking-[-0.01em] text-neutral-900">
+      <div className="font-display text-[21px] leading-none tracking-[-0.005em] text-ink">
         {title}
       </div>
       {children}
@@ -104,6 +133,8 @@ export default function OverviewPage() {
   const [growth, setGrowth] = useState<ConsoleGrowthMetrics | null>(null);
   const [growthFailed, setGrowthFailed] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  // Raw wire orders kept for the KPI delta/sparkline math (created_at + items).
+  const [rawOrders, setRawOrders] = useState<ConsoleTransaction[]>([]);
   const [txFailed, setTxFailed] = useState(false);
   const [pendingApprovals, setPendingApprovals] = useState<
     Array<{ orderId: string; amountPaise: number }>
@@ -149,9 +180,11 @@ export default function OverviewPage() {
     }
     if (txRes.status === "fulfilled") {
       setTransactions(txRes.value.map(mapConsoleTx));
+      setRawOrders(txRes.value);
       setTxFailed(false);
     } else {
       setTransactions([]);
+      setRawOrders([]);
       setTxFailed(true);
       failures += 1;
     }
@@ -277,16 +310,32 @@ export default function OverviewPage() {
       ? Math.round((growth.upsell_accepted / growth.upsell_offers) * 100)
       : null;
 
+  // KPI deltas: last 7 days vs the 7 before, computed from real order
+  // history. comparePeriods returns null without comparable history, so the
+  // delta is omitted entirely (no zeros, no fake arrows); the sparkline is
+  // the daily trend over both periods.
+  const metricDelta = (metric: MetricKey): MetricDelta | undefined => {
+    const cmp = txFailed ? null : comparePeriods(rawOrders, metric, 7);
+    return cmp ? { pct: cmp.pct, goodDirection: "up", label: "vs prior 7 days" } : undefined;
+  };
+  const metricSpark = (metric: MetricKey): number[] | undefined =>
+    txFailed ? undefined : (sparkSeries(rawOrders, metric, 7) ?? undefined);
+
+  // Compact 14-day revenue trend from real order records. Mounts the chart
+  // only when at least one day sold — otherwise the EmptyState below.
+  const trend14 = txFailed ? [] : dailySeries(rawOrders, { days: 14, metric: "revenue" });
+  const hasTrend = trend14.some((p) => p.value > 0);
+
   if (loading) {
     return (
       <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-[var(--font-sans)] text-[1.5rem] tracking-[-0.04em] text-[var(--bb-white)]">
+            <h1 className="font-display text-[34px] sm:text-[42px] leading-[1.05] tracking-[-0.01em] text-ink">
               {greeting()}
               {store ? `, ${store.name}` : ""}
             </h1>
-            <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-3)] mt-1">
+            <p className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-faint mt-1">
               LOADING YOUR STORE…
             </p>
           </div>
@@ -316,11 +365,14 @@ export default function OverviewPage() {
       {/* Greeting header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[28px] font-bold tracking-[-0.02em] text-neutral-900">
+          <h1 className="font-display text-[34px] sm:text-[42px] leading-[1.05] tracking-[-0.01em] text-ink">
             {greeting()}
             {store && !storeFailed ? `, ${store.name}` : ""}
           </h1>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+          <p className="mt-1.5 text-[15px] text-muted">
+            Your sales, growth, and insights — all in one place
+          </p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2.5">
             {!storeFailed && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-[12px] font-medium text-green-700">
                 <span className="size-1.5 rounded-full bg-green-600" /> Active
@@ -354,18 +406,137 @@ export default function OverviewPage() {
         <PartialBanner message="Some sections failed to load — figures below may be incomplete, and missing values are shown as — rather than zero." />
       )}
 
+      {/* Statement card — flat surface, links to Analytics */}
+      <Link
+        href="/dashboard/growth"
+        className="block rounded-[24px] border border-hairline bg-panel shadow-card px-7 py-8 sm:px-10 sm:py-10 transition-transform duration-300 hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-ink text-panel text-[12.5px] leading-none shadow-card">
+          <span>Analytics</span>
+        </div>
+        <h2 className="font-display-italic text-[40px] sm:text-[56px] leading-[1.02] mt-7 text-ink-2">
+          Explore your performance
+        </h2>
+        <p className="mt-3 text-[15px] text-ink-2">Dive into trends and product insights</p>
+      </Link>
+
       {/* Main metrics from insights */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Metric label="Sales" value={revenue !== null ? formatPaiseDecimal(revenue) : "—"} sub={ordersCount !== null ? `ACROSS ${ordersCount} ORDERS` : undefined} />
-        <Metric label="Orders" value={ordersCount !== null ? String(ordersCount) : "—"} />
-        <Metric label="Average order value" value={aov !== null ? formatPaise(Math.round(aov)) : "—"} />
-        <Metric label="AI-assisted sales" value={assisted !== null ? formatPaiseDecimal(assisted) : "—"} sub={assistedPct !== null ? `${assistedPct}% OF SALES` : undefined} />
+        <Metric
+          label="Sales"
+          value={revenue !== null ? formatPaiseDecimal(revenue) : "—"}
+          sub={ordersCount !== null ? `ACROSS ${ordersCount} ORDERS` : undefined}
+          delta={revenue !== null ? metricDelta("revenue") : undefined}
+          spark={revenue !== null ? metricSpark("revenue") : undefined}
+        />
+        <Metric
+          label="Orders"
+          value={ordersCount !== null ? String(ordersCount) : "—"}
+          delta={ordersCount !== null ? metricDelta("orders") : undefined}
+          spark={ordersCount !== null ? metricSpark("orders") : undefined}
+        />
+        <Metric
+          label="Average order value"
+          value={aov !== null ? formatPaise(Math.round(aov)) : "—"}
+          delta={aov !== null ? metricDelta("aov") : undefined}
+          spark={aov !== null ? metricSpark("aov") : undefined}
+        />
+        <Metric
+          label="AI-assisted sales"
+          value={assisted !== null ? formatPaiseDecimal(assisted) : "—"}
+          sub={assistedPct !== null ? `${assistedPct}% OF SALES` : undefined}
+          accent
+          delta={assisted !== null ? metricDelta("assisted") : undefined}
+          spark={assisted !== null ? metricSpark("assisted") : undefined}
+        />
+      </div>
+
+      {/* Sales trend — 14-day revenue from real order records */}
+      <div>
+        <SectionLabel title="Sales trend">
+          <Link
+            href="/dashboard/growth"
+            className="text-[13px] font-medium text-accent-strong hover:underline"
+          >
+            View analytics →
+          </Link>
+        </SectionLabel>
+        <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-6 overflow-hidden">
+          {txFailed ? (
+            <ErrorBanner message="Sales trend could not be loaded." onRetry={() => void fetchData()} />
+          ) : !hasTrend ? (
+            <EmptyState
+              title="Not enough transaction data yet."
+              message="A 14-day revenue trend appears here once paid orders land in your store."
+            />
+          ) : (
+            <SalesTimeChart points={trend14} metric="revenue" rangeLabel="the last 14 days" />
+          )}
+        </div>
+      </div>
+
+      {/* Product Performance — catalog rows with thumbnails */}
+      <div>
+        <SectionLabel title="Product Performance" />
+        {catalogFailed ? (
+          <ErrorBanner message="Product performance could not be loaded." onRetry={() => void fetchData()} />
+        ) : catalog.length === 0 ? (
+          <EmptyState
+            title="No products yet"
+            message="Products in your catalog show up here with pricing and stock at a glance."
+            action={
+              <Link
+                href="/dashboard/catalog"
+                className="inline-flex items-center h-9 px-5 rounded-full bg-panel border border-hairline shadow-sm text-[13px] font-medium text-ink-2 hover:text-ink hover:shadow transition-all"
+              >
+                Open catalog
+              </Link>
+            }
+          />
+        ) : (
+          <DataTable>
+            <div className="px-6 py-3 flex items-center justify-between gap-4 border-b border-hairline bg-panel-2/60 text-[12px] font-medium text-muted">
+              <span>Product</span>
+              <span>Total stock</span>
+            </div>
+            {catalog.slice(0, 6).map((p, i) => (
+              <Link
+                key={p.id}
+                href={`/dashboard/catalog/${p.sku}`}
+                className={`px-6 py-4 flex items-center justify-between gap-4 hover:bg-ink/[0.02] transition-colors ${
+                  i < Math.min(catalog.length, 6) - 1 ? "border-b border-hairline" : ""
+                }`}
+              >
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <span className="inline-flex items-center justify-center rounded-[14px] bg-panel-2 border border-hairline text-ink-2 font-medium overflow-hidden size-11 text-[15px] shrink-0" aria-hidden>
+                    {p.title.charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[14px] font-medium text-ink truncate">
+                      {p.title}
+                    </div>
+                    <div className="text-[12px] text-faint mt-0.5 tabular-nums truncate">
+                      {formatPaise(p.price_paise)} · {p.sku}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-[13px] font-medium text-ink tabular-nums">
+                    {p.stock}
+                    <span className="text-faint font-normal"> in stock</span>
+                  </span>
+                  <StockBadge stock={p.stock} threshold={LOW_STOCK_THRESHOLD} />
+                </div>
+              </Link>
+            ))}
+          </DataTable>
+        )}
       </div>
 
       {/* Sales overview with real figures */}
       <div>
         <SectionLabel title="Sales overview" />
-        <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-6 relative overflow-hidden">
+        <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-6 relative overflow-hidden">
           {revenue !== null && ordersCount !== null ? (
             <>
               <div className="text-[15px] text-neutral-900 leading-relaxed">
@@ -377,10 +548,10 @@ export default function OverviewPage() {
               {assisted !== null && assistedPct !== null && (
                 <div className="mt-4">
                   <div className="h-1.5 rounded-full bg-black/[0.06] overflow-hidden">
-                    <div className="h-full rounded-full bg-[#0071e3]" style={{ width: `${assistedPct}%` }} />
+                    <div className="h-full rounded-full bg-ink" style={{ width: `${assistedPct}%` }} />
                   </div>
                   <div className="mt-2 flex items-center justify-between text-[12px]">
-                    <span className="font-medium text-[#0071e3]">{assistedPct}% AI-assisted</span>
+                    <span className="font-medium text-accent-strong">{assistedPct}% AI-assisted</span>
                     <span className="text-neutral-400">{100 - assistedPct}% direct</span>
                   </div>
                 </div>
@@ -400,7 +571,7 @@ export default function OverviewPage() {
           <div>
             <SectionLabel title="Needs attention" />
             {needsAttention.length === 0 ? (
-              <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] px-6 py-10 text-center text-[14px] text-neutral-400">
+              <div className="rounded-[18px] bg-panel border border-hairline shadow-card px-6 py-10 text-center text-[14px] text-neutral-400">
                 {txFailed && approvalsFailed && catalogFailed
                   ? "Attention signals are unavailable — the backing services did not respond."
                   : "All clear. Nothing needs your attention right now."}
@@ -428,7 +599,7 @@ export default function OverviewPage() {
                         </div>
                       </div>
                     </div>
-                    <span className="text-[13px] font-medium text-[#0071e3] shrink-0">
+                    <span className="text-[13px] font-medium text-ink shrink-0">
                       Review →
                     </span>
                   </Link>
@@ -442,7 +613,7 @@ export default function OverviewPage() {
             <SectionLabel title="Recent orders">
               <Link
                 href="/dashboard/transactions"
-                className="text-[13px] font-medium text-[#0071e3] hover:underline"
+                className="text-[13px] font-medium text-accent-strong hover:underline"
               >
                 View all →
               </Link>
@@ -499,7 +670,7 @@ export default function OverviewPage() {
             <SectionLabel title="Recent activity">
               <Link
                 href="/dashboard/activity"
-                className="text-[13px] font-medium text-[#0071e3] hover:underline"
+                className="text-[13px] font-medium text-accent-strong hover:underline"
               >
                 View all →
               </Link>
@@ -527,11 +698,11 @@ export default function OverviewPage() {
                     <span
                       className={`size-2 rounded-full flex-shrink-0 ${
                         event.type === "success"
-                          ? "bg-[#1f9d55]"
+                          ? "bg-green-600"
                           : event.type === "error"
-                            ? "bg-[#d92d20]"
+                            ? "bg-red-600"
                             : event.type === "warning"
-                              ? "bg-[#b25e00]"
+                              ? "bg-amber-600"
                               : "bg-neutral-300"
                       }`}
                     />
@@ -554,7 +725,7 @@ export default function OverviewPage() {
             ) : health.length === 0 ? (
               <TableSkeleton rows={5} />
             ) : (
-              <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] px-6 py-4">
+              <div className="rounded-[18px] bg-panel border border-hairline shadow-card px-6 py-4">
                 {health.map((h) => (
                   <div key={h.label} className="flex items-center justify-between gap-3 py-2.5 border-b border-black/[0.05] last:border-b-0">
                     <span className="text-[13px] text-neutral-500">
@@ -563,7 +734,7 @@ export default function OverviewPage() {
                     <span className="flex items-center gap-2">
                       <span
                         className={`size-2 rounded-full ${
-                          h.ready === null ? "bg-neutral-300" : h.ready ? "bg-[#1f9d55]" : "bg-[#b25e00]"
+                          h.ready === null ? "bg-neutral-300" : h.ready ? "bg-green-600" : "bg-amber-600"
                         }`}
                       />
                       <span
@@ -593,12 +764,12 @@ export default function OverviewPage() {
                 onRetry={() => void fetchData()}
               />
             ) : (
-              <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] px-6 py-4">
+              <div className="rounded-[18px] bg-panel border border-hairline shadow-card px-6 py-4">
                 <div className="flex items-center justify-between py-2.5 border-b border-black/[0.05]">
                   <span className="text-[13px] text-neutral-500">
                     AI-assisted revenue
                   </span>
-                  <span className="text-[15px] font-semibold text-[#0071e3] tabular-nums">
+                  <span className="text-[15px] font-semibold text-accent-strong tabular-nums">
                     {formatPaiseDecimal(growth.agent_assisted_revenue)}
                   </span>
                 </div>

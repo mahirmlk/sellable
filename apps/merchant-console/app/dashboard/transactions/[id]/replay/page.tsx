@@ -1,9 +1,9 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, ShieldCheck, ShieldAlert, XCircle, RefreshCw } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { ShieldCheck, ShieldAlert, XCircle, RefreshCw, Download } from "lucide-react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { ActorBadge } from "@/components/dashboard/actor-badge";
 import { formatTimestamp } from "@/lib/formatters";
 import { type LedgerEvent } from "@/lib/types/domain";
@@ -11,6 +11,8 @@ import { getConsoleTransactionDetail, type LedgerEvent as ApiLedgerEvent, type C
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { exportToCsv } from "@/lib/csv";
+import { toast } from "@/components/dashboard/toasts";
 
 interface ReplayStage {
   key: string;
@@ -134,14 +136,29 @@ export default function ReplayPage() {
 
   const selected = txEvents.find((e) => e.eventId === selectedId) ?? null;
 
+  const handleExport = useCallback(() => {
+    const rows = txEvents.map((e) => ({
+      time: e.timestamp,
+      actor: e.actor,
+      action: e.action,
+      reasoning: e.reasoningSummary ?? "",
+      policy_refs: (e.policyRefs ?? []).join(";"),
+      provider_ref: e.provider_ref ?? "",
+      event_id: e.eventId,
+    }));
+    exportToCsv(`replay_${id}_events.csv`, rows);
+    toast({ tone: "success", title: `Exported replay_${id}_events.csv`, description: `${rows.length} rows` });
+  }, [txEvents, id]);
+
   return (
     <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <Link
-        href={`/dashboard/transactions/${id}`}
-        className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
-      >
-        <ArrowLeft size={14} /> Back to transaction
-      </Link>
+      <Breadcrumbs
+        items={[
+          { label: "Orders", href: "/dashboard/transactions" },
+          { label: `#${id}`, href: `/dashboard/transactions/${id}` },
+          { label: "Replay" },
+        ]}
+      />
 
       <div className="stagger-child">
         <h1 className="text-[22px] font-semibold tracking-tight text-neutral-900">
@@ -200,7 +217,7 @@ export default function ReplayPage() {
           )}
 
           {isRefunded && (
-            <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6 flex items-start gap-3">
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-6 flex items-start gap-3">
               <ShieldCheck size={18} className="text-neutral-500 flex-shrink-0 mt-0.5" />
               <div>
                 <div className="mb-1"><span className="inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-neutral-100 text-neutral-700">Refunded transaction</span></div>
@@ -213,14 +230,23 @@ export default function ReplayPage() {
 
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
             {/* Timeline */}
-            <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden stagger-child">
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden stagger-child">
               <div className="px-6 py-4 border-b border-black/[0.06] flex items-center justify-between gap-3">
                 <div className="text-[15px] font-semibold text-neutral-900">
                   Timeline — {stages.length} stages · {txEvents.length} events
                 </div>
-                <button onClick={fetchData} className="inline-flex items-center gap-1 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-600 hover:bg-neutral-50 transition-all cursor-pointer">
-                  <RefreshCw size={10} /> Refresh
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleExport}
+                    disabled={txEvents.length === 0}
+                    className="inline-flex items-center gap-1 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-600 hover:bg-neutral-50 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Download size={12} /> Export
+                  </button>
+                  <button onClick={fetchData} className="inline-flex items-center gap-1 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-600 hover:bg-neutral-50 transition-all cursor-pointer">
+                    <RefreshCw size={10} /> Refresh
+                  </button>
+                </div>
               </div>
               {stages.map(({ stage, events }, i) => (
                 <div key={stage.key} className={i < stages.length - 1 ? "border-b border-black/[0.06]" : ""}>
@@ -235,7 +261,7 @@ export default function ReplayPage() {
                         onClick={() => setSelectedId(event.eventId)}
                         className={`w-full text-left px-6 py-2.5 flex items-center gap-3 transition-colors cursor-pointer border-l-2 ${
                           active
-                            ? "border-[#0071e3] bg-[#0071e3]/5"
+                            ? "border-hairline bg-ink/5"
                             : "border-transparent hover:bg-neutral-50"
                         }`}
                       >
@@ -258,7 +284,7 @@ export default function ReplayPage() {
             </div>
 
             {/* Selected event */}
-            <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden lg:sticky lg:top-4">
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden lg:sticky lg:top-4">
               <div className="px-6 py-4 border-b border-black/[0.06]">
                 <div className="text-[15px] font-semibold text-neutral-900">Selected event</div>
               </div>

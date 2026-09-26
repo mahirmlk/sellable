@@ -1,31 +1,52 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Inbox, type LucideIcon } from "lucide-react";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 
 export function EmptyState({
   title,
   message,
   action,
+  icon: Icon = Inbox,
 }: {
   title: string;
   message: string;
   action?: ReactNode;
+  /** Per-context illustration icon — defaults to a neutral inbox glyph. */
+  icon?: LucideIcon;
 }) {
   return (
-    <div
+    <Empty
       role="status"
-      className="flex flex-col items-center justify-center gap-2 rounded-3xl bg-neutral-50/80 backdrop-blur-xl border border-black/[0.05] px-6 py-16 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+      className="gap-2 rounded-3xl border border-solid border-black/[0.05] bg-panel-2 px-6 py-16 shadow-card"
     >
-      <div className="flex items-center justify-center size-11 rounded-2xl bg-white border border-black/[0.06] shadow-sm text-[20px] mb-1" aria-hidden>
-        ○
-      </div>
-      <p className="text-[17px] font-semibold tracking-[-0.01em] text-neutral-900">
-        {title}
-      </p>
-      <p className="max-w-[28rem] text-[14px] leading-relaxed text-neutral-500">
-        {message}
-      </p>
-      {action ? <div className="mt-4">{action}</div> : null}
-    </div>
+      <EmptyHeader>
+        <EmptyMedia
+          variant="icon"
+          className="mb-1 size-11 rounded-[18px] border border-hairline bg-panel text-ink-2 shadow-sm"
+        >
+          <Icon className="size-5" aria-hidden="true" />
+        </EmptyMedia>
+        <EmptyTitle className="text-[17px] font-semibold tracking-[-0.01em] text-ink">
+          {title}
+        </EmptyTitle>
+        <EmptyDescription className="max-w-[28rem] text-[14px] text-muted">
+          {message}
+        </EmptyDescription>
+      </EmptyHeader>
+      {action ? (
+        <EmptyContent>
+          <div className="mt-4">{action}</div>
+        </EmptyContent>
+      ) : null}
+    </Empty>
   );
 }

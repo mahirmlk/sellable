@@ -8,10 +8,13 @@ import { formatTimestamp, formatPaise } from "@/lib/formatters";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { SavedViewsBar } from "@/components/dashboard/commerce-ui";
 import { exportToCsv } from "@/lib/csv";
-import { useSavedViews } from "@/lib/saved-views";
+import { migrateSavedViews } from "@/lib/saved-views";
+import { toast } from "@/components/dashboard/toasts";
 import { type ActorType, type LedgerEvent } from "@/lib/types/domain";
 import {
+  getBuyerMission,
   getConsoleEvents,
   streamConsoleEvents,
   consoleRunBuyerMission,
@@ -22,6 +25,7 @@ import {
   simulatePaymentCapture,
   getConsolePolicy,
   getConsoleCatalogItem,
+  type BuyerMissionPayload,
   type BuyerResultPayload,
   type ConsoleTransactionDetail,
   type ConsolePolicySettings,
@@ -53,6 +57,22 @@ const eventTypeFilters = [
 
 const DEMO_MODE = process.env.NEXT_PUBLIC_AGENT_KEY === "sellable_demo_key_001";
 const ORDER_TERMINAL = ["PAID", "FULFILLED", "PAYMENT_FAILED", "ABORTED", "REFUNDED"];
+const FEED_PAGE_SIZE = 100;
+
+/** Map the real BuyerMissionPayload.state enum to a label + palette tone. */
+function missionStateTone(state: BuyerMissionPayload["state"]): "green" | "amber" | "red" | "neutral" {
+  if (state === "PAID" || state === "VERIFIED") return "green";
+  if (state === "NEEDS_HUMAN_APPROVAL" || state === "PAYMENT_PENDING") return "amber";
+  if (state === "PAYMENT_FAILED" || state === "ABORTED") return "red";
+  return "neutral";
+}
+
+function missionStateChipClass(tone: "green" | "amber" | "red" | "neutral"): string {
+  if (tone === "green") return "border-green-600/20 bg-green-50 text-green-700";
+  if (tone === "amber") return "border-amber-600/20 bg-amber-50 text-amber-800";
+  if (tone === "red") return "border-red-600/20 bg-red-50 text-red-700";
+  return "border-hairline bg-panel-2 text-muted";
+}
 
 interface MissionFormState {
   mission: string;
@@ -195,6 +215,14 @@ export default function ActivityPage() {
   const [missionResult, setMissionResult] = useState<BuyerResultPayload | null>(null);
   const [missionOfferGiven, setMissionOfferGiven] = useState(false);
   const [missionOrderDetail, setMissionOrderDetail] = useState<ConsoleTransactionDetail | null>(null);
+  // Authoritative buyer-mission state (getBuyerMission) — rendered only from
+  // real backend fields, never invented.
+  const [missionState, setMissionState] = useState<BuyerMissionPayload | null>(null);
+  // Ledger pagination: offset = number of events fetched via paged reads so
+  // far (live prepends never move it). Dedupe by event_id is the contract.
+  const [feedOffset, setFeedOffset] = useState(0);
+  const [feedHasMore, setFeedHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const missionPollRef = useRef<number | null>(null);
   const missionPollDeadlineRef = useRef<number>(0);
   // Mission id + auto-continuation guard. The mission id lives in a ref so
@@ -209,10 +237,14 @@ export default function ActivityPage() {
   const [resumingTrace, setResumingTrace] = useState<string | null>(null);
   // Human-readable rows: technical details expand per event, collapsed default.
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  // Saved filter views + CSV export over the current filter pair.
-  const { getViews, saveView, deleteView } = useSavedViews<string>("sellable.saved-views.activity");
-  const savedViews = getViews();
-  const [viewName, setViewName] = useState("");
+  // Saved views live under the canonical `mc-views:activity` key (shared
+  // SavedViewsBar convention). Views saved under the legacy
+  // `sellable.saved-views.activity` key migrate on first render — before the
+  // bar mounts — so nothing is lost. The initializer runs once per mount and
+  // the migration is idempotent, so StrictMode double-render is safe.
+  useState(() => {
+    migrateSavedViews<string>("sellable.saved-views.activity", "mc-views:activity");
+  });
 
   useEffect(() => {
     getConsolePolicy().then(setPolicy).catch(() => {
@@ -226,11 +258,15 @@ export default function ActivityPage() {
     try {
       // Bounded initial window (backend pagination intact): the feed shows
       // the recent operational slice; the live stream appends from there.
-      const data = await getConsoleEvents(100);
+      // Offset tracks paged reads only — live prepends never move it.
+      const data = await getConsoleEvents(FEED_PAGE_SIZE, 0);
       if (data.events) {
         const mapped = data.events.map(mapEvent);
+        seenIds.current = new Set();
         for (const e of mapped) seenIds.current.add(e.eventId);
         setEvents(mapped);
+        setFeedOffset(data.events.length);
+        setFeedHasMore(data.events.length >= FEED_PAGE_SIZE);
       }
     } catch (err) {
       setLoadError(
@@ -240,6 +276,48 @@ export default function ActivityPage() {
       );
     } finally { setLoading(false); }
   }, []);
+
+  // Ledger pagination: fetch the NEXT window with a real offset, append
+  // (dedupe by event_id), hide when a fetch returns fewer than the limit.
+  // Live-tail prepends keep working — they merge via the same dedupe set
+  // and never move the offset.
+  const handleLoadMore = useCallback(async () => {
+    if (loadingMore || !feedHasMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await getConsoleEvents(FEED_PAGE_SIZE, feedOffset);
+      const incoming = (data.events ?? []).map(mapEvent);
+      const fresh = incoming.filter((e) => !seenIds.current.has(e.eventId));
+      for (const e of fresh) seenIds.current.add(e.eventId);
+      if (fresh.length > 0) setEvents((prev) => [...prev, ...fresh]);
+      setFeedOffset((prev) => prev + incoming.length);
+      if (incoming.length < FEED_PAGE_SIZE) setFeedHasMore(false);
+    } catch {
+      // Keep the button visible so the user can retry.
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, feedHasMore, feedOffset]);
+
+  // Authoritative mission state: whenever a mission_id is known (fresh run
+  // result or a listBuyerMissions re-link on resume), fetch the real
+  // backend state. Cleared at the call sites that clear the result panel,
+  // so this effect never sets state synchronously.
+  const missionId = missionResult?.mission_id ?? null;
+  useEffect(() => {
+    if (!missionId) return;
+    let cancelled = false;
+    getBuyerMission(missionId)
+      .then((payload) => {
+        if (!cancelled) setMissionState(payload);
+      })
+      .catch(() => {
+        if (!cancelled) setMissionState(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [missionId]);
 
   // Strictly sequenced lifecycle: bounded initial load FIRST (rendered),
   // then exactly one live stream. The stream client owns bounded reconnects;
@@ -385,6 +463,7 @@ export default function ActivityPage() {
     setRunningMission(true);
     setMissionMsg(null);
     setMissionResult(null);
+    setMissionState(null);
     setMissionOrderDetail(null);
     stopMissionPoll();
     missionIdRef.current = null;
@@ -570,6 +649,10 @@ export default function ActivityPage() {
           if (match) {
             resumed.mission_id = match.mission_id;
             missionIdRef.current = match.mission_id;
+          } else {
+            // No persisted mission row: drop any stale mission-state block so
+            // the panel never shows another mission's backend state.
+            setMissionState(null);
           }
         } catch {}
         setMissionResult(resumed);
@@ -639,21 +722,29 @@ export default function ActivityPage() {
 
   const filterKey = `${actorFilter}|${typeFilter}`;
 
+  const applyView = useCallback((value: string) => {
+    const [a, t] = value.split("|");
+    if (a) setActorFilter(a as ActorType | "all");
+    if (t) setTypeFilter(t);
+  }, []);
+
   const handleExportCsv = () => {
+    const rows = filtered.map((e) => ({
+      time: e.timestamp,
+      label: actionLabel(e.action),
+      actor: e.actor,
+      action: e.action,
+      trace_id: e.traceId,
+      reasoning: e.reasoningSummary ?? "",
+      policy_refs: (e.policyRefs ?? []).join(";"),
+      provider_ref: e.provider_ref ?? "",
+      flags: (e.flags ?? []).join(";"),
+    }));
     exportToCsv(
       `live-activity-${new Date().toISOString().slice(0, 10)}`,
-      filtered.map((e) => ({
-        time: e.timestamp,
-        label: actionLabel(e.action),
-        actor: e.actor,
-        action: e.action,
-        trace_id: e.traceId,
-        reasoning: e.reasoningSummary ?? "",
-        policy_refs: (e.policyRefs ?? []).join(";"),
-        provider_ref: e.provider_ref ?? "",
-        flags: (e.flags ?? []).join(";"),
-      }))
+      rows
     );
+    toast({ tone: "success", title: "Exported activity CSV", description: `${rows.length} rows` });
   };
 
   return (
@@ -665,12 +756,12 @@ export default function ActivityPage() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 h-9 px-3 border border-black/[0.06] bg-white rounded-full">
-            <Radio size={12} className={streamMode === "live" ? "text-[#1f9d55] animate-[blink_2s_ease-in-out_infinite]" : streamMode === "polling" ? "text-[#b25e00]" : "text-[#d92d20]"} />
+            <Radio size={12} className={streamMode === "live" ? "text-green-600 animate-[blink_2s_ease-in-out_infinite]" : streamMode === "polling" ? "text-amber-600" : "text-red-600"} />
             <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-500">
               {streamMode === "live" ? "LIVE" : streamMode === "polling" ? "POLLING" : "OFFLINE"}
             </span>
           </div>
-          <button onClick={() => setMissionFormOpen((v) => !v)} className="inline-flex items-center gap-2 h-9 px-3 border border-[#0071e3]/30 bg-[#0071e3]/10 text-[13px] text-[#0071e3] hover:bg-[#0071e3]/15 transition-all cursor-pointer font-medium rounded-full">
+          <button onClick={() => setMissionFormOpen((v) => !v)} className="inline-flex items-center gap-2 h-9 px-3 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-all cursor-pointer font-medium rounded-full">
             {missionFormOpen ? <X size={12} /> : <Play size={12} />} {missionFormOpen ? "CLOSE MISSION" : "NEW BUYER MISSION"}
           </button>
           <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-9 px-3 border border-black/[0.06] bg-white text-[13px] text-neutral-500 hover:text-neutral-900 hover:border-black/[0.12] transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full">
@@ -680,10 +771,10 @@ export default function ActivityPage() {
       </div>
 
       {missionFormOpen && (
-        <div className="border border-[#0071e3]/20 bg-white p-5 stagger-child rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+        <div className="border border-hairline bg-white p-5 stagger-child rounded-2xl shadow-card">
           <div className="flex items-center gap-2 mb-4">
-            <Play size={13} className="text-[#0071e3]" />
-            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-[#0071e3]">NEW BUYER MISSION</span>
+            <Play size={13} className="text-ink" />
+            <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-accent-strong">NEW BUYER MISSION</span>
             <span className="font-[var(--font-mono)] text-[0.5rem] text-neutral-500 ml-2">runs the real Buyer Agent against your store</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -694,7 +785,7 @@ export default function ActivityPage() {
                 onChange={(e) => setMissionForm((f) => ({ ...f, mission: e.target.value }))}
                 placeholder="I need an ergonomic office chair for my home office"
                 rows={2}
-                className="font-[var(--font-sans)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] rounded-[12px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                className="font-[var(--font-sans)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-hairline rounded-[12px] focus:ring-[3px] focus:ring-ink/20"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -705,7 +796,7 @@ export default function ActivityPage() {
                 value={missionForm.budget}
                 onChange={(e) => setMissionForm((f) => ({ ...f, budget: e.target.value }))}
                 placeholder="15000"
-                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 tabular-nums focus:outline-none focus:border-[#0071e3] rounded-[12px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 tabular-nums focus:outline-none focus:border-hairline rounded-[12px] focus:ring-[3px] focus:ring-ink/20"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -713,7 +804,7 @@ export default function ActivityPage() {
               <input
                 value={missionForm.buyer}
                 onChange={(e) => setMissionForm((f) => ({ ...f, buyer: e.target.value }))}
-                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 focus:outline-none focus:border-[#0071e3] rounded-[12px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 focus:outline-none focus:border-hairline rounded-[12px] focus:ring-[3px] focus:ring-ink/20"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -722,7 +813,7 @@ export default function ActivityPage() {
                 value={missionForm.purpose}
                 onChange={(e) => setMissionForm((f) => ({ ...f, purpose: e.target.value }))}
                 placeholder="defaults to the mission text"
-                className="font-[var(--font-sans)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] rounded-[10px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                className="font-[var(--font-sans)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-hairline rounded-[10px] focus:ring-[3px] focus:ring-ink/20"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -735,7 +826,7 @@ export default function ActivityPage() {
                     ? `${policy.allowed_categories.join(", ")} — empty = your policy`
                     : "accessories, snacks — defaults to all"
                 }
-                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] rounded-[10px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-hairline rounded-[10px] focus:ring-[3px] focus:ring-ink/20"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -744,7 +835,7 @@ export default function ActivityPage() {
                 value={missionForm.sku}
                 onChange={(e) => setMissionForm((f) => ({ ...f, sku: e.target.value.toUpperCase() }))}
                 placeholder="CHAIR-PRO-01"
-                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] rounded-[10px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 placeholder:text-neutral-400 focus:outline-none focus:border-hairline rounded-[10px] focus:ring-[3px] focus:ring-ink/20"
               />
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -755,7 +846,7 @@ export default function ActivityPage() {
                   min="1"
                   value={missionForm.quantity}
                   onChange={(e) => setMissionForm((f) => ({ ...f, quantity: e.target.value }))}
-                  className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 tabular-nums focus:outline-none focus:border-[#0071e3] rounded-[12px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                  className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 tabular-nums focus:outline-none focus:border-hairline rounded-[12px] focus:ring-[3px] focus:ring-ink/20"
                 />
               </label>
               <label className="flex flex-col gap-1">
@@ -766,7 +857,7 @@ export default function ActivityPage() {
                   value={missionForm.offer}
                   onChange={(e) => setMissionForm((f) => ({ ...f, offer: e.target.value }))}
                   placeholder="11500"
-                  className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 tabular-nums placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] rounded-[10px] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                  className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-2 tabular-nums placeholder:text-neutral-400 focus:outline-none focus:border-hairline rounded-[10px] focus:ring-[3px] focus:ring-ink/20"
                 />
               </label>
             </div>
@@ -795,7 +886,7 @@ export default function ActivityPage() {
             <div className="flex items-end justify-between gap-3 md:col-span-2">
               <button
                 onClick={() => setMissionForm((f) => ({ ...f, upsell: !f.upsell }))}
-                className={`h-9 px-4 rounded-full text-[13px] font-medium border transition-all cursor-pointer ${missionForm.upsell ? "border-[#0071e3]/30 bg-[#0071e3]/10 text-[#0071e3]" : "bg-white border-black/[0.06] text-neutral-600 hover:text-neutral-900"}`}
+                className={`h-9 px-4 rounded-full text-[13px] font-medium border transition-all cursor-pointer ${missionForm.upsell ? "border-accent/35 bg-accent/12 text-accent-strong" : "bg-white border-black/[0.06] text-neutral-600 hover:text-neutral-900"}`}
                 aria-pressed={missionForm.upsell}
               >
                 UPSELLS {missionForm.upsell ? "ON" : "OFF"}
@@ -803,7 +894,7 @@ export default function ActivityPage() {
               <button
                 onClick={handleRunMission}
                 disabled={runningMission}
-                className="inline-flex items-center gap-2 h-9 px-5 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full"
+                className="inline-flex items-center gap-2 h-9 px-5 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full"
               >
                 {runningMission ? <RefreshCw size={12} className="animate-spin" /> : <Play size={12} />} RUN
               </button>
@@ -813,10 +904,50 @@ export default function ActivityPage() {
       )}
 
       {missionResult && (
-        <div className="border border-black/[0.06] bg-white p-5 stagger-child rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+        <div className="border border-black/[0.06] bg-white p-5 stagger-child rounded-2xl shadow-card">
+          {/* Authoritative mission state — only real BuyerMissionPayload fields. */}
+          {missionState && (
+            <div className="mb-4 rounded-2xl border border-hairline bg-panel-2 px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-mono text-[0.55rem] tracking-[0.16em] uppercase text-muted">MISSION STATE</span>
+                <span className={`rounded-full px-2.5 py-1 text-[12px] font-medium border ${missionStateChipClass(missionStateTone(missionState.state))}`}>
+                  {missionState.state.replace(/_/g, " ")}
+                </span>
+              </div>
+              <div className="font-mono text-[0.55rem] text-faint break-all">{missionState.mission_id}</div>
+              {missionState.required_action.trim().length > 0 && (
+                <div className="text-[13px] text-ink">Next action: {missionState.required_action}</div>
+              )}
+              {missionState.mission_message.trim().length > 0 && (
+                <p className="text-[13px] leading-relaxed text-muted">{missionState.mission_message}</p>
+              )}
+              {(missionState.budget_paise !== null || missionState.negotiated_amount_paise !== null) && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted tabular-nums">
+                  {missionState.budget_paise !== null && (
+                    <span>Budget {formatPaise(missionState.budget_paise)}</span>
+                  )}
+                  {missionState.negotiated_amount_paise !== null && (
+                    <span>Negotiated {formatPaise(missionState.negotiated_amount_paise)}</span>
+                  )}
+                </div>
+              )}
+              {missionState.state === "PAYMENT_PENDING" && missionState.payment_url && (
+                <div>
+                  <a
+                    href={missionState.payment_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-ink text-panel text-[13px] font-medium hover:opacity-90 transition-all"
+                  >
+                    Open payment link <ExternalLink size={12} />
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex items-center justify-between mb-3">
             <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-neutral-600">BUYER MISSION RESULT</span>
-            <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] ${missionResult.action === "READY_FOR_CONSENT" ? "text-[#1f9d55]" : missionResult.action === "NEEDS_HUMAN_APPROVAL" ? "text-[#b25e00]" : "text-[#d92d20]"}`}>
+            <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] ${missionResult.action === "READY_FOR_CONSENT" ? "text-green-600" : missionResult.action === "NEEDS_HUMAN_APPROVAL" ? "text-amber-600" : "text-red-600"}`}>
               {missionResult.action.replace(/_/g, " ")}
             </span>
           </div>
@@ -827,9 +958,9 @@ export default function ActivityPage() {
                 key={s.label}
                 className={`rounded-full px-2.5 py-1 text-[12px] font-medium border ${
                   s.tone === "done"
-                    ? "border-[#1f9d55]/20 bg-green-50 text-[#1f9d55]"
+                    ? "border-green-600/20 bg-green-50 text-green-600"
                     : s.tone === "block"
-                      ? "border-[#b25e00]/20 bg-amber-50 text-[#b25e00]"
+                      ? "border-amber-600/20 bg-amber-50 text-amber-600"
                       : "border-black/[0.06] bg-neutral-100 text-neutral-500"
                 }`}
               >
@@ -855,7 +986,7 @@ export default function ActivityPage() {
               <span className="font-[var(--font-mono)] text-[0.75rem] text-neutral-900 tabular-nums">
                 {missionResult.seller_decision?.cart ? formatPaise(missionResult.seller_decision.cart.total_paise) : "—"}
                 {missionResult.seller_decision?.cart && missionResult.seller_decision.cart.discount_paise > 0 && (
-                  <span className="text-[#1f9d55] ml-2 text-[0.6rem]">−{formatPaise(missionResult.seller_decision.cart.discount_paise)} · ROUND {missionResult.seller_decision.cart.negotiation_round}</span>
+                  <span className="text-green-600 ml-2 text-[0.6rem]">−{formatPaise(missionResult.seller_decision.cart.discount_paise)} · ROUND {missionResult.seller_decision.cart.negotiation_round}</span>
                 )}
               </span>
             </div>
@@ -866,7 +997,7 @@ export default function ActivityPage() {
             <div className="flex items-center justify-between gap-3">
               <span className="font-[var(--font-mono)] text-[0.5rem] uppercase text-neutral-600">Order ID</span>
               {missionOrderDetail ? (
-                <Link href={`/dashboard/transactions/${missionOrderDetail.order_id}`} className="font-[var(--font-mono)] text-[0.6rem] text-[#0071e3] hover:text-[#0068d1] flex items-center gap-1">
+                <Link href={`/dashboard/transactions/${missionOrderDetail.order_id}`} className="font-[var(--font-mono)] text-[0.6rem] text-accent-strong hover:text-ink-2 flex items-center gap-1">
                   {missionResult.order_id} <ExternalLink size={10} />
                 </Link>
               ) : (
@@ -878,7 +1009,7 @@ export default function ActivityPage() {
               <span className="font-[var(--font-mono)] text-[0.55rem] text-neutral-600">{missionResult.consent_id ?? missionOrderDetail?.consent_id ?? "—"}</span>
             </div>
             {missionResult.seller_decision?.response_message && (
-              <div className="md:col-span-2 border-l-2 border-[#0071e3]/30 pl-3 py-1">
+              <div className="md:col-span-2 border-l-2 border-hairline pl-3 py-1">
                 <div className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.1em] uppercase text-neutral-400 mb-0.5">SELLER REPLY</div>
                 <div className="font-[var(--font-sans)] text-[0.72rem] text-neutral-600 leading-relaxed">{missionResult.seller_decision.response_message}</div>
               </div>
@@ -895,30 +1026,30 @@ export default function ActivityPage() {
               <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-neutral-400">AUTHORITATIVE ORDER STATE</span>
               <span className={`font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] ${
                 ORDER_TERMINAL.includes(missionOrderDetail.status)
-                  ? missionOrderDetail.status === "PAID" || missionOrderDetail.status === "FULFILLED" ? "text-[#1f9d55]" : "text-[#d92d20]"
-                  : missionOrderDetail.status === "PAYMENT_PENDING" ? "text-[#b25e00]" : "text-[#b25e00]"
+                  ? missionOrderDetail.status === "PAID" || missionOrderDetail.status === "FULFILLED" ? "text-green-600" : "text-red-600"
+                  : missionOrderDetail.status === "PAYMENT_PENDING" ? "text-amber-600" : "text-amber-600"
               }`}>{missionOrderDetail.status.replace(/_/g, " ")}</span>
             </div>
           )}
           {missionOrderDetail && missionOrderDetail.status === "AWAITING_CONSENT" && missionOrderDetail.policy_verdict === "NEEDS_HUMAN_APPROVAL" && !missionOrderDetail.consent_id && (
-            <div className="mt-4 border border-[#b25e00]/20 bg-amber-50 px-4 py-3 flex items-center justify-between gap-3 rounded-2xl">
+            <div className="mt-4 border border-amber-600/20 bg-amber-50 px-4 py-3 flex items-center justify-between gap-3 rounded-2xl">
               <div className="flex items-center gap-2">
-                <ShieldAlert size={14} className="text-[#b25e00]" />
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-[#b25e00]">{missionResult.mission_id ? "HELD FOR MERCHANT APPROVAL — the mission resumes automatically after approval" : "HELD FOR MERCHANT APPROVAL — no consent is issued until approved"}</span>
+                <ShieldAlert size={14} className="text-amber-600" />
+                <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-600">{missionResult.mission_id ? "HELD FOR MERCHANT APPROVAL — the mission resumes automatically after approval" : "HELD FOR MERCHANT APPROVAL — no consent is issued until approved"}</span>
               </div>
-              <Link href="/dashboard/approvals" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[#b25e00] hover:underline whitespace-nowrap">OPEN APPROVALS</Link>
+              <Link href="/dashboard/approvals" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-amber-600 hover:underline whitespace-nowrap">OPEN APPROVALS</Link>
             </div>
           )}
           {missionOrderDetail && missionOrderDetail.status === "AWAITING_CONSENT" && missionOrderDetail.consent_status === "EXPIRED" && (
-            <div className="mt-4 border border-[#b25e00]/20 bg-amber-50 px-4 py-3 rounded-2xl">
+            <div className="mt-4 border border-amber-600/20 bg-amber-50 px-4 py-3 rounded-2xl">
               <div className="flex items-center gap-2 mb-2">
-                <ShieldAlert size={14} className="text-[#b25e00]" />
-                <span className="font-[var(--font-mono)] text-[0.6rem] text-[#b25e00]">CONSENT EXPIRED — the single-use authorization timed out; a fresh consent will be issued under the same rules on continue</span>
+                <ShieldAlert size={14} className="text-amber-600" />
+                <span className="font-[var(--font-mono)] text-[0.6rem] text-amber-600">CONSENT EXPIRED — the single-use authorization timed out; a fresh consent will be issued under the same rules on continue</span>
               </div>
               {missionResult.mission_id && (
                 <button
                   onClick={handleMissionPayment}
-                  className="w-full h-9 border border-[#b25e00]/20 bg-amber-50 text-[13px] text-[#b25e00] hover:bg-amber-100 transition-colors flex items-center justify-center gap-2 cursor-pointer font-medium rounded-full"
+                  className="w-full h-9 border border-amber-600/20 bg-amber-50 text-[13px] text-amber-600 hover:bg-amber-100 transition-colors flex items-center justify-center gap-2 cursor-pointer font-medium rounded-full"
                 >
                   <Wallet size={12} /> CONTINUE MISSION — RE-ISSUE CONSENT
                 </button>
@@ -929,14 +1060,14 @@ export default function ActivityPage() {
             missionResult.mission_id ? (
               <button
                 onClick={handleMissionPayment}
-                className="mt-4 w-full h-9 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors flex items-center justify-center gap-2 cursor-pointer font-medium rounded-full"
+                className="mt-4 w-full h-9 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors flex items-center justify-center gap-2 cursor-pointer font-medium rounded-full"
               >
                 <Wallet size={12} /> PAYMENT READY — CONTINUE MISSION {formatPaise(missionOrderDetail.amount_paise)}
               </button>
             ) : (
               <button
                 onClick={handleMissionPayment}
-                className="mt-4 w-full h-9 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors flex items-center justify-center gap-2 cursor-pointer font-medium rounded-full"
+                className="mt-4 w-full h-9 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors flex items-center justify-center gap-2 cursor-pointer font-medium rounded-full"
               >
                 <Wallet size={12} /> CONTINUE TO PAYMENT {formatPaise(missionOrderDetail.amount_paise)}
               </button>
@@ -944,17 +1075,17 @@ export default function ActivityPage() {
           )}
           {missionOrderDetail && missionOrderDetail.status === "PAYMENT_PENDING" && (
             <div className="mt-4 space-y-2">
-              <div className="border border-[#b25e00]/20 bg-amber-50 px-4 py-3 flex items-center justify-between gap-3 rounded-2xl">
+              <div className="border border-amber-600/20 bg-amber-50 px-4 py-3 flex items-center justify-between gap-3 rounded-2xl">
                 <div>
-                  <div className="font-[var(--font-mono)] text-[0.6rem] text-[#b25e00]">PAYMENT AUTHORIZATION REQUIRED</div>
+                  <div className="font-[var(--font-mono)] text-[0.6rem] text-amber-600">PAYMENT AUTHORIZATION REQUIRED</div>
                   <div className="font-[var(--font-mono)] text-[0.5rem] text-neutral-500 mt-0.5">The buyer&apos;s provider authorization is pending — the order settles ONLY on a signature-verified webhook</div>
                 </div>
                 {missionOrderDetail.payment_url && (
-                  <a href={missionOrderDetail.payment_url} target="_blank" rel="noopener noreferrer" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[#0071e3] hover:underline whitespace-nowrap">OPEN PAYMENT LINK ↗</a>
+                  <a href={missionOrderDetail.payment_url} target="_blank" rel="noopener noreferrer" className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-accent-strong hover:underline whitespace-nowrap">OPEN PAYMENT LINK ↗</a>
                 )}
               </div>
               {DEMO_MODE && (
-                <button onClick={handleMissionSimulate} className="w-full h-9 border border-[#1f9d55]/20 bg-green-50 text-[13px] text-[#1f9d55] hover:bg-green-100 cursor-pointer font-medium rounded-full">
+                <button onClick={handleMissionSimulate} className="w-full h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 cursor-pointer font-medium rounded-full">
                   SIMULATE CAPTURE (DEV)
                 </button>
               )}
@@ -963,7 +1094,7 @@ export default function ActivityPage() {
           {missionOrderDetail && ORDER_TERMINAL.includes(missionOrderDetail.status) && (
             <Link
               href={`/dashboard/transactions/${missionOrderDetail.order_id}/replay`}
-              className="mt-4 inline-flex items-center justify-center w-full h-9 border border-[#1f9d55]/20 bg-green-50 text-[13px] text-[#1f9d55] hover:bg-green-100 transition-colors font-medium rounded-full"
+              className="mt-4 inline-flex items-center justify-center w-full h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 transition-colors font-medium rounded-full"
             >
               VIEW REPLAY
             </Link>
@@ -974,7 +1105,7 @@ export default function ActivityPage() {
       {/* Recent missions — derived from buyer.mission_received ledger events;
           resume-to-order restores the lifecycle from the authoritative order. */}
       {missionHistory.length > 0 && (
-        <div className="border border-black/[0.06] overflow-hidden stagger-child rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+        <div className="border border-black/[0.06] overflow-hidden stagger-child rounded-2xl shadow-card">
           <div className="px-5 py-3 border-b border-black/[0.06] bg-white flex items-center gap-2 rounded-[12px]">
             <History size={13} className="text-neutral-500" />
             <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-neutral-500">RECENT MISSIONS</span>
@@ -992,13 +1123,13 @@ export default function ActivityPage() {
               <div className="flex items-center gap-2 shrink-0">
                 {m.orderId ? (
                   <>
-                    <span className={`rounded-full px-2.5 py-1 text-[12px] font-medium border ${m.paid ? "border-[#1f9d55]/20 bg-green-50 text-[#1f9d55]" : m.held ? "border-[#b25e00]/20 bg-amber-50 text-[#b25e00]" : "border-[#1f9d55]/20 bg-green-50 text-[#1f9d55]"}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-[12px] font-medium border ${m.paid ? "border-green-600/20 bg-green-50 text-green-600" : m.held ? "border-amber-600/20 bg-amber-50 text-amber-600" : "border-green-600/20 bg-green-50 text-green-600"}`}>
                       {m.paid ? "PAID" : m.held ? "HELD" : "ORDER"}
                     </span>
                     <button
                       onClick={() => void handleResumeMission(m)}
                       disabled={resumingTrace !== null}
-                      className="inline-flex items-center gap-1 h-9 px-2.5 border border-[#0071e3]/30 bg-[#0071e3]/10 text-[13px] text-[#0071e3] hover:bg-[#0071e3]/15 transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full"
+                      className="inline-flex items-center gap-1 h-9 px-2.5 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full"
                     >
                       <Play size={10} /> {resumingTrace === m.traceId ? "RESUMING…" : "RESUME"}
                     </button>
@@ -1018,13 +1149,13 @@ export default function ActivityPage() {
       <div className="flex flex-wrap items-center gap-3 stagger-child">
         <div className="flex items-center gap-2">
           <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-400">ACTOR</span>
-          <select value={actorFilter} onChange={(e) => setActorFilter(e.target.value as ActorType | "all")} className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-1.5 cursor-pointer h-9 rounded-[10px] focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20">
+          <select value={actorFilter} onChange={(e) => setActorFilter(e.target.value as ActorType | "all")} className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-1.5 cursor-pointer h-9 rounded-[10px] focus:border-hairline focus:ring-[3px] focus:ring-ink/20">
             {actorFilters.map((f) => (<option key={f.value} value={f.value}>{f.label}</option>))}
           </select>
         </div>
         <div className="flex items-center gap-2">
           <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-400">TYPE</span>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-1.5 cursor-pointer h-9 rounded-[10px] focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20">
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-1.5 cursor-pointer h-9 rounded-[10px] focus:border-hairline focus:ring-[3px] focus:ring-ink/20">
             {eventTypeFilters.map((f) => (<option key={f} value={f}>{f}</option>))}
           </select>
         </div>
@@ -1039,51 +1170,15 @@ export default function ActivityPage() {
       </div>
 
       {/* Saved views over the current actor/type filter pair */}
-      <div className="flex flex-wrap items-center gap-2 stagger-child">
-        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-400">SAVED VIEWS</span>
-        <input
-          value={viewName}
-          onChange={(e) => setViewName(e.target.value)}
-          placeholder="Name this view…"
-          className="font-[var(--font-mono)] text-[14px] bg-white border border-black/[0.06] text-neutral-900 px-3 py-1.5 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] rounded-[10px] focus:ring-[3px] focus:ring-[#0071e3]/20"
-        />
-        <button
-          onClick={() => {
-            saveView(viewName, filterKey);
-            setViewName("");
-          }}
-          disabled={!viewName.trim()}
-          className="text-[13px] px-3 py-1.5 border border-[#0071e3]/30 bg-[#0071e3]/10 text-[#0071e3] hover:bg-[#0071e3]/15 transition-all cursor-pointer disabled:opacity-40 h-9 font-medium rounded-full"
-        >
-          SAVE CURRENT
-        </button>
-        {savedViews.map((v) => (
-          <span key={v.name} className="inline-flex items-center gap-1 border border-black/[0.06] bg-white pl-2.5">
-            <button
-              onClick={() => {
-                const [a, t] = v.value.split("|");
-                if (a) setActorFilter(a as ActorType | "all");
-                if (t) setTypeFilter(t);
-              }}
-              className="text-[13px] text-neutral-600 hover:text-neutral-900 py-1.5 cursor-pointer h-9 font-medium rounded-full"
-              title={`Apply: ${v.value}`}
-            >
-              {v.name}
-            </button>
-            <button
-              onClick={() => deleteView(v.name)}
-              className="px-1.5 py-1.5 font-[var(--font-mono)] text-[0.6rem] text-neutral-400 hover:text-[#d92d20] cursor-pointer"
-              aria-label={`Delete view ${v.name}`}
-            >
-              ×
-            </button>
-          </span>
-        ))}
-      </div>
+      <SavedViewsBar<string>
+        storageKey="activity"
+        current={filterKey}
+        onApply={applyView}
+      />
 
       {missionMsg && (
-        <div className={`px-4 py-3 border flex items-start gap-2 ${missionMsg.kind === "error" ? "border-[#d92d20]/20 bg-red-50" : "border-[#1f9d55]/20 bg-green-50"}`}>
-          <span className={`font-[var(--font-mono)] text-[0.62rem] leading-relaxed ${missionMsg.kind === "error" ? "text-[#d92d20]" : "text-[#1f9d55]"}`}>
+        <div className={`px-4 py-3 border flex items-start gap-2 ${missionMsg.kind === "error" ? "border-red-600/20 bg-red-50" : "border-green-600/20 bg-green-50"}`}>
+          <span className={`font-[var(--font-mono)] text-[0.62rem] leading-relaxed ${missionMsg.kind === "error" ? "text-red-600" : "text-green-600"}`}>
             {missionMsg.text}
           </span>
         </div>
@@ -1095,7 +1190,7 @@ export default function ActivityPage() {
       {loading && events.length === 0 ? (
         <TableSkeleton rows={8} />
       ) : (
-      <div className="border border-black/[0.06] overflow-hidden stagger-child rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+      <div className="border border-black/[0.06] overflow-hidden stagger-child rounded-2xl shadow-card">
         {filtered.length === 0 ? (
           <EmptyState
             title={loading ? "Loading events…" : "No activity yet."}
@@ -1166,7 +1261,7 @@ export default function ActivityPage() {
                     <div className="font-[var(--font-mono)] text-[0.5rem] uppercase text-neutral-400 mb-1">Flags</div>
                     <div className="flex flex-wrap gap-1.5">
                       {event.flags.map((flag) => (
-                        <span key={flag} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 bg-[#0071e3]/10 text-[#0071e3]">{flag}</span>
+                        <span key={flag} className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] px-1.5 py-0.5 bg-ink/10 text-ink">{flag}</span>
                       ))}
                     </div>
                   </div>
@@ -1178,6 +1273,23 @@ export default function ActivityPage() {
           );
         })}
       </div>
+      )}
+      {/* Ledger pagination: real offset windows, deduped by event_id. */}
+      {!(loading && events.length === 0) && events.length > 0 && (
+        <div className="flex items-center justify-between gap-3 stagger-child">
+          <span className="font-mono text-[0.6rem] text-muted tabular-nums">
+            Showing {filtered.length} events
+          </span>
+          {feedHasMore && (
+            <button
+              onClick={() => void handleLoadMore()}
+              disabled={loadingMore}
+              className="inline-flex items-center h-9 px-4 rounded-full bg-panel border border-hairline text-[13px] font-medium text-ink-2 hover:text-ink transition-all cursor-pointer disabled:opacity-50"
+            >
+              {loadingMore ? "LOADING…" : "LOAD MORE"}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

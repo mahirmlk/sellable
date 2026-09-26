@@ -25,6 +25,8 @@ import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import { RefreshButton } from "@/components/dashboard/commerce-ui";
+import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
+import { toast } from "@/components/dashboard/toasts";
 import {
   Section,
   PartialBanner,
@@ -42,15 +44,15 @@ const DISCOVERY_DESCRIPTIONS: Record<string, string> = {
 };
 
 const SECONDARY_PILL =
-  "inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+  "inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
 const SMALL_PILL =
-  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-white border border-black/10 shadow-sm text-[12px] font-medium text-neutral-600 hover:text-neutral-900 hover:shadow transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-white border border-black/10 shadow-sm text-[12px] font-medium text-neutral-600 hover:text-neutral-900 hover:shadow transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
 const SMALL_DANGER_PILL =
-  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-red-50/60 border border-red-200/70 shadow-sm text-[12px] font-medium text-red-700 hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+  "inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-red-50 border border-red-200/70 shadow-sm text-[12px] font-medium text-red-700 hover:bg-red-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
 const PRIMARY_PILL =
-  "inline-flex items-center gap-2 h-9 px-5 rounded-full bg-[#0071e3] text-white text-[13px] font-semibold shadow-sm hover:bg-[#0077ed] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+  "inline-flex items-center gap-2 h-9 px-5 rounded-full bg-ink text-white text-[13px] font-semibold shadow-sm hover:bg-ink-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
 const APPLE_INPUT =
-  "h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow";
+  "h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow";
 
 function ChannelRow({ name, detail, state }: { name: string; detail: string; state: "ACTIVE" | "AVAILABLE" | "OFFLINE" }) {
   const tone =
@@ -95,6 +97,9 @@ export default function StorefrontPage() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [freshKey, setFreshKey] = useState<{ plaintext: string; prefix: string } | null>(null);
   const [keyActionError, setKeyActionError] = useState<string | null>(null);
+  // Revocation is irreversible — the confirm dialog names the exact key
+  // (label + prefix) before the DELETE goes out.
+  const [revokeTarget, setRevokeTarget] = useState<AgentApiKeyView | null>(null);
 
   const fetchKeys = useCallback(async () => {
     setKeysLoading(true);
@@ -131,32 +136,53 @@ export default function StorefrontPage() {
     }
   };
 
-  const handleRotateKey = async (keyId: string) => {
+  const handleRotateKey = async (key: AgentApiKeyView) => {
     if (busyKey) return;
-    setBusyKey(keyId);
+    setBusyKey(key.key_id);
     setKeyActionError(null);
     try {
-      const created = await rotateAgentKey(keyId);
+      const created = await rotateAgentKey(key.key_id);
       setFreshKey({ plaintext: created.plaintext, prefix: created.key.key_prefix });
+      toast({
+        tone: "success",
+        title: "API key rotated",
+        description: `New secret issued for ${key.label || key.key_prefix} — copy it now, it is shown once.`,
+      });
       await fetchKeys();
     } catch {
       setKeyActionError("Rotation failed — the old key is still active. Try again.");
+      toast({
+        tone: "error",
+        title: "Rotation failed",
+        description: "The old key is still active. Try again.",
+      });
     } finally {
       setBusyKey(null);
     }
   };
 
-  const handleRevokeKey = async (keyId: string) => {
+  const handleRevokeKey = async (key: AgentApiKeyView) => {
     if (busyKey) return;
-    setBusyKey(keyId);
+    setBusyKey(key.key_id);
     setKeyActionError(null);
     try {
-      await revokeAgentKey(keyId);
+      await revokeAgentKey(key.key_id);
+      toast({
+        tone: "success",
+        title: "API key revoked",
+        description: key.label || key.key_prefix,
+      });
       await fetchKeys();
     } catch {
       setKeyActionError("Revocation failed — the key is still active. Try again.");
+      toast({
+        tone: "error",
+        title: "Revocation failed",
+        description: "The key is still active. Try again.",
+      });
     } finally {
       setBusyKey(null);
+      setRevokeTarget(null);
     }
   };
 
@@ -284,7 +310,7 @@ export default function StorefrontPage() {
           {/* Store availability */}
           <Section title="Store availability" hint="Live backend state">
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-              <span className={`inline-flex items-center gap-2 text-[14px] font-semibold ${discoverable ? "text-green-700" : "text-[#b25e00]"}`}>
+              <span className={`inline-flex items-center gap-2 text-[14px] font-semibold ${discoverable ? "text-green-700" : "text-amber-600"}`}>
                 <Globe size={16} /> {discoverable ? "Discoverable" : "Offline — not verified"}
               </span>
               <span className="text-[14px] text-neutral-600">
@@ -302,7 +328,7 @@ export default function StorefrontPage() {
                 ].map((r) => (
                   <div key={r.label} className="rounded-[10px] bg-neutral-50 border border-black/[0.06] px-3 py-2.5 flex items-center justify-between gap-2">
                     <span className="text-[12px] font-medium text-neutral-500">{r.label}</span>
-                    <span className={`text-[13px] font-semibold ${r.value === "CONNECTED" ? "text-green-700" : r.value === "UNCONFIGURED" ? "text-[#b25e00]" : "text-red-700"}`}>
+                    <span className={`text-[13px] font-semibold ${r.value === "CONNECTED" ? "text-green-700" : r.value === "UNCONFIGURED" ? "text-amber-600" : "text-red-700"}`}>
                       {r.value}
                     </span>
                   </div>
@@ -484,7 +510,7 @@ export default function StorefrontPage() {
           </Section>
 
           {/* API keys — secondary developer section, collapsed by default */}
-          <details className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] overflow-hidden group">
+          <details className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden group">
             <summary className="px-6 py-4 flex items-center justify-between cursor-pointer list-none">
               <div className="flex items-center gap-2.5 min-w-0">
                 <KeyRound size={14} className="text-neutral-400 shrink-0" />
@@ -517,7 +543,7 @@ export default function StorefrontPage() {
             </div>
 
             {createOpen && (
-              <div className="px-6 py-5 border-t border-black/[0.06] bg-neutral-50/60 space-y-4">
+              <div className="px-6 py-5 border-t border-black/[0.06] bg-panel-2 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <label className="flex flex-col gap-1.5">
                     <span className="text-[13px] text-neutral-500">Label (optional)</span>
@@ -551,7 +577,7 @@ export default function StorefrontPage() {
             )}
 
             {freshKey && (
-              <div className="px-6 py-5 border-t border-black/[0.06] bg-green-50/60">
+              <div className="px-6 py-5 border-t border-black/[0.06] bg-green-50">
                 <div className="flex items-start gap-2 mb-2">
                   <ShieldAlert size={14} className="text-green-700 mt-0.5 shrink-0" />
                   <span className="text-[13px] font-medium text-green-800">Copy now — shown only this once ({freshKey.prefix}…)</span>
@@ -596,10 +622,10 @@ export default function StorefrontPage() {
                   </div>
                   {!k.revoked_at && (
                     <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => void handleRotateKey(k.key_id)} disabled={busyKey !== null} className={SMALL_PILL}>
+                      <button onClick={() => void handleRotateKey(k)} disabled={busyKey !== null} className={SMALL_PILL}>
                         <RotateCw size={12} /> {busyKey === k.key_id ? "Working…" : "Rotate"}
                       </button>
-                      <button onClick={() => void handleRevokeKey(k.key_id)} disabled={busyKey !== null} className={SMALL_DANGER_PILL}>
+                      <button onClick={() => setRevokeTarget(k)} disabled={busyKey !== null} className={SMALL_DANGER_PILL}>
                         <Ban size={12} /> Revoke
                       </button>
                     </div>
@@ -610,6 +636,26 @@ export default function StorefrontPage() {
           </details>
         </>
       )}
+
+      {/* Revocation confirm — names the exact key before the irreversible DELETE. */}
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        tone="danger"
+        title={
+          revokeTarget
+            ? `Revoke ${revokeTarget.label ? `“${revokeTarget.label}”` : "agent key"} (${revokeTarget.key_prefix}…)?`
+            : ""
+        }
+        description="Agent requests using this key will start failing immediately. This cannot be undone."
+        confirmLabel="Revoke key"
+        busy={revokeTarget !== null && busyKey === revokeTarget.key_id}
+        onConfirm={() => {
+          if (revokeTarget) void handleRevokeKey(revokeTarget);
+        }}
+        onCancel={() => {
+          if (!busyKey) setRevokeTarget(null);
+        }}
+      />
     </div>
   );
 }

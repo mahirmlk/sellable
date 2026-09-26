@@ -39,11 +39,11 @@ export function historyChip(s: CheckoutSessionListItem): { label: string; tone: 
 }
 
 const CHIP_TONES: Record<ChipTone, string> = {
-  green: "text-[#1f9d55] border-[#1f9d55]/20 bg-green-50",
-  amber: "text-[#b25e00] border-[#b25e00]/20 bg-amber-50",
-  red: "text-[#d92d20] border-[#d92d20]/20 bg-red-50",
+  green: "text-green-600 border-green-600/20 bg-green-50",
+  amber: "text-amber-600 border-amber-600/20 bg-amber-50",
+  red: "text-red-600 border-red-600/20 bg-red-50",
   grey: "text-neutral-600 border-black/[0.06] bg-neutral-100",
-  orange: "text-[#0071e3] border-[#0071e3]/20 bg-[#0071e3]/5",
+  orange: "text-ink border-hairline bg-ink/5",
 };
 
 /**
@@ -128,7 +128,7 @@ export default function ChatHistory({
         </span>
         <button
           onClick={onNew}
-          className="inline-flex items-center gap-1.5 h-7 px-2.5 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors cursor-pointer font-medium rounded-full"
+          className="inline-flex items-center gap-1.5 h-7 px-2.5 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors cursor-pointer font-medium rounded-full"
         >
           <Plus size={11} /> NEW SESSION
         </button>
@@ -168,7 +168,7 @@ export default function ChatHistory({
                   disabled={isBusy}
                   className={`${HISTORY_ROW_CLASS} cursor-pointer disabled:cursor-wait ${
                     isActive
-                      ? "bg-[#0071e3]/5 border-l-2 border-l-[#0071e3]"
+                      ? "bg-ink/5 border-l-2 border-l-ink"
                       : "hover:bg-neutral-50 border-l-2 border-l-transparent"
                   }`}
                   aria-current={isActive ? "true" : undefined}
@@ -210,7 +210,7 @@ export default function ChatHistory({
                     disabled={isBusy}
                     title="Delete session"
                     aria-label={`Delete ${historyTitle(s)}`}
-                    className="inline-flex items-center justify-center size-6 border border-black/[0.06] bg-white text-neutral-600 hover:text-[#d92d20] hover:border-[#d92d20]/30 transition-colors cursor-pointer disabled:opacity-50 rounded-full"
+                    className="inline-flex items-center justify-center size-6 border border-black/[0.06] bg-white text-neutral-600 hover:text-red-600 hover:border-red-600/30 transition-colors cursor-pointer disabled:opacity-50 rounded-full"
                   >
                     <Trash2 size={11} />
                   </button>

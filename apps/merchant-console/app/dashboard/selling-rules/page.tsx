@@ -29,9 +29,9 @@ const SIM_VERDICT_LABEL: Record<SimVerdict, string> = {
 };
 
 const PRIMARY_PILL =
-  "inline-flex items-center gap-2 h-9 px-5 rounded-full bg-[#0071e3] text-white text-[13px] font-semibold shadow-sm hover:bg-[#0077ed] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]";
+  "inline-flex items-center gap-2 h-9 px-5 rounded-full bg-ink text-white text-[13px] font-semibold shadow-sm hover:bg-ink-2 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]";
 const APPLE_INPUT =
-  "h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow";
+  "h-9 rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow";
 const ROW = "py-3 flex items-center justify-between gap-3 border-b border-black/[0.06] last:border-b-0";
 
 export default function SellingRulesPage() {
@@ -187,14 +187,14 @@ export default function SellingRulesPage() {
     const isEditing = key in editing;
     return (
       <div className={ROW}>
-        <span className={`text-[13px] ${highlight ? "font-medium text-[#0071e3]" : "text-neutral-500"}`}>{label}</span>
+        <span className={`text-[13px] ${highlight ? "font-medium text-accent-strong" : "text-neutral-500"}`}>{label}</span>
         <div className="flex items-center gap-2">
           <input
             type="number"
             value={Math.round((value as number) / 100)}
             onChange={(e) => handleChange(key, String(parseInt(e.target.value || "0", 10) * 100))}
-            className="w-[120px] h-9 rounded-[10px] bg-white border text-[14px] text-right tabular-nums px-2.5 text-neutral-900 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
-            style={{ borderColor: isEditing ? "#0071e3" : "rgba(0,0,0,0.12)" }}
+            className="w-[120px] h-9 rounded-[10px] bg-white border text-[14px] text-right tabular-nums px-2.5 text-neutral-900 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow"
+            style={{ borderColor: isEditing ? "var(--c-ink)" : "var(--c-hairline)" }}
             aria-label={label}
           />
           <span className="text-[13px] text-neutral-400 w-[20px]">₹</span>
@@ -215,8 +215,8 @@ export default function SellingRulesPage() {
             type="number"
             value={value as number}
             onChange={(e) => handleChange(key, e.target.value)}
-            className="w-[80px] h-9 rounded-[10px] bg-white border text-[14px] text-right tabular-nums px-2.5 text-neutral-900 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
-            style={{ borderColor: isEditing ? "#0071e3" : "rgba(0,0,0,0.12)" }}
+            className="w-[80px] h-9 rounded-[10px] bg-white border text-[14px] text-right tabular-nums px-2.5 text-neutral-900 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow"
+            style={{ borderColor: isEditing ? "var(--c-ink)" : "var(--c-hairline)" }}
             aria-label={label}
           />
           <span className="text-[13px] text-neutral-400 w-[20px]">{suffix}</span>
@@ -241,7 +241,7 @@ export default function SellingRulesPage() {
       />
 
       {saveMsg === "success" && (
-        <div className="rounded-2xl bg-green-50/80 backdrop-blur-xl border border-green-200/60 px-4 py-3 flex items-center gap-2.5">
+        <div className="rounded-2xl bg-green-50 border border-green-200/60 px-4 py-3 flex items-center gap-2.5">
           <span className="flex items-center justify-center size-6 rounded-full bg-green-100 shrink-0" aria-hidden>
             <Check size={13} className="text-green-700" />
           </span>
@@ -286,7 +286,7 @@ export default function SellingRulesPage() {
                 value={current.allowed_categories.join(", ")}
                 onChange={(e) => handleChange("allowed_categories", e.target.value)}
                 className={`${APPLE_INPUT} w-full`}
-                style={{ borderColor: "allowed_categories" in editing ? "#0071e3" : undefined }}
+                style={{ borderColor: "allowed_categories" in editing ? "var(--c-ink)" : undefined }}
               />
               <div className="text-[12px] text-neutral-400 mt-1.5">Comma-separated list of allowed product categories</div>
             </Section>

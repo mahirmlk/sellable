@@ -1,7 +1,7 @@
 import { type TransactionStatus } from "@/lib/types/domain";
 
 const statusConfig: Record<TransactionStatus, { label: string; classes: string; dot?: boolean }> = {
-  AWAITING_CONSENT: { label: "Awaiting consent", classes: "bg-[#fff4e5] text-[#b25e00]", dot: true },
+  AWAITING_CONSENT: { label: "Awaiting consent", classes: "bg-amber-100 text-amber-600", dot: true },
   CONSENTED: { label: "Consented", classes: "bg-blue-50 text-blue-700", dot: true },
   PAYMENT_PENDING: { label: "Payment pending", classes: "bg-amber-50 text-amber-800", dot: true },
   PAID: { label: "Paid", classes: "bg-green-50 text-green-700", dot: true },

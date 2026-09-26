@@ -2,7 +2,7 @@ import { type ActorType } from "@/lib/types/domain";
 
 const actorConfig: Record<ActorType, { label: string; dot: string; bg: string; text: string }> = {
   buyer_agent: { label: "Buyer agent", dot: "bg-blue-600", bg: "bg-blue-50", text: "text-blue-700" },
-  seller_agent: { label: "Seller agent", dot: "bg-[#ff6900]", bg: "bg-[#fff4e5]", text: "text-[#b25e00]" },
+  seller_agent: { label: "Seller agent", dot: "bg-accent", bg: "bg-amber-100", text: "text-amber-600" },
   policy_engine: { label: "Policy engine", dot: "bg-amber-600", bg: "bg-amber-50", text: "text-amber-800" },
   consent_service: { label: "Consent", dot: "bg-cyan-600", bg: "bg-cyan-50", text: "text-cyan-800" },
   human: { label: "Human", dot: "bg-green-600", bg: "bg-green-50", text: "text-green-700" },

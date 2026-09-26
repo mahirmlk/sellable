@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { ShieldCheck, CheckCircle, XCircle, ArrowRight } from "lucide-react";
+import { ShieldCheck, CheckCircle, XCircle, ArrowRight, Download } from "lucide-react";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { RefreshButton } from "@/components/dashboard/commerce-ui";
 import { formatTimestamp, formatPaise } from "@/lib/formatters";
+import { exportToCsv } from "@/lib/csv";
 import {
   getConsoleApprovals,
   approveConsoleOrder,
@@ -21,6 +22,8 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
+import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
+import { toast } from "@/components/dashboard/toasts";
 import {
   PartialBanner,
   Tabs,
@@ -68,6 +71,9 @@ export default function ApprovalsPage() {
   // Per-order busy flags: double-clicking approve/reject must not fire the
   // request twice (the second call 400s after the first one lands).
   const [busyOrders, setBusyOrders] = useState<Set<string>>(new Set());
+  // Rejection declines the buyer's mission irreversibly — the confirm dialog
+  // names the order and amount before the decision is recorded.
+  const [rejectTarget, setRejectTarget] = useState<ApprovalRow | null>(null);
 
   const fetchData = useCallback(async (silent = false) => {
     // Polls run silently: only the opening fetch may flip the full-page
@@ -182,7 +188,8 @@ export default function ApprovalsPage() {
     [approvals, filter, transactions, thresholdPaise]
   );
 
-  const runAction = async (orderId: string, kind: "approve" | "reject") => {
+  const runAction = async (approval: ApprovalRow, kind: "approve" | "reject") => {
+    const orderId = approval.orderId;
     if (busyOrders.has(orderId)) return;
     setBusyOrders((prev) => new Set(prev).add(orderId));
     setActionError(null);
@@ -215,6 +222,11 @@ export default function ApprovalsPage() {
         }
         return prev.filter((a) => a.orderId !== orderId);
       });
+      toast({
+        tone: "success",
+        title: kind === "approve" ? "Order approved" : "Order rejected",
+        description: `${approval.orderId} · ${formatPaise(approval.amountPaise)}`,
+      });
       // The decision is persisted on the order — refresh immediately so the
       // pending queue reflects backend truth without waiting for the poll.
       await fetchData(true);
@@ -225,7 +237,15 @@ export default function ApprovalsPage() {
           ? `Backend unreachable — the ${kind === "approve" ? "approval" : "rejection"} was not recorded. Try again.`
           : `The backend rejected the ${kind === "approve" ? "approval" : "rejection"} request. Refresh and try again.`
       );
+      toast({
+        tone: "error",
+        title: kind === "approve" ? "Approval failed" : "Rejection failed",
+        description: unreachable
+          ? `Backend unreachable — the ${kind === "approve" ? "approval" : "rejection"} was not recorded. Try again.`
+          : `The backend rejected the ${kind === "approve" ? "approval" : "rejection"} request. Refresh and try again.`,
+      });
     } finally {
+      setRejectTarget(null);
       setBusyOrders((prev) => {
         const next = new Set(prev);
         next.delete(orderId);
@@ -234,8 +254,25 @@ export default function ApprovalsPage() {
     }
   };
 
-  const handleApprove = (orderId: string) => void runAction(orderId, "approve");
-  const handleReject = (orderId: string) => void runAction(orderId, "reject");
+  const handleApprove = (approval: ApprovalRow) => void runAction(approval, "approve");
+  const handleReject = (approval: ApprovalRow) => setRejectTarget(approval);
+
+  // The currently displayed rows: the filtered pending queue, or this
+  // session's reviewed record when on the reviewed tab.
+  const exported = tab === "pending" ? pending : reviewed;
+
+  const handleExport = useCallback(() => {
+    const rows = exported.map((a) => ({
+      order_id: a.orderId,
+      buyer_id: a.buyerId,
+      amount_inr: (a.amountPaise / 100).toFixed(2),
+      reason: a.reason,
+      requested_at: a.requestedAt,
+      status: a.status,
+    }));
+    exportToCsv("approvals.csv", rows);
+    toast({ tone: "success", title: "Exported approvals.csv", description: `${rows.length} rows` });
+  }, [exported]);
 
   const approvalCard = (approval: ApprovalRow) => {
     const tx = txByOrder.get(approval.orderId);
@@ -246,7 +283,7 @@ export default function ApprovalsPage() {
     const floor = firstSku && firstSku in floors ? floors[firstSku] : null;
     const budget = tx?.buyer_budget_paise ?? null;
     return (
-      <div key={approval.orderId} className="rounded-2xl bg-white border border-amber-200/60 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] p-6 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_12px_40px_-12px_rgba(0,0,0,0.18)]">
+      <div key={approval.orderId} className="rounded-2xl bg-white border border-amber-200/60 shadow-card p-6 transition-all duration-200 hover:-translate-y-px hover:shadow-lift">
         <div className="flex flex-col lg:flex-row lg:items-start gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -256,7 +293,7 @@ export default function ApprovalsPage() {
                 {buyerType === "ai" ? "AI buyer" : buyerType === "human" ? "Human buyer" : "Unknown buyer"}
               </span>
               {high && (
-                <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium bg-[#fff4e5] text-[#b25e00]">
+                <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium bg-amber-100 text-amber-600">
                   High value
                 </span>
               )}
@@ -298,13 +335,13 @@ export default function ApprovalsPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap shrink-0">
-            <Link href={`/dashboard/transactions/${approval.orderId}`} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]">
+            <Link href={`/dashboard/transactions/${approval.orderId}`} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]">
               View order <ArrowRight size={13} />
             </Link>
-            <button onClick={() => handleReject(approval.orderId)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-red-50 border border-red-200/60 text-[13px] font-medium text-red-700 hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]">
+            <button onClick={() => handleReject(approval)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-red-50 border border-red-200/60 text-[13px] font-medium text-red-700 hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]">
               <XCircle size={14} /> {busyOrders.has(approval.orderId) ? "Working…" : "Reject"}
             </button>
-            <button onClick={() => handleApprove(approval.orderId)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-[#1f9d55] text-[13px] font-semibold text-white shadow-sm hover:bg-[#1a8a4b] transition-all cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]">
+            <button onClick={() => handleApprove(approval)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-green-600 text-[13px] font-semibold text-white shadow-sm hover:bg-green-600 transition-all cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]">
               <CheckCircle size={14} /> {busyOrders.has(approval.orderId) ? "Working…" : "Approve"}
             </button>
           </div>
@@ -319,7 +356,16 @@ export default function ApprovalsPage() {
         title={approvals.length > 0 ? `${approvals.length} waiting for you` : "Approvals"}
         subtitle="Orders waiting for your approval"
         actions={
-          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+          <>
+            <button
+              onClick={handleExport}
+              disabled={exported.length === 0}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
+            >
+              <Download size={14} /> Export
+            </button>
+            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+          </>
         }
       />
 
@@ -358,7 +404,7 @@ export default function ApprovalsPage() {
             message={approvals.length === 0
               ? "Transactions below your configured approval threshold can proceed automatically."
               : "Try a different filter — the pending queue itself is intact."}
-            action={<ShieldCheck size={28} className="text-[var(--bb-grey-4)]" />}
+            action={<ShieldCheck size={28} className="text-faint" />}
           />
         ) : (
           <div className="space-y-4 stagger-child">{pending.map(approvalCard)}</div>
@@ -369,15 +415,15 @@ export default function ApprovalsPage() {
           message="Orders you approve or reject this session appear here. The backend keeps no review history — this list resets on reload."
         />
       ) : (
-        <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] overflow-hidden">
-          <div className="px-6 py-4 border-b border-black/[0.06] bg-white/80 backdrop-blur-xl">
-            <div className="text-[15px] font-semibold tracking-[-0.01em] text-neutral-900">Recently reviewed</div>
+        <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden">
+          <div className="px-6 py-4 border-b border-hairline bg-panel-2">
+            <div className="font-display text-[21px] leading-none tracking-[-0.005em] text-ink">Recently reviewed</div>
             <div className="text-[12px] text-neutral-400 mt-0.5">The backend keeps no review history — this list resets on reload</div>
           </div>
           {reviewed.map((a, i) => (
             <div key={a.orderId} className={`px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-black/[0.02] ${i < reviewed.length - 1 ? "border-b border-black/[0.05]" : ""}`}>
               <div className="flex items-center gap-4 min-w-0">
-                <Link href={`/dashboard/transactions/${a.orderId}`} className="text-[13px] font-medium text-[#0071e3] hover:underline truncate">{a.orderId}</Link>
+                <Link href={`/dashboard/transactions/${a.orderId}`} className="text-[13px] font-medium text-accent-strong hover:underline truncate">{a.orderId}</Link>
                 <MoneyValue paise={a.amountPaise} size="sm" />
               </div>
               <span className={`shrink-0 inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${a.status === "APPROVED" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>{a.status === "APPROVED" ? "Approved" : "Rejected"}</span>
@@ -385,6 +431,26 @@ export default function ApprovalsPage() {
           ))}
         </div>
       )}
+
+      {/* Rejection confirm — names the order and amount before the irreversible decision. */}
+      <ConfirmDialog
+        open={rejectTarget !== null}
+        tone="danger"
+        title={
+          rejectTarget
+            ? `Reject order ${rejectTarget.orderId} for ${formatPaise(rejectTarget.amountPaise)}?`
+            : ""
+        }
+        description="The buyer mission will be declined and this cannot be undone."
+        confirmLabel="Reject order"
+        busy={rejectTarget !== null && busyOrders.has(rejectTarget.orderId)}
+        onConfirm={() => {
+          if (rejectTarget) void runAction(rejectTarget, "reject");
+        }}
+        onCancel={() => {
+          if (rejectTarget && !busyOrders.has(rejectTarget.orderId)) setRejectTarget(null);
+        }}
+      />
     </div>
   );
 }

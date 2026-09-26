@@ -1,7 +1,7 @@
 "use client";
 
 // Commerce-specific shared UI (badges, tabs, toolbar buttons, saved views).
-// Apple premium treatment: pill controls, soft badges, segmented tabs.
+// Golden-hour treatment: pill controls, soft badges, segmented tabs.
 
 import Link from "next/link";
 import { useState } from "react";
@@ -21,7 +21,7 @@ export function RefreshButton({
     <button
       onClick={onRefresh}
       disabled={loading}
-      className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
+      className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
     >
       <IconRefresh size={14} className={loading ? "animate-spin" : ""} /> {label}
     </button>
@@ -31,7 +31,7 @@ export function RefreshButton({
 /** Amber banner for partial failures: some sections loaded, others did not. */
 export function PartialBanner({ message }: { message: string }) {
   return (
-    <div className="rounded-2xl bg-amber-50/80 backdrop-blur-xl border border-amber-200/60 px-4 py-3 flex items-start gap-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+    <div className="rounded-2xl bg-amber-50 border border-amber-200/60 px-4 py-3 flex items-start gap-2.5 shadow-card">
       <span className="flex items-center justify-center size-6 rounded-full bg-amber-100 shrink-0 mt-0.5" aria-hidden>
         <IconWarning size={13} className="text-amber-800" />
       </span>
@@ -59,7 +59,16 @@ export function FilterTabs<T extends string>({
           role="tab"
           aria-selected={active === t.key}
           onClick={() => onChange(t.key)}
-          className={`h-8 px-4 rounded-full text-[13px] font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+          onKeyDown={(e) => {
+            // Same roving model as tier-fallbacks Tabs so both segmented
+            // controls behave identically for keyboard users.
+            if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+            e.preventDefault();
+            const idx = tabs.findIndex((x) => x.key === active);
+            const next = e.key === "ArrowRight" ? (idx + 1) % tabs.length : (idx - 1 + tabs.length) % tabs.length;
+            onChange(tabs[next].key);
+          }}
+          className={`h-8 px-4 rounded-full text-[13px] font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-accent ${
             active === t.key
               ? "bg-white shadow-sm text-neutral-900"
               : "text-neutral-500 hover:text-neutral-900"
@@ -100,7 +109,7 @@ export function ChannelBadge({ channel }: { channel: "human_chat" | "agent_to_ag
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium leading-none ${
-        isAi ? "bg-[#fff4e5] text-[#b25e00]" : "bg-neutral-100 text-neutral-600"
+        isAi ? "bg-amber-100 text-amber-600" : "bg-neutral-100 text-neutral-600"
       }`}
     >
       {isAi ? "AI buyer" : "Human"}
@@ -125,7 +134,7 @@ export function ViewStoreLink() {
   return (
     <Link
       href="/dashboard/storefront"
-      className="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-[#0071e3] text-[13px] font-semibold text-white shadow-sm hover:bg-[#0077ed] transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.98]"
+      className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow hover:bg-neutral-50 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
     >
       View store
     </Link>
@@ -193,7 +202,7 @@ export function SavedViewsBar<T>({
                 setSaving(false);
               }
             }}
-            className="h-9 w-[160px] rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
+            className="h-9 w-[160px] rounded-[10px] bg-white border border-black/[0.12] text-[14px] text-neutral-900 px-3 placeholder:text-neutral-400 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow"
           />
           <button
             onClick={() => {

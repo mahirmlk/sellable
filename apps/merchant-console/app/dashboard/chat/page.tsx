@@ -103,16 +103,16 @@ function PhaseStepper({ phase }: { phase: ChatPhase }) {
   const progress = phaseProgress(phase);
   if (!progress) return null;
   const dotTone: Record<string, string> = {
-    done: "bg-[#1f9d55]",
-    active: "bg-[#0071e3] animate-[blink_1.5s_ease-in-out_infinite]",
-    blocked: "bg-[#b25e00]",
-    failed: "bg-[#d92d20]",
+    done: "bg-green-600",
+    active: "bg-ink animate-[blink_1.5s_ease-in-out_infinite]",
+    blocked: "bg-amber-600",
+    failed: "bg-red-600",
   };
   const textTone: Record<string, string> = {
     done: "text-neutral-600",
     active: "text-neutral-900",
-    blocked: "text-[#b25e00]",
-    failed: "text-[#d92d20]",
+    blocked: "text-amber-600",
+    failed: "text-red-600",
   };
   return (
     <div className="hidden md:flex items-center gap-2" aria-label="Checkout lifecycle progress">
@@ -143,7 +143,7 @@ function PhaseStepper({ phase }: { phase: ChatPhase }) {
 function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 px-2 py-[3px] border border-black/[0.05] bg-white font-[var(--font-mono)] text-[0.5rem] tracking-[0.06em] text-neutral-600 rounded-full">
-      <span className="text-[#1f9d55]">{icon}</span>
+      <span className="text-green-600">{icon}</span>
       {label}
     </span>
   );
@@ -151,7 +151,7 @@ function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
 
 function CartCard({ cart, productTitle }: { cart: CartPayload; productTitle?: string | null }) {
   return (
-    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
       <div className="flex items-center justify-between mb-1">
         <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-neutral-600">Cart</span>
         <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase text-neutral-600">
@@ -179,8 +179,8 @@ function CartCard({ cart, productTitle }: { cart: CartPayload; productTitle?: st
         ))}
       </div>
       {cart.upsell_offered && (
-        <div className="border-l-2 border-[#0071e3]/30 pl-3 py-1 mb-3">
-          <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-[#0071e3] mb-1">UPSELL</div>
+        <div className="border-l-2 border-hairline pl-3 py-1 mb-3">
+          <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-accent-strong mb-1">UPSELL</div>
           {cart.upsell_rationale && (
             <div className="font-[var(--font-sans)] text-[0.72rem] text-neutral-600 leading-relaxed">{cart.upsell_rationale}</div>
           )}
@@ -189,7 +189,7 @@ function CartCard({ cart, productTitle }: { cart: CartPayload; productTitle?: st
       {cart.discount_paise > 0 && (
         <div className="flex items-center justify-between py-1.5 border-t border-black/[0.05]">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Discount</span>
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-[#1f9d55] tabular-nums">−{formatPaise(cart.discount_paise)}</span>
+          <span className="font-[var(--font-mono)] text-[0.7rem] text-green-600 tabular-nums">−{formatPaise(cart.discount_paise)}</span>
         </div>
       )}
       <div className="flex items-center justify-between pt-2.5 mt-1 border-t border-black/[0.06]">
@@ -204,10 +204,10 @@ function PolicyCard({ decision }: { decision: PolicyDecisionPayload }) {
   const allowed = decision.verdict === "ALLOW";
   const hitl = decision.verdict === "NEEDS_HUMAN_APPROVAL";
   return (
-    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
       <div className="flex items-center justify-between mb-2.5">
         <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-neutral-600">Policy Decision</span>
-        <span className={`font-[var(--font-mono)] text-[0.62rem] tracking-[0.1em] ${allowed ? "text-[#1f9d55]" : hitl ? "text-[#b25e00]" : "text-[#d92d20]"}`}>
+        <span className={`font-[var(--font-mono)] text-[0.62rem] tracking-[0.1em] ${allowed ? "text-green-600" : hitl ? "text-amber-600" : "text-red-600"}`}>
           {allowed ? "✓ ALLOW" : hitl ? "HITL REQUIRED" : "✕ DENIED"}
         </span>
       </div>
@@ -228,12 +228,12 @@ function PolicyCard({ decision }: { decision: PolicyDecisionPayload }) {
 
 function ConsentCard({ consent }: { consent: ConsentInfo }) {
   return (
-    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
       <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-neutral-600 mb-3">CONSENT</div>
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Status</span>
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-[#1f9d55] flex items-center gap-1.5"><span className="size-2 rounded-full bg-[#1f9d55]" />{consent.status}</span>
+          <span className="font-[var(--font-mono)] text-[0.7rem] text-green-600 flex items-center gap-1.5"><span className="size-2 rounded-full bg-green-600" />{consent.status}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Amount</span>
@@ -262,18 +262,18 @@ function ConsentCard({ consent }: { consent: ConsentInfo }) {
 
 function ReceiptCard({ order, payment }: { order: OrderCreateResult; payment?: PaymentAttemptPayload | null }) {
   return (
-    <div className="border border-[#1f9d55]/20 bg-green-50 p-5 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+    <div className="border border-green-600/20 bg-green-50 p-5 rounded-2xl shadow-card">
       <div className="flex items-center gap-3 mb-4">
-        <CheckCircle2 size={22} className="text-[#1f9d55]" />
+        <CheckCircle2 size={22} className="text-green-600" />
         <div>
           <div className="font-[var(--font-sans)] text-[1rem] text-neutral-900">Payment captured</div>
           <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-600">Verified via signed Razorpay webhook</div>
         </div>
       </div>
-      <div className="space-y-2 border-t border-[#1f9d55]/15 pt-3">
+      <div className="space-y-2 border-t border-green-600/15 pt-3">
         <div className="flex items-center justify-between">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Order</span>
-          <Link href={`/dashboard/transactions/${order.order_id}`} className="font-[var(--font-mono)] text-[0.7rem] text-[#0071e3] hover:text-[#0068d1] flex items-center gap-1">{order.order_id} <ExternalLink size={10} /></Link>
+          <Link href={`/dashboard/transactions/${order.order_id}`} className="font-[var(--font-mono)] text-[0.7rem] text-accent-strong hover:text-ink-2 flex items-center gap-1">{order.order_id} <ExternalLink size={10} /></Link>
         </div>
         <div className="flex items-center justify-between">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Amount</span>
@@ -293,12 +293,12 @@ function ReceiptCard({ order, payment }: { order: OrderCreateResult; payment?: P
         )}
         <div className="flex items-center justify-between">
           <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Status</span>
-          <span className="font-[var(--font-mono)] text-[0.65rem] text-[#1f9d55]">PAID</span>
+          <span className="font-[var(--font-mono)] text-[0.65rem] text-green-600">PAID</span>
         </div>
       </div>
       <Link
         href={`/dashboard/transactions/${order.order_id}/replay`}
-        className="mt-4 inline-flex items-center justify-center w-full h-9 border border-[#1f9d55]/20 bg-green-50 text-[13px] text-[#1f9d55] hover:bg-green-100 transition-colors font-medium rounded-full"
+        className="mt-4 inline-flex items-center justify-center w-full h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 transition-colors font-medium rounded-full"
       >
         <RotateCcw size={12} className="mr-2" /> VIEW REPLAY
       </Link>
@@ -1465,7 +1465,7 @@ export default function ChatPageInner() {
               </div>
             )}
             {sessionError && (
-              <div className="border border-[#b25e00]/20 bg-amber-50 px-4 py-3 font-[var(--font-mono)] text-[0.62rem] text-[#b25e00] rounded-2xl">
+              <div className="border border-amber-600/20 bg-amber-50 px-4 py-3 font-[var(--font-mono)] text-[0.62rem] text-amber-600 rounded-2xl">
                 {sessionError}
               </div>
             )}
@@ -1477,8 +1477,8 @@ export default function ChatPageInner() {
             {messages.length === 0 && phase === "idle" && (
               <div className="max-w-[520px] mx-auto mt-[7vh] tab-in">
                 <div className="flex items-center gap-2 mb-5">
-                  <span className="size-2 rounded-full bg-[#0071e3]" />
-                  <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.18em] uppercase text-[#0071e3]">Seller Agent</span>
+                  <span className="size-2 rounded-full bg-ink" />
+                  <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.18em] uppercase text-accent-strong">Seller Agent</span>
                 </div>
                 {catalogEmpty ? (
                   <>
@@ -1489,7 +1489,7 @@ export default function ChatPageInner() {
                     </div>
                     <Link
                       href="/dashboard/catalog"
-                      className="inline-flex items-center gap-2 h-9 px-4 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors cursor-pointer font-medium rounded-full"
+                      className="inline-flex items-center gap-2 h-9 px-4 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors cursor-pointer font-medium rounded-full"
                     >
                       Add products <ArrowRight size={12} />
                     </Link>
@@ -1511,10 +1511,10 @@ export default function ChatPageInner() {
                         <button
                           key={s}
                           onClick={() => handleSend(s)}
-                          className="group flex items-center justify-between gap-3 text-left px-3.5 py-2.5 border border-black/[0.06] bg-white hover:border-[#0071e3]/40 hover:bg-[#0071e3]/5 transition-all cursor-pointer rounded-[12px]"
+                          className="group flex items-center justify-between gap-3 text-left px-3.5 py-2.5 border border-black/[0.06] bg-white hover:border-hairline hover:bg-ink/5 transition-all cursor-pointer rounded-[12px]"
                         >
                           <span className="font-[var(--font-mono)] text-[0.65rem] text-neutral-600 group-hover:text-neutral-900 transition-colors">{s}</span>
-                          <ArrowRight size={12} className="text-neutral-400 group-hover:text-[#0071e3] transition-colors shrink-0" />
+                          <ArrowRight size={12} className="text-neutral-400 group-hover:text-ink transition-colors shrink-0" />
                         </button>
                       ))}
                     </div>
@@ -1526,9 +1526,9 @@ export default function ChatPageInner() {
             {phase === "thinking" && (
               <div className="flex items-center gap-3 tab-in" aria-live="polite">
                 <span className="flex gap-1">
-                  <span className="size-2 bg-[#0071e3] typing-dot rounded-full" />
-                  <span className="size-2 bg-[#0071e3] typing-dot [animation-delay:0.15s] rounded-full" />
-                  <span className="size-2 bg-[#0071e3] typing-dot [animation-delay:0.3s] rounded-full" />
+                  <span className="size-2 bg-ink typing-dot rounded-full" />
+                  <span className="size-2 bg-ink typing-dot [animation-delay:0.15s] rounded-full" />
+                  <span className="size-2 bg-ink typing-dot [animation-delay:0.3s] rounded-full" />
                 </span>
                 <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-neutral-600">SEARCHING CATALOG · CHECKING POLICY · PREPARING QUOTE</span>
               </div>
@@ -1538,7 +1538,7 @@ export default function ChatPageInner() {
               if (msg.role === "user") {
                 return (
                   <div key={msg.id} className="flex justify-end tab-in">
-                    <div className="max-w-[75%] px-4 py-2.5 rounded-2xl bg-[#0071e3] text-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+                    <div className="max-w-[75%] px-4 py-2.5 rounded-2xl bg-ink text-white shadow-card">
                       <div className="font-[var(--font-sans)] text-[0.85rem] text-white leading-relaxed">{msg.text}</div>
                     </div>
                   </div>
@@ -1547,26 +1547,26 @@ export default function ChatPageInner() {
               if (msg.role === "system") {
                 const tone =
                   msg.status === "error"
-                    ? "border-l-2 border-[#d92d20]/50 text-[#d92d20]"
+                    ? "border-l-2 border-red-600/50 text-red-600"
                     : msg.status === "warning"
-                      ? "border-l-2 border-[#b25e00]/50 text-[#b25e00]"
+                      ? "border-l-2 border-amber-600/50 text-amber-600"
                       : msg.status === "success"
-                        ? "border-l-2 border-[#1f9d55]/50 text-[#1f9d55]"
+                        ? "border-l-2 border-green-600/50 text-green-600"
                         : "border-l-2 border-black/[0.12] text-neutral-600";
                 return (
                   <div key={msg.id} className={`rounded-2xl bg-neutral-50 border border-black/[0.05] px-4 py-2.5 tab-in ${tone}`}>
                     <div className="font-[var(--font-mono)] text-[0.68rem] leading-relaxed flex items-start gap-2">
-                      <span className={`mt-[3px] size-2 rounded-full rotate-45 shrink-0 ${msg.status === "error" ? "bg-[#d92d20]" : msg.status === "warning" ? "bg-[#b25e00]" : msg.status === "success" ? "bg-[#1f9d55]" : "bg-black/[0.12]"}`} />
+                      <span className={`mt-[3px] size-2 rounded-full rotate-45 shrink-0 ${msg.status === "error" ? "bg-red-600" : msg.status === "warning" ? "bg-amber-600" : msg.status === "success" ? "bg-green-600" : "bg-black/[0.12]"}`} />
                       {msg.text}
                     </div>
                   </div>
                 );
               }
               return (
-                <div key={msg.id} className="max-w-[85%] border border-black/[0.06] bg-white p-3.5 tab-in rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+                <div key={msg.id} className="max-w-[85%] border border-black/[0.06] bg-white p-3.5 tab-in rounded-2xl shadow-card">
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="size-2 rounded-full bg-[#0071e3]" />
-                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.14em] uppercase text-[#0071e3]">SELLER AGENT</span>
+                    <span className="size-2 rounded-full bg-ink" />
+                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.14em] uppercase text-accent-strong">SELLER AGENT</span>
                   </div>
                   <div className="font-[var(--font-sans)] text-[0.85rem] text-neutral-600 leading-relaxed">{msg.text}</div>
                   {msg.toolCalls && msg.toolCalls.length > 0 && (
@@ -1591,7 +1591,7 @@ export default function ChatPageInner() {
                 e.preventDefault();
                 handleSend(input);
               }}
-              className="flex items-center gap-2.5 border border-black/[0.06] bg-white focus-within:border-[#0071e3] focus-within:ring-[3px] focus-within:ring-[#0071e3]/20 transition-colors px-3 h-11 rounded-[12px]"
+              className="flex items-center gap-2.5 border border-black/[0.06] bg-white focus-within:border-hairline focus-within:ring-[3px] focus-within:ring-ink/20 transition-colors px-3 h-11 rounded-[12px]"
             >
               <Sparkles size={14} className="text-neutral-400 shrink-0" aria-hidden />
               <input
@@ -1605,7 +1605,7 @@ export default function ChatPageInner() {
               <button
                 type="submit"
                 disabled={busy || phase === "thinking" || readOnly || !input.trim()}
-                className="inline-flex items-center justify-center size-9 bg-[#0071e3] text-white hover:bg-[#0068d1] transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex-shrink-0 rounded-full"
+                className="inline-flex items-center justify-center size-9 bg-ink text-white hover:bg-ink-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex-shrink-0 rounded-full"
                 aria-label="Send message"
               >
                 {busy || phase === "thinking" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
@@ -1638,7 +1638,7 @@ export default function ChatPageInner() {
                       : "Session snapshot saved server-side"
                 }
                 className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase ${
-                  syncState === "error" ? "text-[#d92d20]" : syncState === "saving" ? "text-[#b25e00]" : "text-[#1f9d55]"
+                  syncState === "error" ? "text-red-600" : syncState === "saving" ? "text-amber-600" : "text-green-600"
                 }`}
               >
                 {syncState === "error" ? "● UNSYNCED" : syncState === "saving" ? "● SAVING" : "● SAVED"}
@@ -1663,19 +1663,19 @@ export default function ChatPageInner() {
                     value={budgetDraft}
                     onChange={(e) => { setBudgetDraft(e.target.value); setBudgetMsg(null); }}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyBudget(); } }}
-                    className="w-[84px] font-[var(--font-mono)] text-[14px] text-right bg-white border border-black/[0.06] text-neutral-900 px-2 py-1 tabular-nums focus:outline-none focus:border-[#0071e3] transition-colors focus:ring-[3px] focus:ring-[#0071e3]/20"
+                    className="w-[84px] font-[var(--font-mono)] text-[14px] text-right bg-white border border-black/[0.06] text-neutral-900 px-2 py-1 tabular-nums focus:outline-none focus:border-hairline transition-colors focus:ring-[3px] focus:ring-ink/20"
                     aria-label="Session budget in rupees (press Apply to confirm)"
                   />
                   <button
                     onClick={applyBudget}
-                    className="h-7 px-2.5 border border-[#0071e3]/30 bg-[#0071e3]/10 text-[13px] text-[#0071e3] hover:bg-[#0071e3]/15 transition-colors cursor-pointer font-medium rounded-full"
+                    className="h-7 px-2.5 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-colors cursor-pointer font-medium rounded-full"
                   >
                     APPLY
                   </button>
                 </div>
               </div>
               {budgetMsg && (
-                <div className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.06em] text-right ${budgetMsg.kind === "ok" ? "text-[#1f9d55]" : "text-[#d92d20]"}`}>
+                <div className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.06em] text-right ${budgetMsg.kind === "ok" ? "text-green-600" : "text-red-600"}`}>
                   {budgetMsg.text}
                 </div>
               )}
@@ -1686,7 +1686,7 @@ export default function ChatPageInner() {
                 <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-neutral-600">Upsells</span>
                 <button
                   onClick={() => setUpsellOn((v) => !v)}
-                  className={`h-7 px-3 rounded-full text-[13px] font-medium border transition-all cursor-pointer ${upsellOn ? "border-[#0071e3]/30 bg-[#0071e3]/10 text-[#0071e3]" : "border-black/[0.06] bg-white text-neutral-600 hover:text-neutral-900"}`}
+                  className={`h-7 px-3 rounded-full text-[13px] font-medium border transition-all cursor-pointer ${upsellOn ? "border-accent/35 bg-accent/12 text-accent-strong" : "border-black/[0.06] bg-white text-neutral-600 hover:text-neutral-900"}`}
                   aria-pressed={upsellOn}
                 >
                   {upsellOn ? "ON" : "OFF"}
@@ -1706,7 +1706,7 @@ export default function ChatPageInner() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="font-[var(--font-mono)] text-[0.5rem] text-neutral-600 leading-relaxed">Merchant caps live in Settings</span>
-                <Link href="/dashboard/settings" className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-[#0071e3] hover:text-[#0068d1] transition-colors">
+                <Link href="/dashboard/settings" className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-accent-strong hover:text-ink-2 transition-colors">
                   EDIT IN SETTINGS →
                 </Link>
               </div>
@@ -1728,7 +1728,7 @@ export default function ChatPageInner() {
                 {decision.policy_decision && <PolicyCard decision={decision.policy_decision} />}
 
                 {isDenied ? (
-                  <div className="border border-[#d92d20]/20 bg-red-50 p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+                  <div className="border border-red-600/20 bg-red-50 p-4 rounded-2xl shadow-card">
                     <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 leading-relaxed">
                       The proposal was rejected by the deterministic Policy Engine. No Razorpay order was created and no money moved.
                     </div>
@@ -1747,7 +1747,7 @@ export default function ChatPageInner() {
                       <button
                         onClick={handleUpsellToggle}
                         disabled={busy}
-                        className="w-full h-9 border border-[#0071e3]/30 bg-[#0071e3]/10 text-[13px] text-[#0071e3] hover:bg-[#0071e3]/15 transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full"
+                        className="w-full h-9 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full"
                       >
                         ADD COMPATIBLE UPSELL
                       </button>
@@ -1771,9 +1771,9 @@ export default function ChatPageInner() {
                             value={offerInput}
                             onChange={(e) => setOfferInput(e.target.value)}
                             placeholder="Target price"
-                            className="flex-1 font-[var(--font-mono)] text-[0.7rem] bg-white border border-black/[0.06] text-neutral-900 px-2 py-1.5 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20"
+                            className="flex-1 font-[var(--font-mono)] text-[0.7rem] bg-white border border-black/[0.06] text-neutral-900 px-2 py-1.5 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20"
                           />
-                          <button type="submit" disabled={busy} className="h-9 px-3 border border-[#0071e3]/30 text-[#0071e3] text-[13px] cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                          <button type="submit" disabled={busy} className="h-9 px-3 border border-hairline text-ink text-[13px] cursor-pointer disabled:opacity-50 font-medium rounded-full">
                             OFFER
                           </button>
                         </form>
@@ -1783,7 +1783,7 @@ export default function ChatPageInner() {
                     <button
                       onClick={handleCheckout}
                       disabled={busy}
-                      className="w-full h-10 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 font-medium rounded-full"
+                      className="w-full h-10 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 font-medium rounded-full"
                     >
                       PROCEED TO CHECKOUT <ArrowRight size={13} />
                     </button>
@@ -1794,23 +1794,23 @@ export default function ChatPageInner() {
 
             {phase === "checkout" && (
               <div className="flex items-center gap-3">
-                <Loader2 size={16} className="animate-spin text-[#0071e3]" />
+                <Loader2 size={16} className="animate-spin text-accent-strong" />
                 <span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-600">Creating order and validating consent…</span>
               </div>
             )}
 
             {phase === "approval" && order && (
-              <div className="border border-[#b25e00]/20 bg-amber-50 p-5 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+              <div className="border border-amber-600/20 bg-amber-50 p-5 rounded-2xl shadow-card">
                 <div className="flex items-center gap-3 mb-3">
-                  <ShieldAlert size={20} className="text-[#b25e00]" />
+                  <ShieldAlert size={20} className="text-amber-600" />
                   <div>
-                    <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-[#b25e00]">Orders waiting for your approval</div>
+                    <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-amber-600">Orders waiting for your approval</div>
                     <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 mt-1">
                       Order {order.order_id} exceeds the configured HITL threshold. Payment remains blocked until a merchant approves it.
                     </div>
                   </div>
                 </div>
-                <Link href="/dashboard/approvals" className="inline-flex items-center justify-center w-full h-9 border border-[#b25e00]/20 bg-amber-50 text-[13px] text-[#b25e00] hover:bg-amber-100 transition-colors font-medium rounded-full">
+                <Link href="/dashboard/approvals" className="inline-flex items-center justify-center w-full h-9 border border-amber-600/20 bg-amber-50 text-[13px] text-amber-600 hover:bg-amber-100 transition-colors font-medium rounded-full">
                   OPEN APPROVAL QUEUE
                 </Link>
               </div>
@@ -1819,11 +1819,11 @@ export default function ChatPageInner() {
             {phase === "consent" && consent && order && (
               <>
                 <ConsentCard consent={consent} />
-                <div className="border border-black/[0.06] p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+                <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
                   <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-neutral-600 mb-3">ORDER READY</div>
                   <div className="flex items-center justify-between py-1">
                     <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Order</span>
-                    <Link href={`/dashboard/transactions/${order.order_id}`} className="font-[var(--font-mono)] text-[0.7rem] text-[#0071e3]">{order.order_id}</Link>
+                    <Link href={`/dashboard/transactions/${order.order_id}`} className="font-[var(--font-mono)] text-[0.7rem] text-ink">{order.order_id}</Link>
                   </div>
                   <div className="flex items-center justify-between py-1">
                     <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Amount</span>
@@ -1833,7 +1833,7 @@ export default function ChatPageInner() {
                 <button
                   onClick={handlePay}
                   disabled={busy}
-                  className="w-full h-10 bg-[#0071e3] text-white text-[13px] hover:bg-[#0068d1] transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 font-medium rounded-full"
+                  className="w-full h-10 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 font-medium rounded-full"
                 >
                   <Wallet size={14} /> PAY {formatPaise(order.amount_paise)}
                 </button>
@@ -1842,12 +1842,12 @@ export default function ChatPageInner() {
 
             {phase === "payment" && payment && order && (
               <div className="space-y-4">
-                <div className="border border-black/[0.06] p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+                <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
                   <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-neutral-600 mb-3">PAYMENT</div>
                   <div className="flex items-center justify-between py-1">
                     <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Status</span>
-                    <span className="font-[var(--font-mono)] text-[0.7rem] text-[#b25e00] flex items-center gap-1.5">
-                      <span className="size-2 rounded-full bg-[#b25e00] animate-[blink_1.5s_ease-in-out_infinite]" />
+                    <span className="font-[var(--font-mono)] text-[0.7rem] text-amber-600 flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-amber-600 animate-[blink_1.5s_ease-in-out_infinite]" />
                       {orderStatus === "PAYMENT_PENDING" ? "AWAITING PROVIDER" : "PAYMENT PENDING"}
                     </span>
                   </div>
@@ -1867,7 +1867,7 @@ export default function ChatPageInner() {
                       href={payment.payment_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="mt-3 inline-flex items-center justify-center w-full h-9 border border-[#0071e3]/30 bg-[#0071e3]/10 text-[13px] text-[#0071e3] hover:bg-[#0071e3]/15 transition-colors font-medium rounded-full"
+                      className="mt-3 inline-flex items-center justify-center w-full h-9 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-colors font-medium rounded-full"
                     >
                       REOPEN PAYMENT LINK ↗
                     </a>
@@ -1875,13 +1875,13 @@ export default function ChatPageInner() {
                 </div>
 
                 {DEMO_MODE && (
-                  <div className="border border-black/[0.06] p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+                  <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
                     <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-neutral-600 mb-2">DEV HELPERS (SIGNED WEBHOOK BOUNDARY)</div>
                     <div className="grid grid-cols-2 gap-2">
-                      <button onClick={() => handleSimulate("capture")} disabled={busy} className="h-9 border border-[#1f9d55]/20 bg-green-50 text-[13px] text-[#1f9d55] hover:bg-green-100 cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                      <button onClick={() => handleSimulate("capture")} disabled={busy} className="h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 cursor-pointer disabled:opacity-50 font-medium rounded-full">
                         CAPTURE
                       </button>
-                      <button onClick={() => handleSimulate("failure")} disabled={busy} className="h-9 border border-[#d92d20]/20 bg-red-50 text-[13px] text-[#d92d20] hover:bg-red-100 cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                      <button onClick={() => handleSimulate("failure")} disabled={busy} className="h-9 border border-red-600/20 bg-red-50 text-[13px] text-red-600 hover:bg-red-100 cursor-pointer disabled:opacity-50 font-medium rounded-full">
                         FAIL
                       </button>
                     </div>
@@ -1892,8 +1892,8 @@ export default function ChatPageInner() {
 
             {phase === "failed" && order && (
               <div className="space-y-4">
-                <div className="border border-[#d92d20]/20 bg-red-50 p-5 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
-                  <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-[#d92d20] mb-2">PAYMENT FAILED</div>
+                <div className="border border-red-600/20 bg-red-50 p-5 rounded-2xl shadow-card">
+                  <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-red-600 mb-2">PAYMENT FAILED</div>
                   <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 leading-relaxed mb-3">
                     Payment was declined in Razorpay Test Mode. The failure was classified by the backend and a single bounded retry is available. No duplicate settlement is possible.
                   </div>
@@ -1901,11 +1901,11 @@ export default function ChatPageInner() {
                     Final state: {orderStatus || "PAYMENT_FAILED"}
                   </div>
                 </div>
-                <button onClick={handleRetry} disabled={busy} className="w-full h-9 border border-[#0071e3]/30 bg-[#0071e3]/10 text-[13px] text-[#0071e3] hover:bg-[#0071e3]/15 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                <button onClick={handleRetry} disabled={busy} className="w-full h-9 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
                   RETRY (BOUNDED)
                 </button>
                 {DEMO_MODE && (
-                  <button onClick={() => handleSimulate("capture")} disabled={busy} className="w-full h-9 border border-[#1f9d55]/20 bg-green-50 text-[13px] text-[#1f9d55] hover:bg-green-100 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                  <button onClick={() => handleSimulate("capture")} disabled={busy} className="w-full h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
                     SIMULATE CAPTURE (DEV)
                   </button>
                 )}
@@ -1913,8 +1913,8 @@ export default function ChatPageInner() {
             )}
 
             {phase === "aborted" && (
-              <div className="border border-[#d92d20]/20 bg-red-50 p-5 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-[#d92d20] mb-2">ORDER ABORTED</div>
+              <div className="border border-red-600/20 bg-red-50 p-5 rounded-2xl shadow-card">
+                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-red-600 mb-2">ORDER ABORTED</div>
                 <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 leading-relaxed">
                   The bounded retry limit was reached. The order was aborted without a duplicate payment or settlement. Inventory and cart holds are released.
                 </div>
@@ -1928,13 +1928,13 @@ export default function ChatPageInner() {
               <>
                 <ReceiptCard order={order} payment={payment} />
                 {orderStatus === "REFUNDED" && (
-                  <div className="border border-black/[0.06] p-4 rounded-2xl shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)]">
+                  <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
                     <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-600 mb-2">REFUNDED</div>
                     <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600">This order has been refunded. The refund is recorded in the ledger and replayable.</div>
                   </div>
                 )}
                 {orderStatus !== "REFUNDED" && (
-                  <button onClick={handleRefund} disabled={busy} className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-[#d92d20] hover:border-[#d92d20]/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                  <button onClick={handleRefund} disabled={busy} className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-red-600 hover:border-red-600/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
                     REFUND ORDER
                   </button>
                 )}

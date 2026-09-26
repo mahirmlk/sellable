@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export { PartialBanner } from "./commerce-ui";
 
@@ -24,18 +25,18 @@ export function Section({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.12)] overflow-hidden">
-      <div className="px-6 py-4 border-b border-black/[0.06] bg-white/80 backdrop-blur-xl flex items-center justify-between gap-3">
-        <div className="text-[15px] font-semibold tracking-[-0.01em] text-neutral-900">
+    <section className="rounded-[18px] bg-card text-card-foreground border border-hairline shadow-card overflow-hidden">
+      <CardHeader className="flex items-center justify-between gap-3 rounded-t-[18px] border-b border-hairline bg-panel-2 px-6 py-4">
+        <CardTitle className="font-display text-[21px] leading-none tracking-[-0.005em] text-ink">
           {title}
-        </div>
+        </CardTitle>
         {hint && (
-          <div className="text-[13px] text-neutral-500 text-right">
+          <div className="text-[13px] text-muted text-right">
             {hint}
           </div>
         )}
-      </div>
-      <div className="px-6 py-5">{children}</div>
+      </CardHeader>
+      <CardContent className="px-6 py-5">{children}</CardContent>
     </section>
   );
 }
@@ -64,7 +65,7 @@ export function Tabs<T extends string>({
             const next = e.key === "ArrowRight" ? (idx + 1) % options.length : (idx - 1 + options.length) % options.length;
             onChange(options[next].value);
           }}
-          className={`h-8 px-4 rounded-full text-[13px] font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] ${
+          className={`h-8 px-4 rounded-full text-[13px] font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-accent ${
             value === o.value
               ? "bg-white shadow-sm text-neutral-900"
               : "text-neutral-500 hover:text-neutral-900"

@@ -1,10 +1,18 @@
+import { Skeleton as ShadcnSkeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
 export function SkeletonLine({ className = "" }: { className?: string }) {
-  return <div aria-hidden className={`animate-pulse bg-black/[0.06] rounded-lg ${className}`} />;
+  return (
+    <ShadcnSkeleton
+      aria-hidden
+      className={cn("rounded-lg bg-black/[0.06]", className)}
+    />
+  );
 }
 
 export function SkeletonCard() {
   return (
-    <div className="rounded-2xl bg-white/60 backdrop-blur-xl border border-black/[0.05] p-6 space-y-3 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+    <div className="rounded-2xl bg-panel border border-black/[0.05] p-6 space-y-3 shadow-card">
       <SkeletonLine className="h-3 w-24" />
       <SkeletonLine className="h-7 w-32 rounded-lg" />
     </div>
@@ -24,8 +32,8 @@ export function SkeletonRow() {
 
 export function SkeletonTable({ rows = 5 }: { rows?: number }) {
   return (
-    <div className="rounded-2xl bg-white/60 backdrop-blur-xl border border-black/[0.05] overflow-hidden shadow-[0_1px_2px_rgba(0,0,0,0.04)]" role="status" aria-label="Loading">
-      <div className="px-6 py-4 border-b border-black/[0.06] bg-neutral-50/80">
+    <div className="rounded-2xl bg-panel border border-black/[0.05] overflow-hidden shadow-card" role="status" aria-label="Loading">
+      <div className="px-6 py-4 border-b border-black/[0.06] bg-panel-2">
         <SkeletonLine className="h-3 w-32" />
       </div>
       {Array.from({ length: rows }).map((_, i) => (

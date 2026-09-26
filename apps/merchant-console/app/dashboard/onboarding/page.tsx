@@ -43,13 +43,13 @@ export default function OnboardingPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-[#f5f5f7]">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-canvas">
       <div className="w-full max-w-[440px]">
-        <div className="rounded-3xl bg-white border border-black/[0.06] shadow-[0_8px_32px_-8px_rgba(0,0,0,0.12)] overflow-hidden">
+        <div className="rounded-3xl bg-white border border-black/[0.06] shadow-card overflow-hidden">
           <form onSubmit={handleSubmit} className="p-7 space-y-5">
             <div className="flex items-center gap-3 mb-1">
               <span className="flex items-center justify-center size-10 rounded-2xl bg-blue-50 shrink-0" aria-hidden>
-                <Store size={18} className="text-[#0071e3]" />
+                <Store size={18} className="text-ink" />
               </span>
               <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-neutral-900">
                 Create your store
@@ -76,14 +76,14 @@ export default function OnboardingPage() {
                 maxLength={80}
                 autoFocus
                 placeholder="e.g. Acme Desk Supplies"
-                className="w-full h-11 rounded-[12px] bg-white border border-black/[0.12] text-[15px] text-neutral-900 px-3.5 placeholder:text-neutral-400 focus:outline-none focus:border-[#0071e3] focus:ring-[3px] focus:ring-[#0071e3]/20 transition-shadow"
+                className="w-full h-11 rounded-[12px] bg-white border border-black/[0.12] text-[15px] text-neutral-900 px-3.5 placeholder:text-neutral-400 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full h-11 inline-flex items-center justify-center gap-2 rounded-full bg-[#0071e3] text-white text-[15px] font-semibold hover:bg-[#0077ed] transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0071e3] active:scale-[0.99]"
+              className="w-full h-11 inline-flex items-center justify-center gap-2 rounded-full bg-ink text-white text-[15px] font-semibold hover:bg-ink-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.99]"
             >
               {loading ? (
                 <>

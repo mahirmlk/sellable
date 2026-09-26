@@ -7,11 +7,11 @@
 import type { ComponentState } from "@/lib/api";
 
 const STATE_META: Record<ComponentState, { label: string; dot: string; classes: string }> = {
-  CONNECTED: { label: "Connected", dot: "bg-[#1f9d55]", classes: "bg-green-50 text-green-700" },
-  UNCONFIGURED: { label: "Unconfigured", dot: "bg-[#b25e00]", classes: "bg-amber-50 text-amber-800" },
-  DEGRADED: { label: "Degraded", dot: "bg-[#b25e00]", classes: "bg-amber-50 text-amber-800" },
-  ERROR: { label: "Error", dot: "bg-[#d92d20]", classes: "bg-red-50 text-red-700" },
-  OFFLINE: { label: "Offline", dot: "bg-[#d92d20]", classes: "bg-red-50 text-red-700" },
+  CONNECTED: { label: "Connected", dot: "bg-green-600", classes: "bg-green-50 text-green-700" },
+  UNCONFIGURED: { label: "Unconfigured", dot: "bg-amber-600", classes: "bg-amber-50 text-amber-800" },
+  DEGRADED: { label: "Degraded", dot: "bg-amber-600", classes: "bg-amber-50 text-amber-800" },
+  ERROR: { label: "Error", dot: "bg-red-600", classes: "bg-red-50 text-red-700" },
+  OFFLINE: { label: "Offline", dot: "bg-red-600", classes: "bg-red-50 text-red-700" },
 };
 
 interface Props {

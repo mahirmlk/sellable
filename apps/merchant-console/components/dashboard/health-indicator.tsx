@@ -5,9 +5,9 @@ interface HealthIndicatorProps {
 }
 
 const statusStyles = {
-  healthy: "bg-[#1f9d55]",
-  degraded: "bg-[#b25e00]",
-  offline: "bg-[#d92d20]",
+  healthy: "bg-green-600",
+  degraded: "bg-amber-600",
+  offline: "bg-red-600",
 };
 
 const statusPills = {

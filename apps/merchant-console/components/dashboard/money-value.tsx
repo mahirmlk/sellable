@@ -9,7 +9,7 @@ export function MoneyValue({ paise, size = "md", tone = "default", className = "
   const toneClasses = {
     default: "text-neutral-900",
     muted: "text-neutral-500",
-    brand: "text-[#0071e3]",
+    brand: "text-accent-strong",
   };
   return (
     <span className={`font-semibold tracking-tight tabular-nums ${sizeClasses[size]} ${toneClasses[tone]} ${className}`}>

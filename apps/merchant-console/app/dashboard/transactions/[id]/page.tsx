@@ -4,12 +4,16 @@
 // status, amount, buyer; tabs for Overview / Items / Negotiation / Payment /
 // Approval / Activity; Replay links to the existing replay route. Negotiation
 // figures come only from the loaded line items and ledger events — nothing is
-// invented. Refund stays wired to the existing refundOrder call.
+// invented. Refund is irreversible, so it goes through a type-to-confirm
+// ConfirmDialog before the existing refundOrder call. PAID orders can be
+// marked FULFILLED via the documented POST /console/orders/{id}/fulfill.
+// Every rendered field comes from the loaded ConsoleTransactionDetail.
 
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
-import { ArrowLeft, RotateCcw, ExternalLink } from "lucide-react";
+import { RotateCcw, ExternalLink, PackageCheck, Copy, Download } from "lucide-react";
+import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { StatusBadge, PolicyBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatPaise, formatDateTime, formatTimestamp } from "@/lib/formatters";
@@ -17,11 +21,14 @@ import {
   getConsoleApprovals,
   getConsoleTransactionDetail,
   refundOrder,
+  fulfillOrder,
   ApiError,
   type ConsoleApproval,
   type ConsoleTransactionDetail,
   type LedgerEvent as ApiLedgerEvent,
 } from "@/lib/api";
+import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
+import { toast } from "@/components/dashboard/toasts";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -30,6 +37,7 @@ import {
   ChannelBadge,
   RefreshButton,
 } from "@/components/dashboard/commerce-ui";
+import { exportToCsv } from "@/lib/csv";
 import { mapConsoleTx } from "@/lib/commerce-view";
 import type { LedgerEvent, Transaction } from "@/lib/types/domain";
 
@@ -69,6 +77,44 @@ function Value({ children }: { children: React.ReactNode }) {
   return <div className="text-[13px] text-neutral-900 break-words">{children}</div>;
 }
 
+async function copyToClipboard(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast({ tone: "success", title: "Copied" });
+  } catch {
+    toast({
+      tone: "error",
+      title: "Copy failed",
+      description: "The browser denied clipboard access.",
+    });
+  }
+}
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Copy ${label}`}
+      onClick={() => void copyToClipboard(value)}
+      className="size-6 rounded-full inline-flex items-center justify-center text-faint hover:text-ink hover:bg-panel-3 transition-colors cursor-pointer shrink-0"
+    >
+      <Copy size={12} />
+    </button>
+  );
+}
+
+function MonoRef({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <span className="text-[12px] text-faint shrink-0">{label}</span>
+      <span className="inline-flex items-center gap-1.5 min-w-0">
+        <span className="font-mono text-[12px] text-ink-2 break-all">{value}</span>
+        <CopyButton value={value} label={label} />
+      </span>
+    </div>
+  );
+}
+
 export default function TransactionDetailPage() {
   const params = useParams();
   const id = String(params.id ?? "");
@@ -82,6 +128,11 @@ export default function TransactionDetailPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refunding, setRefunding] = useState(false);
   const [refundMsg, setRefundMsg] = useState<"success" | "error" | null>(null);
+  const [refundDialogOpen, setRefundDialogOpen] = useState(false);
+  // Optional partial-refund amount in INR rupees (converted to paise).
+  // Defaults to the full order amount when the dialog opens.
+  const [refundAmountRupees, setRefundAmountRupees] = useState("");
+  const [fulfilling, setFulfilling] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -119,20 +170,82 @@ export default function TransactionDetailPage() {
     return () => window.clearTimeout(t);
   }, [fetchData]);
 
+  // Runs only after the ConfirmDialog is confirmed (type-to-confirm "REFUND").
+  // Optional partial amount: below the full order amount it calls refundOrder
+  // with amountPaise + an idempotency key; otherwise a full refund as today.
   const handleRefund = useCallback(async () => {
     if (!tx || refunding) return;
+    const orderId = tx.id;
+    const fullPaise = tx.amountPaise;
+    const parsed = parseFloat(refundAmountRupees);
+    const refundPaise = Number.isFinite(parsed) ? Math.round(parsed * 100) : NaN;
+    const valid = Number.isFinite(refundPaise) && refundPaise > 0 && refundPaise <= fullPaise;
+    if (!valid) return;
+    const isPartial = refundPaise < fullPaise;
     setRefunding(true);
     setRefundMsg(null);
     try {
-      await refundOrder(tx.id, "Merchant-initiated refund from order detail");
+      if (isPartial) {
+        await refundOrder(orderId, "Merchant-initiated refund from order detail", {
+          amountPaise: refundPaise,
+          idempotencyKey: crypto.randomUUID(),
+        });
+      } else {
+        await refundOrder(orderId, "Merchant-initiated refund from order detail");
+      }
       setRefundMsg("success");
+      setRefundDialogOpen(false);
       await fetchData();
+      toast({
+        tone: "success",
+        title: "Refund initiated",
+        description: `Order ${orderId} — ${formatPaise(isPartial ? refundPaise : fullPaise)} refunded. The ledger records the refund as an auditable event.`,
+      });
     } catch {
       setRefundMsg("error");
+      setRefundDialogOpen(false);
+      toast({
+        tone: "error",
+        title: "Refund failed",
+        description: "The backend rejected the request.",
+      });
     } finally {
       setRefunding(false);
     }
-  }, [tx, refunding, fetchData]);
+  }, [tx, refunding, fetchData, refundAmountRupees]);
+
+  // Routine op (PAID → FULFILLED) — no confirmation dialog.
+  const handleFulfill = useCallback(async () => {
+    if (!tx || fulfilling) return;
+    const orderId = tx.id;
+    setFulfilling(true);
+    try {
+      await fulfillOrder(orderId);
+      await fetchData();
+      toast({ tone: "success", title: "Order marked fulfilled" });
+    } catch {
+      toast({
+        tone: "error",
+        title: "Could not mark order fulfilled",
+        description: "The backend rejected the request.",
+      });
+    } finally {
+      setFulfilling(false);
+    }
+  }, [tx, fulfilling, fetchData]);
+
+  const handleExportItems = useCallback(() => {
+    if (!detail) return;
+    const rows = (detail.items ?? []).map((item) => ({
+      sku: item.sku,
+      quantity: item.quantity,
+      unit_price_inr: (item.unit_price_paise / 100).toFixed(2),
+      offered_price_inr: (item.offered_price_paise / 100).toFixed(2),
+      line_total_inr: (item.line_total_paise / 100).toFixed(2),
+    }));
+    exportToCsv(`order_${detail.order_id}_items.csv`, rows);
+    toast({ tone: "success", title: `Exported order_${detail.order_id}_items.csv`, description: `${rows.length} rows` });
+  }, [detail]);
 
   if (loading) {
     return (
@@ -146,12 +259,9 @@ export default function TransactionDetailPage() {
   if (notFound) {
     return (
       <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-        <Link
-          href="/dashboard/transactions"
-          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
-        >
-          <ArrowLeft size={14} /> Back to orders
-        </Link>
+        <Breadcrumbs
+          items={[{ label: "Orders", href: "/dashboard/transactions" }, { label: `#${id}` }]}
+        />
         <EmptyState
           title="Order not found"
           message="This order was not found — it may belong to another store."
@@ -163,12 +273,9 @@ export default function TransactionDetailPage() {
   if (loadError || !tx || !detail) {
     return (
       <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-        <Link
-          href="/dashboard/transactions"
-          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
-        >
-          <ArrowLeft size={14} /> Back to orders
-        </Link>
+        <Breadcrumbs
+          items={[{ label: "Orders", href: "/dashboard/transactions" }, { label: `#${id}` }]}
+        />
         <ErrorBanner message={loadError ?? "The order could not be loaded."} onRetry={() => void fetchData()} />
       </div>
     );
@@ -182,21 +289,31 @@ export default function TransactionDetailPage() {
   const approvalRequired =
     tx.policy.verdict === "NEEDS_HUMAN_APPROVAL" || approval !== null;
   const buyerLabel = tx.buyer.type === "human" ? "Human" : "AI Buyer";
+  // `failure_reason` is part of the PaymentAttemptPayload contract. The order
+  // detail only carries it when a failed payment attempt reported one — read
+  // it defensively and render only when the field actually exists (never invented).
+  const rawFailureReason = (detail as { failure_reason?: unknown }).failure_reason;
+  const failureReason =
+    typeof rawFailureReason === "string" && rawFailureReason.length > 0 ? rawFailureReason : null;
+  // Partial-refund amount: rupees input converted to paise. Valid when > 0
+  // and <= the full order amount; the confirm button is disabled otherwise.
+  const refundParsed = parseFloat(refundAmountRupees);
+  const refundPaise = Number.isFinite(refundParsed) ? Math.round(refundParsed * 100) : NaN;
+  const isRefundAmountValid =
+    Number.isFinite(refundPaise) && refundPaise > 0 && refundPaise <= tx.amountPaise;
+  const refundDisplayPaise = isRefundAmountValid ? refundPaise : tx.amountPaise;
 
   return (
     <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
       <div className="flex items-center justify-between gap-3">
-        <Link
-          href="/dashboard/transactions"
-          className="inline-flex items-center gap-2 text-[13px] font-medium text-neutral-500 hover:text-neutral-900 transition-colors"
-        >
-          <ArrowLeft size={14} /> Back to orders
-        </Link>
+        <Breadcrumbs
+          items={[{ label: "Orders", href: "/dashboard/transactions" }, { label: `#${tx.id}` }]}
+        />
         <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
       </div>
 
       {/* Header: order + status + amount + buyer */}
-      <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] p-6">
+      <div className="rounded-[18px] bg-panel border border-hairline shadow-card p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3 mb-2">
@@ -216,17 +333,29 @@ export default function TransactionDetailPage() {
           <div className="flex items-center gap-3 shrink-0">
             <Link
               href={`/dashboard/transactions/${tx.id}/replay`}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:bg-neutral-50 transition-all"
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-panel border border-hairline text-[13px] font-medium text-ink-2 hover:text-ink transition-all"
             >
               <RotateCcw size={12} /> View replay
             </Link>
+            {tx.status === "PAID" && (
+              <button
+                onClick={() => void handleFulfill()}
+                disabled={fulfilling}
+                className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-ink text-panel text-[13px] font-medium hover:opacity-90 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <PackageCheck size={12} /> {fulfilling ? "Fulfilling…" : "Mark fulfilled"}
+              </button>
+            )}
             {(tx.status === "PAID" || tx.status === "FULFILLED") && (
               <button
-                onClick={handleRefund}
+                onClick={() => {
+                  setRefundAmountRupees(String(tx.amountPaise / 100));
+                  setRefundDialogOpen(true);
+                }}
                 disabled={refunding}
-                className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-red-50 text-red-700 border border-red-200/60 text-[13px] font-medium hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50"
+                className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-red-600 text-panel text-[13px] font-medium hover:bg-red-700 transition-all cursor-pointer disabled:opacity-50"
               >
-                <RotateCcw size={12} /> {refunding ? "Refunding…" : "Refund"}
+                <RotateCcw size={12} /> Refund
               </button>
             )}
           </div>
@@ -278,7 +407,7 @@ export default function TransactionDetailPage() {
       </div>
 
       {tab === "overview" && (
-        <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+        <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden">
           <div className="px-6 py-4 border-b border-black/[0.06]">
             <div className="text-[15px] font-semibold text-neutral-900">Order overview</div>
           </div>
@@ -297,11 +426,19 @@ export default function TransactionDetailPage() {
               </div>
             ))}
           </div>
-          <div className="px-6 py-4 border-t border-black/[0.06] bg-neutral-50/50">
+          <div className="px-6 py-4 border-t border-black/[0.06] bg-panel-2">
             <div className="flex items-center gap-3">
               <span className="text-[12px] text-neutral-500">Policy</span>
               <PolicyBadge verdict={tx.policy.verdict} />
             </div>
+            {tx.policy.explanation && (
+              <p className="mt-3 text-[13px] leading-relaxed text-muted">{tx.policy.explanation}</p>
+            )}
+          </div>
+          <div className="px-6 py-3 border-t border-black/[0.06]">
+            <div className="text-[12px] text-faint mb-1">References</div>
+            <MonoRef label="quote_id" value={detail.quote_id} />
+            <MonoRef label="idempotency_key" value={detail.idempotency_key} />
           </div>
         </div>
       )}
@@ -314,6 +451,18 @@ export default function TransactionDetailPage() {
               message="The backend returned no line items for this order."
             />
           ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-[12px] text-neutral-400 tabular-nums">
+                  {items.length} item{items.length === 1 ? "" : "s"}
+                </span>
+                <button
+                  onClick={handleExportItems}
+                  className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98] ml-auto"
+                >
+                  <Download size={14} /> Export
+                </button>
+              </div>
             <DataTable>
               <div className="hidden lg:grid grid-cols-[1fr_70px_110px_110px_110px] gap-3 px-6 py-4 border-b border-black/[0.06]">
                 {["SKU", "Qty", "Unit price", "Offered", "Line total"].map((h) => (
@@ -347,11 +496,12 @@ export default function TransactionDetailPage() {
                   </div>
                 ))}
               </div>
-              <div className="px-6 py-4 border-t border-black/[0.06] bg-neutral-50/50 flex items-center justify-between">
+              <div className="px-6 py-4 border-t border-black/[0.06] bg-panel-2 flex items-center justify-between">
                 <span className="text-[13px] font-medium text-neutral-600">Final</span>
                 <MoneyValue paise={tx.amountPaise} size="lg" />
               </div>
             </DataTable>
+            </>
           )}
         </>
       )}
@@ -433,10 +583,15 @@ export default function TransactionDetailPage() {
               message="No payment attempt has been recorded for this order yet."
             />
           ) : (
-            <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden">
               <div className="px-6 py-4 border-b border-black/[0.06]">
                 <div className="text-[15px] font-semibold text-neutral-900">Payment</div>
               </div>
+              {tx.payment.status === "FAILED" && failureReason && (
+                <div className="mx-6 mt-4 rounded-[12px] bg-red-50 text-red-700 px-4 py-3 text-[13px] leading-relaxed">
+                  Payment failed: {failureReason}
+                </div>
+              )}
               <div className="px-6 py-2">
                 {[
                   { label: "Provider", value: tx.payment.provider },
@@ -457,7 +612,19 @@ export default function TransactionDetailPage() {
                     ),
                   },
                   ...(tx.payment.orderId ? [{ label: "Provider order id", value: tx.payment.orderId }] : []),
-                  ...(tx.payment.paymentId ? [{ label: "Payment id", value: tx.payment.paymentId }] : []),
+                  ...(tx.payment.paymentId
+                    ? [
+                        {
+                          label: "Payment id",
+                          value: (
+                            <span className="inline-flex items-center gap-1.5 min-w-0">
+                              <span className="font-mono text-[12px] text-ink-2 break-all">{tx.payment.paymentId}</span>
+                              <CopyButton value={tx.payment.paymentId} label="payment_id" />
+                            </span>
+                          ),
+                        },
+                      ]
+                    : []),
                 ].map((row) => (
                   <div key={row.label} className="flex items-center justify-between gap-4 py-3 border-b border-black/[0.06] last:border-b-0">
                     <Label>{row.label}</Label>
@@ -471,7 +638,7 @@ export default function TransactionDetailPage() {
                     href={tx.payment.paymentUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-[#0071e3] text-white text-[13px] font-medium hover:bg-[#0077ed] transition-colors"
+                    className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-ink text-white text-[13px] font-medium hover:bg-ink-2 transition-colors"
                   >
                     Open payment link <ExternalLink size={12} />
                   </a>
@@ -497,7 +664,7 @@ export default function TransactionDetailPage() {
               message="This order did not require human approval — the policy decision allowed it through."
             />
           ) : (
-            <div className="rounded-2xl bg-white border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)] overflow-hidden">
+            <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden">
               <div className="px-6 py-4 border-b border-black/[0.06]">
                 <div className="text-[15px] font-semibold text-neutral-900">Approval</div>
               </div>
@@ -592,6 +759,48 @@ export default function TransactionDetailPage() {
           )}
         </>
       )}
+
+      {/* Irreversible: refund only proceeds after typing REFUND in the dialog. */}
+      <ConfirmDialog
+        open={refundDialogOpen}
+        title={`Refund ${formatPaise(refundDisplayPaise)}?`}
+        description={
+          <div className="space-y-4">
+            <div>
+              Refund {formatPaise(refundDisplayPaise)} for order{" "}
+              <span className="font-mono text-[12px] text-ink-2">{tx.id}</span> (buyer{" "}
+              <span className="font-mono text-[12px] text-ink-2">{tx.buyer.id}</span>) cannot be
+              undone.
+            </div>
+            <label className="block">
+              <span className="text-[12px] text-faint">AMOUNT (₹)</span>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                value={refundAmountRupees}
+                onChange={(e) => setRefundAmountRupees(e.target.value)}
+                className="mt-1.5 w-full h-9 rounded-[12px] bg-panel border border-hairline px-3 text-[14px] text-ink tabular-nums focus:outline-none focus:border-accent"
+              />
+              <span className="mt-1.5 block text-[12px] text-faint">
+                Leave at {formatPaise(tx.amountPaise)} for a full refund.
+              </span>
+              {!isRefundAmountValid && (
+                <span className="mt-1 block text-[12px] text-red-600">
+                  Enter an amount greater than ₹0 and up to {formatPaise(tx.amountPaise)}.
+                </span>
+              )}
+            </label>
+          </div>
+        }
+        confirmLabel="Refund"
+        tone="danger"
+        typeToConfirm="REFUND"
+        busy={refunding}
+        confirmDisabled={!isRefundAmountValid}
+        onConfirm={() => void handleRefund()}
+        onCancel={() => setRefundDialogOpen(false)}
+      />
     </div>
   );
 }
