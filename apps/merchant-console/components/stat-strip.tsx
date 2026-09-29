@@ -53,7 +53,10 @@ export function StatStrip() {
   useEffect(() => {
     const t = window.setTimeout(() => {
       getHealthPublic()
-        .then((h) => setRailState(h.razorpay_configured ? "live" : "offline"))
+        // Production /health is a minimal liveness shape without the
+        // dev-only razorpay_configured flag: a reachable backend reporting
+        // status "ok" is live; only network/5xx means offline.
+        .then((h) => setRailState(h?.status === "ok" ? "live" : "offline"))
         .catch(() => setRailState("offline"));
     }, 0);
     return () => window.clearTimeout(t);

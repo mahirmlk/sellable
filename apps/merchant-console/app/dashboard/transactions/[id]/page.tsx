@@ -186,9 +186,11 @@ export default function TransactionDetailPage() {
     setRefundMsg(null);
     try {
       if (isPartial) {
+        // No client-minted idempotency key: the backend derives a stable
+        // `rfnd:{order}:{amount}` key, so a lost-response retry replays the
+        // recorded refund instead of creating a second refund row.
         await refundOrder(orderId, "Merchant-initiated refund from order detail", {
           amountPaise: refundPaise,
-          idempotencyKey: crypto.randomUUID(),
         });
       } else {
         await refundOrder(orderId, "Merchant-initiated refund from order detail");
@@ -288,6 +290,25 @@ export default function TransactionDetailPage() {
   );
   const approvalRequired =
     tx.policy.verdict === "NEEDS_HUMAN_APPROVAL" || approval !== null;
+  // Post-action approval state, derived from the authoritative order — the
+  // approvals list only ever carries PENDING rows, so an order that required
+  // approval and has since moved to consent/payment was approved.
+  const approvalDisplay: "PENDING" | "APPROVED" | null =
+    approval !== null
+      ? "PENDING"
+      : detail !== null &&
+          (detail.consent_status === "ISSUED" ||
+            detail.consent_status === "CONSUMED" ||
+            detail.consent_status === "USED" ||
+            (detail.payment_status !== null &&
+              detail.payment_status !== "FAILED") ||
+            detail.status === "PAID" ||
+            detail.status === "FULFILLED" ||
+            detail.status === "PAYMENT_PENDING" ||
+            detail.status === "CONSENTED") &&
+          tx.policy.verdict === "NEEDS_HUMAN_APPROVAL"
+        ? "APPROVED"
+        : null;
   const buyerLabel = tx.buyer.type === "human" ? "Human" : "AI Buyer";
   // `failure_reason` is part of the PaymentAttemptPayload contract. The order
   // detail only carries it when a failed payment attempt reported one — read
@@ -680,14 +701,14 @@ export default function TransactionDetailPage() {
                     value: (
                       <span
                         className={
-                          approval?.status === "APPROVED"
+                          approvalDisplay === "APPROVED"
                             ? "inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-green-50 text-green-700"
                             : approval?.status === "REJECTED"
                               ? "inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-red-50 text-red-700"
                               : "inline-flex rounded-full px-2.5 py-1 text-[12px] font-medium bg-amber-50 text-amber-800"
                         }
                       >
-                        {approval?.status ?? "Pending"}
+                        {approvalDisplay ?? approval?.status ?? "Pending"}
                       </span>
                     ),
                   },
@@ -701,7 +722,7 @@ export default function TransactionDetailPage() {
                   </div>
                 ))}
               </div>
-              {(!approval || approval.status === "PENDING") && (
+              {approvalDisplay !== "APPROVED" && (
                 <div className="px-6 py-4 border-t border-black/[0.06]">
                   <Link
                     href="/dashboard/approvals"

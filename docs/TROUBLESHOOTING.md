@@ -221,6 +221,80 @@ Each scenario creates an in-memory database and seeds the catalog. This takes ~2
 
 ---
 
+## Console Auth & Deployment
+
+### `401 auth_not_configured` — demo console vs production backend (or vice versa)
+
+The error body is `{"detail": {"code": "auth_not_configured", "message": ...}}`
+(`services/commerce/sellable/merchant_auth.py:266-289`). The console maps it
+via `ApiError.isAuthNotConfigured` and shows deployment guidance
+(`apps/merchant-console/lib/api.ts:466-473`).
+
+Auth matrix:
+
+- Frontend demo mode = no `NEXT_PUBLIC_SUPABASE_URL` (`lib/api.ts:14`) — the
+  console sends the public demo `X-Agent-Key`.
+- Backend dev mode = `SELLABLE_ENVIRONMENT` in `development`/`test`, default
+  `production` (`config.py:130-138,161`).
+
+A demo console pointed at a production backend (or a Supabase console pointed
+at a backend without Supabase) always 401s. Fix: point the demo console at a
+dev backend, or configure Supabase on both sides.
+
+### Stat strip / footer health shows offline in production
+
+Fixed — the console now branches on `status` only
+(`apps/merchant-console/components/stat-strip.tsx:56-60`). Production
+`/health` returns the minimal `{"status": "ok", "database": "connected"}`
+shape (`services/commerce/sellable/main.py:309-312`) with no
+`razorpay_configured`/`cors_origins` fields. If you still see offline, check
+network errors / 5xx — a reachable backend reporting `"status": "ok"` is live.
+
+---
+
+## Checkout, Consents & Payments
+
+### `409 "Consent is not available for use"` (stale cached consent)
+
+Single-use consents return 409 on reuse
+(`services/commerce/sellable/consent.py:64`). The cached consent object is
+stale — refresh the authoritative order (`GET /console/transactions/{id}`,
+check `consent_status`) and re-issue consent once before paying. Chat
+checkout does this automatically: refresh-before-pay plus one re-issue +
+retry on a 409 race (`apps/merchant-console/app/dashboard/chat/page.tsx:1292-1333`).
+
+### `422` on `X-Trace-Id` / body `trace_id`
+
+Trace ids must match `^trc_[0-9a-f]{32}$`
+(`services/commerce/sellable/main.py:244-267`, `contracts.py:225,288`).
+A 422 means a malformed header (or stale persisted body id) forked the flow.
+Fix: drop the stale persisted id and retry without it so the server mints a
+fresh `trc_…` id. Precedence is header > body > fresh server id.
+
+### Simulate-capture returns 200 but the order stays `PAYMENT_PENDING`
+
+Expected on amount mismatch — a 200 does NOT imply settlement. When the
+captured amount differs from the order, the webhook records
+`webhook.amount_mismatch`, the attempt stays PENDING and the order stays
+`PAYMENT_PENDING` (`services/commerce/sellable/payments/service.py:402-423`).
+Check `attempt.status`: only `CAPTURED`/`FAILED` counts as settled. Note
+simulate endpoints are dev-only (403 in production, `main.py:716-717`).
+
+---
+
+## Approvals & Lists
+
+### Approvals list shows only `PENDING`
+
+Expected. List rows always carry `status: "PENDING"`
+(`contracts.py:488`, `main.py:1209-1217`) — they are the operational queue,
+not the outcome record. Post-action state is derived from the order
+(consent/payment): approve returns top-level `{"status": "approved"}`
+(`main.py:1276-1283`), reject returns `{"status": "rejected"}`
+(`main.py:1316-1318`). Re-read the transaction detail for truth.
+
+---
+
 ## Getting Help
 
 1. Check the logs (uvicorn output)

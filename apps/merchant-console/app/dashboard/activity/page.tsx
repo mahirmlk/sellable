@@ -63,7 +63,7 @@ const FEED_PAGE_SIZE = 100;
 function missionStateTone(state: BuyerMissionPayload["state"]): "green" | "amber" | "red" | "neutral" {
   if (state === "PAID" || state === "VERIFIED") return "green";
   if (state === "NEEDS_HUMAN_APPROVAL" || state === "PAYMENT_PENDING") return "amber";
-  if (state === "PAYMENT_FAILED" || state === "ABORTED") return "red";
+  if (state === "PAYMENT_FAILED" || state === "ABORTED" || state === "DENIED") return "red";
   return "neutral";
 }
 
@@ -127,7 +127,8 @@ function missionSteps(
     if (detail.status === "PAYMENT_FAILED" || detail.status === "ABORTED") blocked("STOPPED");
   }
   if (detail?.consent_status === "EXPIRED") blocked("CONSENT EXPIRED");
-  else if (result.consent_id || detail?.consent_status === "ISSUED" || detail?.consent_status === "CONSUMED") done("CONSENT");
+  // Record enum USED == summary token CONSUMED (see backend _summarize_order).
+  else if (result.consent_id || detail?.consent_status === "ISSUED" || detail?.consent_status === "CONSUMED" || detail?.consent_status === "USED") done("CONSENT");
   return out;
 }
 

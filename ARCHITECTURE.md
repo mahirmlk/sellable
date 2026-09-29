@@ -684,6 +684,10 @@ The consent mechanism models the spirit of mandate-based agentic payments while 
 - expiring;
 - single-use.
 
+**Vocabulary:** the Consent record enum is `ISSUED`/`USED`/`EXPIRED`/`REVOKED`
+(`contracts.py`); order/transaction summaries surface the spent state as
+`CONSUMED`. `USED` (record) == `CONSUMED` (summary) — compare against both.
+
 Example conceptual artifact:
 
 ```json
@@ -868,6 +872,12 @@ The Buyer Agent should receive something like:
 > “The payment was declined. No successful charge was recorded. The system attempted the configured recovery path and the transaction is now marked aborted.”
 
 The exact wording can be model-generated, but the factual state must come from the Commerce Core and ledger.
+
+Dev-only `simulate-capture`/`simulate-failure` go through the signed-webhook
+boundary and return 200 with a `PaymentAttempt` — 200 means *recorded*, settled
+only when `attempt.status` is `CAPTURED`. Console chat pays refresh-before-pay:
+it re-reads the order, re-issues a dead single-use consent, and retries once on
+409 before returning to consent honestly.
 
 ## 13.5 Required audit entries
 
@@ -1082,6 +1092,16 @@ reason for escalation
 policy triggered
 approve / reject
 ```
+
+List rows are always `PENDING` (`contracts.py`); approve/reject outcomes arrive
+as the top-level `{status: "approved"|"rejected"}` of the action response, so
+the UI derives post-action state from the authoritative order, never from list
+rows. Buyer missions (`/console/buyer-missions`) re-derive state from the
+order on every read; states include `DENIED` with `order_id: null` (policy
+refused before any order existed), and `.../{id}/continue` is an idempotent
+server-side continuation. Checkout history (`/console/checkout/sessions`,
+`GET/PATCH/DELETE /console/checkout/session/{id}`) is durable chat state only —
+DELETE soft-archives; commerce rows are never destroyed.
 
 ### Transaction replay
 
@@ -1519,6 +1539,14 @@ GET /console/approvals
 POST /console/approvals/:id/approve
 POST /console/approvals/:id/reject
 GET /console/insights
+POST /console/agent/buyer/run
+GET /console/buyer-missions
+GET /console/buyer-missions/:id
+POST /console/buyer-missions/:id/continue
+GET /console/checkout/sessions
+GET /console/checkout/session/:id
+PATCH /console/checkout/session/:id
+DELETE /console/checkout/session/:id
 ```
 
 Exact endpoint structure can be adjusted during implementation; the contract should remain centered on the transaction lifecycle.

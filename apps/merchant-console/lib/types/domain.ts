@@ -59,7 +59,7 @@ interface Transaction {
     status: string;
     verifiedByWebhook?: boolean;
   };
-  items?: { sku: string; unitPaise: number; linePaise: number; qty: number }[];
+  items?: { sku: string; unitPaise: number; listPaise?: number; linePaise: number; qty: number }[];
   updatedAt: string;
 }
 
