@@ -228,6 +228,9 @@ open http://localhost:3000
 | `/catalog/products` | POST | Add a product to the merchant's own catalog |
 | `/console/agent/seller/respond` | POST | Conversational checkout (merchant JWT) |
 | `/console/agent/buyer/run` | POST | Run the reference buyer against your own store (merchant JWT) |
+| `/console/buyer-missions` | GET | Recent resumable buyer missions, newest first (alias: `/buyer-missions`) |
+| `/console/buyer-missions/{id}` | GET | One mission's authoritative, re-derived state |
+| `/console/buyer-missions/{id}/continue` | POST | Idempotent server-side mission continuation |
 | `/console/orders` | POST | Create order via chat checkout (merchant JWT) |
 | `/console/orders/{id}/consent` | POST | Issue single-use consent (merchant JWT) |
 | `/console/orders/{id}/payment` | POST | Start Razorpay test-mode payment (merchant JWT) |
@@ -268,6 +271,10 @@ mock fallbacks in production:
   `catalog_products`, `orders`, `consents`, `ledger_events`, `policy`) have
   RLS enabled and no `anon`/`authenticated` grants; only the backend
   (service role / direct connection) touches them.
+- **Deploy matrix (mixed pairing always 401s)** — demo console (no `NEXT_PUBLIC_SUPABASE_URL`) works only
+  against a development backend; production rejects the demo key with `auth_not_configured` (401) guidance.
+  Otherwise configure the same Supabase project on both sides.
+- **Health shape** — dev returns full diagnostics; production returns minimal `{status, database}`.
 
 The model layer is provider-agnostic via `get_llm()` (`agents/llm/`). Changing
 `LLM_PROVIDER`/`LLM_MODEL` in `.env` never touches policy, commerce, consent,
@@ -334,7 +341,7 @@ These are **non-negotiable**. Every component enforces them:
 | Ledger audit trail | Every material action emits a `LedgerEvent` with reasoning |
 | Policy independence | Policy engine, consent, orders, payments are isolated from LLM code |
 | Webhook authority | Only Razorpay webhooks can mark orders as PAID |
-| Single-use consent | Consent tokens are consumed on use, never reusable |
+| Single-use consent | Consent tokens are consumed on use, never reusable; races are retried once via re-issue |
 | HMAC verification | All Razorpay webhooks are SHA-256 signature verified |
 | Deterministic state machine | Invalid order transitions are rejected at the core level |
 

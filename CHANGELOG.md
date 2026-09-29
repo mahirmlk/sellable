@@ -30,7 +30,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Order transitions are idempotent (duplicate webhooks are no-ops, not 500s)
 - Refund/reject state is persisted
 
+### Fixed
+- Console contract types: refund payload carries `refund_status` only (no top-level `status`); approval list rows are always `PENDING` with post-action state derived from the order; `CONSUMED` (summary) == `USED` (record) consent vocabulary noted
+- Stale-consent refresh: chat checkout refreshes the authoritative order before pay and, on a 409 single-use race, re-issues consent once and retries; buyer-mission `continue` re-derives order/consent/payment server-side and is idempotent (single retry on `ConsentValidationError`)
+- Simulate gating: simulate-capture/failure are dev-only (403 in production); documented that a 200 does not imply settlement — on amount mismatch the attempt stays PENDING and the order stays `PAYMENT_PENDING`, only `CAPTURED`/`FAILED` counts
+- Auth matrix: `auth_not_configured` (401) machine-readable code plus console deployment guidance for demo-console-vs-prod-backend mismatches (frontend demo = no `NEXT_PUBLIC_SUPABASE_URL`; backend dev = `development`/`test`, default `production`)
+- Refunds: stable deterministic idempotency per (order, amount) so retries never double-refund; refund shape documented
+- Health: production `/health` is minimal `{status, database}` only (dev adds `environment`, `razorpay_configured`, `cors_origins`); stat strip/footer now branch on `status` only so prod no longer reads offline
+- Approvals: derived post-action state (`approved`/`rejected` top-level responses) instead of trusting list rows; provisional restored chat quotes stay provisional until a fresh seller turn
+- Trace-id sanitization: malformed `X-Trace-Id`/body `trace_id` answers 422 (`^trc_[0-9a-f]{32}$`); stale persisted ids must be dropped so flows never silently fork
+- Stream + lists: activity stream fails fast on 401/403; `limit`/`offset` pagination params with 500-row clamp documented and the Orders page shows a truncation notice at the cap; history probe is tri-state with stale TODO removal
+- Catalog + chat: client-side SKU pre-validation (`^[A-Z0-9-]+$`, max 64) before POST; `listPrice` passthrough preserved; chat MARK FULFILLED (`PAID` → `FULFILLED`) alongside refund; footer copy corrected
+
 ### Security
+- Backend diff for this batch was comment + 401-shape only — no guard weakened; audit found only pre-existing items
 - Demo API key is only accepted outside `SELLABLE_ENVIRONMENT=production`
 - CORS restricted to configured origins (default localhost:3000)
 - Event list limit clamped to 500; webhook amount mismatch rejected; single consent per order enforced

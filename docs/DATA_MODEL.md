@@ -136,7 +136,7 @@ class Consent(StrictModel):
     payee_id: str            # merchant ID
     purpose: str             # "single_transaction"
     expires_at: datetime     # time-limited
-    status: ConsentStatus    # ISSUED, CONSUMED, EXPIRED
+    status: ConsentStatus    # ISSUED, USED, EXPIRED, REVOKED
     approved_at: datetime | None
     single_use: bool         # always true
 ```
@@ -145,6 +145,9 @@ class Consent(StrictModel):
 - Can only be consumed once
 - Must match order ID, amount, and payee
 - Expires after `lifetime_minutes` (default: 10)
+
+**Vocabulary:** summaries surface the spent state as `CONSUMED`, but the
+record enum has no `CONSUMED` — `USED` (record) == `CONSUMED` (summary).
 
 ---
 
