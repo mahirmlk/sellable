@@ -81,15 +81,21 @@ export default function TransactionsPage() {
   const [sort, setSort] = useState<SortKey>("newest");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  // Backend clamps list responses at 500 rows: when the cap is hit the table
+  // is a truncated window, and the UI must say so instead of implying
+  // completeness.
+  const [truncated, setTruncated] = useState(false);
+  const LIST_LIMIT = 500;
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
       const [txData, apprData] = await Promise.all([
-        getConsoleTransactions(),
-        getConsoleApprovals().catch(() => []),
+        getConsoleTransactions({ limit: LIST_LIMIT }),
+        getConsoleApprovals({ limit: LIST_LIMIT }).catch(() => []),
       ]);
+      setTruncated(txData.length >= LIST_LIMIT);
       setTransactions(txData.map(mapConsoleTx));
       const items: Record<string, Array<{ sku: string; quantity: number }>> = {};
       for (const t of txData) {
@@ -271,6 +277,12 @@ export default function TransactionsPage() {
       />
 
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
+
+      {truncated && !loading && (
+        <div className="rounded-[10px] border border-amber-200/60 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-800">
+          Showing the 500 most recent orders — refine search or filters to narrow the window.
+        </div>
+      )}
 
       {loading ? (
         <TableSkeleton rows={8} />

@@ -28,6 +28,7 @@ import {
   consoleRequestConsent,
   consoleStartPayment,
   consoleRetryPayment,
+  fulfillOrder,
   refundOrder,
   simulatePaymentCapture,
   simulatePaymentFailure,
@@ -754,6 +755,20 @@ export default function ChatPageInner() {
               offerRef.current = item.offered_price_paise;
             }
           }
+          // The restored cart is a client-supplied snapshot, never
+          // policy-revalidated: mark it provisional until a fresh seller
+          // turn. Money stays safe — /console/orders re-quotes server-side.
+          if (!s.order_id) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: uid(),
+                role: "system",
+                text: "Restored the last shown quote from this session's history — treat the price as provisional until the seller confirms it again.",
+                status: "warning",
+              },
+            ]);
+          }
         }
         if (s.order_id) {
           try {
@@ -1274,7 +1289,52 @@ export default function ChatPageInner() {
     setBusy(true);
     setPhase("payment");
     try {
-      const attempt = await consoleStartPayment(order.order_id, consent.consent_id);
+      // Refresh the authoritative order first: the cached consent object may
+      // be stale (single-use consents return 409 "not available for use" on
+      // reuse). Never pay against a dead consent id.
+      const fresh = await getConsoleTransactionDetail(order.order_id).catch(() => null);
+      let consentId = consent.consent_id;
+      if (fresh !== null && fresh.consent_status !== "ISSUED") {
+        if (fresh.consent_id && fresh.consent_status === "ISSUED") {
+          consentId = fresh.consent_id;
+        } else {
+          const reissued = await consoleRequestConsent(order.order_id);
+          setConsent(reissued);
+          consentId = reissued.consent_id;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: uid(),
+              role: "system",
+              text: "The previous consent was no longer live, so a fresh single-use consent was issued before payment.",
+              status: "info",
+            },
+          ]);
+        }
+      }
+      let attempt: PaymentAttemptPayload;
+      try {
+        attempt = await consoleStartPayment(order.order_id, consentId);
+      } catch (payErr) {
+        // Single-use race: the consent died between refresh and payment.
+        // Re-issue once and retry; if that fails, return to consent honestly.
+        if (payErr instanceof ApiError && payErr.status === 409) {
+          const reissued = await consoleRequestConsent(order.order_id);
+          setConsent(reissued);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: uid(),
+              role: "system",
+              text: "That consent was already used, so a fresh one was issued — retrying payment once.",
+              status: "info",
+            },
+          ]);
+          attempt = await consoleStartPayment(order.order_id, reissued.consent_id);
+        } else {
+          throw payErr;
+        }
+      }
       setPayment(attempt);
       // The backend returns a hosted Razorpay Payment Link — the browser never
       // holds payment credentials and can never mark the order PAID itself.
@@ -1364,21 +1424,37 @@ export default function ChatPageInner() {
       try {
         const attempt = kind === "capture" ? await simulatePaymentCapture(order.order_id) : await simulatePaymentFailure(order.order_id);
         setPayment(attempt);
-        if (kind === "capture") {
+        // Never trust the HTTP 200 alone: an amount-mismatch returns 200
+        // with the attempt still PENDING and the order unsettled. Only
+        // transition on the authoritative attempt status; otherwise keep
+        // polling and surface the mismatch honestly.
+        if (kind === "capture" && attempt.status === "CAPTURED") {
           setOrderStatus("PAID");
           setPhase("receipt");
-        } else {
+          stopPolling();
+        } else if (kind === "failure" && attempt.status === "FAILED") {
           setOrderStatus("PAYMENT_FAILED");
           setPhase("failed");
+          stopPolling();
+        } else {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: uid(),
+              role: "system",
+              text: "The backend recorded the simulation but the payment is not settled (e.g. amount mismatch). Polling the authoritative order state.",
+              status: "warning",
+            },
+          ]);
+          pollOrder(order.order_id);
         }
-        stopPolling();
       } catch {
         // leave current phase; the backend may have rejected the simulation
       } finally {
         setBusy(false);
       }
     },
-    [order, busy, stopPolling, readOnly]
+    [order, busy, stopPolling, pollOrder, readOnly]
   );
 
   const handleRefund = useCallback(async () => {
@@ -1394,6 +1470,30 @@ export default function ChatPageInner() {
       setBusy(false);
     }
   }, [order, busy]);
+
+  // L2: paid chat orders previously had to detour to the detail page to
+  // confirm delivery. PAID → FULFILLED is a merchant confirmation, gated
+  // server-side by the order state machine.
+  const handleFulfill = useCallback(async () => {
+    if (!order || busy) return;
+    setBusy(true);
+    try {
+      await fulfillOrder(order.order_id);
+      setOrderStatus("FULFILLED");
+      pollOrder(order.order_id);
+      setMessages((prev) => [
+        ...prev,
+        { id: uid(), role: "system", text: "Order marked fulfilled.", status: "success" },
+      ]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { id: uid(), role: "system", text: "Could not mark the order fulfilled — the backend rejected the request.", status: "error" },
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  }, [order, busy, pollOrder]);
 
   const handleCopy = useCallback((value: string) => {
     navigator.clipboard.writeText(value);
@@ -1932,6 +2032,11 @@ export default function ChatPageInner() {
                     <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-600 mb-2">REFUNDED</div>
                     <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600">This order has been refunded. The refund is recorded in the ledger and replayable.</div>
                   </div>
+                )}
+                {orderStatus === "PAID" && (
+                  <button onClick={handleFulfill} disabled={busy} className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-green-700 hover:border-green-600/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                    MARK FULFILLED
+                  </button>
                 )}
                 {orderStatus !== "REFUNDED" && (
                   <button onClick={handleRefund} disabled={busy} className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-red-600 hover:border-red-600/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">

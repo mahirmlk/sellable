@@ -27,7 +27,7 @@ const footerColumns: FooterColumn[] = [
       { label: "Agents Manifest", href: "https://api.sellable.shop/.well-known/agents.json", external: true, hint: "GET /.well-known/agents.json" },
       { label: "LLMs.txt", href: "https://api.sellable.shop/llms.txt", external: true, hint: "GET /llms.txt" },
       { label: "Machine Catalog", href: "https://api.sellable.shop/catalog.ai.json", external: true, hint: "GET /catalog.ai.json" },
-      { label: "Health", href: "https://api.sellable.shop/health", external: true, hint: "GET /health — environment & Razorpay status" },
+      { label: "Health", href: "https://api.sellable.shop/health", external: true, hint: "GET /health — liveness probe" },
       { label: "API Reference", href: "https://github.com/mahirmlk/sellable/blob/main/docs/API.md", external: true, hint: "Full API docs" },
       { label: "Architecture", href: "https://github.com/mahirmlk/sellable/blob/main/ARCHITECTURE.md", external: true, hint: "System design" },
     ],

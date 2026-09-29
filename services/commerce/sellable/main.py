@@ -855,6 +855,10 @@ def _summarize_order(
     if payment_status is None and status in ("PAYMENT_FAILED", "ABORTED", "REFUNDED"):
         payment_status = "FAILED"
 
+    # Display vocabulary: the Consent record enum uses USED, but every
+    # order/transaction summary surfaces the same state as CONSUMED (the
+    # consent was spent). Treat them as one token: USED (record) ==
+    # CONSUMED (summary). New code must compare against both.
     if consent_used:
         consent_status = "CONSUMED"
     elif consent_issued:

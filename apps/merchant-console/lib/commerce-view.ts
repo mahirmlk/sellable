@@ -64,7 +64,10 @@ export function mapConsoleTx(tx: ConsoleTransaction): Transaction {
       : undefined,
     items: tx.items?.map((item) => ({
       sku: item.sku,
+      // Displayed (possibly negotiated) price; listPaise keeps the
+      // pre-negotiation unit price so discount depth stays available.
       unitPaise: item.offered_price_paise,
+      listPaise: item.unit_price_paise,
       linePaise: item.line_total_paise,
       qty: item.quantity,
     })),
@@ -115,6 +118,10 @@ export function isOpenOrder(tx: Transaction): boolean {
 }
 
 export function isFailedPayment(tx: Transaction): boolean {
+  // Note: payment.status "FAILED" here is order-derived (the backend
+  // synthesizes it for PAYMENT_FAILED/ABORTED/REFUNDED orders), not a
+  // provider verdict. Display use only — never treat it as "the provider
+  // said failed" in new payment logic; read ledger events for that.
   return tx.status === "PAYMENT_FAILED" || tx.payment?.status === "FAILED";
 }
 

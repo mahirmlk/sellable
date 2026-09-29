@@ -165,6 +165,12 @@ export default function CatalogPage() {
       setFormError("SKU, title, and category are required.");
       return;
     }
+    // Mirror the backend SKU contract (^[A-Z0-9-]+$, max 64) client-side so
+    // typos fail fast with a clear message instead of a 422 round-trip.
+    if (!/^[A-Z0-9-]+$/.test(sku) || sku.length > 64) {
+      setFormError("SKU may only use A–Z, 0–9, and hyphens (max 64 characters).");
+      return;
+    }
     if (price <= 0 || floor <= 0) {
       setFormError("Price and floor price must be greater than zero.");
       return;

@@ -37,6 +37,11 @@ from sellable.config import settings
 _DEMO_MERCHANT_ID = "mrc_demo_store"
 
 ONBOARDING_REQUIRED_CODE = "onboarding_required"
+# Machine-readable code for "neither side of auth is configured": the frontend
+# demo flag (no Supabase URL) and the backend env flag disagree, so the call
+# can never authenticate. The console uses this to explain the mixed-deploy
+# matrix instead of showing a generic 401.
+AUTH_NOT_CONFIGURED_CODE = "auth_not_configured"
 
 
 @dataclass(frozen=True)
@@ -259,12 +264,28 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str, str | None]:
 
 def _dev_session(x_agent_key: str | None) -> MerchantSession:
     if not settings.is_dev_environment:
-        raise HTTPException(status_code=401, detail="Merchant authentication is not configured")
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": AUTH_NOT_CONFIGURED_CODE,
+                "message": (
+                    "Merchant authentication is not configured: this backend runs in "
+                    "production mode without Supabase and rejects the demo key. Point "
+                    "the console at a development backend or configure Supabase on both sides."
+                ),
+            },
+        )
     if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH}:
         return MerchantSession(merchant_id=_DEMO_MERCHANT_ID, auth_user_id=None, role="owner")
     raise HTTPException(
         status_code=401,
-        detail="Merchant authentication is not configured. Send the demo X-Agent-Key header in development.",
+        detail={
+            "code": AUTH_NOT_CONFIGURED_CODE,
+            "message": (
+                "Merchant authentication is not configured. Send the demo X-Agent-Key "
+                "header in development, or configure Supabase on both console and backend."
+            ),
+        },
     )
 
 
@@ -326,6 +347,7 @@ def get_merchant_session(
 
 
 __all__ = [
+    "AUTH_NOT_CONFIGURED_CODE",
     "AuthenticatedUser",
     "MerchantSession",
     "ONBOARDING_REQUIRED_CODE",

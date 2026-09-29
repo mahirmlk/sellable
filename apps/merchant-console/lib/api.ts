@@ -30,9 +30,12 @@ export interface Product {
 
 export interface HealthResponse {
   status: string;
-  environment: string;
-  database: string;
-  razorpay_configured: boolean;
+  // Dev-only fields: production /health returns a minimal liveness shape
+  // ({status, database}) to avoid leaking config to unauthenticated
+  // callers. Always branch on `status`, never on these flags alone.
+  environment?: string;
+  database?: string;
+  razorpay_configured?: boolean;
 }
 
 export interface LedgerEvent {
@@ -159,18 +162,12 @@ export async function closeCheckoutSession(
 
 // --- Checkout session history (multi-session sidebar) ---
 //
-// TODO(history-backend): the endpoints below are owned by a parallel backend
-// agent and may not be deployed yet. Expected shapes (lightweight list rows;
-// full rows match CheckoutSession):
-//   GET    /console/checkout/sessions         -> CheckoutSessionListItem[]
-//   GET    /console/checkout/session/{id}     -> CheckoutSession
-//   PATCH  /console/checkout/session/{id}     -> CheckoutSession (title/archived)
-//   DELETE /console/checkout/session/{id}     -> archive, never destroys commerce rows
-// Until they ship, every helper here degrades gracefully: listCheckoutSessions
-// returns null (the history panel hides and single-session behavior is intact),
-// getCheckoutSessionById returns null for unknown ids, and archive/delete fall
-// back to the existing close endpoint (ABANDONED rows drop out of the active
-// set). Do NOT add backend routes here — that work belongs to the backend agent.
+// History routes are deployed (main.py: checkout/sessions + session/{id}
+// GET/PATCH/DELETE). The graceful fallback below stays as a safety net for
+// version skew: listCheckoutSessions returns null when the endpoint is
+// missing (the history panel hides and single-session behavior is intact).
+// Item-route 404s mean unknown/foreign ids, never "not deployed" — only
+// 405/501 flip the probe. Do NOT add backend routes here.
 
 export interface CheckoutSessionListItem {
   session_id: string;
@@ -189,12 +186,34 @@ export interface CheckoutSessionListItem {
   updated_at: string;
 }
 
-/** 404/405/501 from a history route means "not deployed yet", not an error. */
-function isHistoryUnsupported(err: unknown): boolean {
+/** 404/405/501 from the LIST route means "not deployed yet", not an error. */
+function isHistoryListMissing(err: unknown): boolean {
   return (
     err instanceof ApiError &&
     (err.status === 404 || err.status === 405 || err.status === 501)
   );
+}
+
+/**
+ * For ITEM routes, only 405/501 mean "not deployed". A 404 is the backend
+ * truthfully reporting an unknown/foreign id (main.py validates ownership)
+ * — it must not flip the deployment probe, or one bad id would hide the
+ * history panel for every later call.
+ */
+function isHistoryItemMissing(err: unknown): boolean {
+  return (
+    err instanceof ApiError && (err.status === 405 || err.status === 501)
+  );
+}
+
+// Tri-state deployment probe: null = unknown, true = confirmed, false =
+// confirmed missing. Set once from real responses instead of inferring
+// per-call, so a genuine 404 never masquerades as a missing feature.
+let historySupport: boolean | null = null;
+
+/** Read the history-route deployment probe (null = not yet probed). */
+export function isHistorySupported(): boolean | null {
+  return historySupport;
 }
 
 /**
@@ -212,11 +231,16 @@ export async function listCheckoutSessions(
   if (opts.offset !== undefined) params.set("offset", String(opts.offset));
   const query = params.toString();
   try {
-    return await apiFetch<CheckoutSessionListItem[]>(
+    const rows = await apiFetch<CheckoutSessionListItem[]>(
       `/console/checkout/sessions${query ? `?${query}` : ""}`
     );
+    historySupport = true;
+    return rows;
   } catch (err) {
-    if (isHistoryUnsupported(err)) return null;
+    if (isHistoryListMissing(err)) {
+      historySupport = false;
+      return null;
+    }
     throw err;
   }
 }
@@ -226,11 +250,16 @@ export async function getCheckoutSessionById(
   sessionId: string
 ): Promise<CheckoutSession | null> {
   try {
-    return await apiFetch<CheckoutSession>(
+    const session = await apiFetch<CheckoutSession>(
       `/console/checkout/session/${encodeURIComponent(sessionId)}`
     );
+    historySupport = true;
+    return session;
   } catch (err) {
-    if (isHistoryUnsupported(err)) return null;
+    if (isHistoryItemMissing(err)) {
+      historySupport = false;
+      return null;
+    }
     if (err instanceof ApiError && err.isNotFound) return null;
     throw err;
   }
@@ -247,12 +276,17 @@ export async function patchCheckoutSession(
   patch: CheckoutSessionPatch
 ): Promise<CheckoutSession | null> {
   try {
-    return await apiFetch<CheckoutSession>(
+    const session = await apiFetch<CheckoutSession>(
       `/console/checkout/session/${encodeURIComponent(sessionId)}`,
       { method: "PATCH", body: JSON.stringify(patch) }
     );
+    historySupport = true;
+    return session;
   } catch (err) {
-    if (isHistoryUnsupported(err)) return null;
+    if (isHistoryItemMissing(err)) {
+      historySupport = false;
+      return null;
+    }
     if (err instanceof ApiError && err.isNotFound) return null;
     throw err;
   }
@@ -290,9 +324,11 @@ export async function deleteCheckoutSession(sessionId: string): Promise<void> {
       `/console/checkout/session/${encodeURIComponent(sessionId)}`,
       { method: "DELETE" }
     );
+    historySupport = true;
     return;
   } catch (err) {
-    if (!isHistoryUnsupported(err)) throw err;
+    if (!isHistoryItemMissing(err)) throw err;
+    historySupport = false;
   }
   await archiveCheckoutSession(sessionId);
 }
@@ -307,6 +343,10 @@ export interface ConsoleApproval {
   amount_paise: number;
   reason: string;
   requested_at: string;
+  // List rows are always PENDING: approve/reject outcomes arrive as the
+  // top-level `{status: "approved"|"rejected"}` of the action response, not
+  // as mutated list rows. Derive post-action state from the authoritative
+  // order (consent/payment) instead of expecting list rows to change.
   status: "PENDING" | "APPROVED" | "REJECTED";
 }
 
@@ -416,6 +456,23 @@ export class ApiError extends Error {
   /** Backend-reported onboarding-required state (403 + machine-readable code). */
   get isOnboardingRequired(): boolean {
     return this.status === 403 && this.errorCode === "onboarding_required";
+  }
+  /**
+   * Neither side of auth is configured (demo console against a production
+   * backend without Supabase, or vice versa). The call can never succeed
+   * until the deploy matrix matches — surface deployment guidance, not a
+   * generic "unauthorized".
+   */
+  get isAuthNotConfigured(): boolean {
+    return this.status === 401 && this.errorCode === "auth_not_configured";
+  }
+  /** Human-readable deployment guidance for the auth-config mismatch. */
+  get authConfigGuidance(): string | null {
+    if (!this.isAuthNotConfigured) return null;
+    return (
+      "Console and backend auth modes disagree: use the demo console only with " +
+      "a development backend, or configure the same Supabase project on both sides."
+    );
   }
 }
 
@@ -534,7 +591,8 @@ export interface BuyerMissionPayload {
   merchant_id: string;
   trace_id: string;
   buyer_agent_id: string;
-  order_id: string;
+  // Null for DENIED missions — policy refused before any order existed.
+  order_id: string | null;
   // Re-derived from the authoritative order on every read — never trusted
   // from any client-side state.
   state:
@@ -546,7 +604,8 @@ export interface BuyerMissionPayload {
     | "VERIFIED"
     | "PAYMENT_FAILED"
     | "ABORTED"
-    | "REFUNDED";
+    | "REFUNDED"
+    | "DENIED";
   required_action: string;
   order_status: string | null;
   consent_id: string | null;
@@ -669,8 +728,14 @@ export async function getAgentManifest(): Promise<Record<string, unknown>> {
 
 // --- Console: Transactions ---
 
-export async function getConsoleTransactions(): Promise<ConsoleTransaction[]> {
-  return apiFetch<ConsoleTransaction[]>("/console/transactions");
+export async function getConsoleTransactions(
+  opts: { limit?: number; offset?: number } = {}
+): Promise<ConsoleTransaction[]> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  const query = params.toString();
+  return apiFetch<ConsoleTransaction[]>(`/console/transactions${query ? `?${query}` : ""}`);
 }
 
 export async function getConsoleTransactionDetail(
@@ -690,8 +755,14 @@ export async function getConsoleEvents(
 
 // --- Console: Approvals ---
 
-export async function getConsoleApprovals(): Promise<ConsoleApproval[]> {
-  return apiFetch<ConsoleApproval[]>("/console/approvals");
+export async function getConsoleApprovals(
+  opts: { limit?: number; offset?: number } = {}
+): Promise<ConsoleApproval[]> {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  const query = params.toString();
+  return apiFetch<ConsoleApproval[]>(`/console/approvals${query ? `?${query}` : ""}`);
 }
 
 export async function approveConsoleOrder(
@@ -793,12 +864,19 @@ export function streamConsoleEvents(
     }
   };
 
-  const scheduleReconnect = () => {
+  const scheduleReconnect = (err?: unknown) => {
     if (stopped) return;
+    // Non-retryable: auth failures will never heal by reconnecting — hand
+    // over to the caller's polling fallback / redirect immediately instead
+    // of burning the backoff budget.
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      handlers.onError(err);
+      return;
+    }
     if (attempt >= maxReconnects) {
       // Bounded: hand over to the caller's polling fallback exactly once
       // instead of storming the backend with reconnects.
-      handlers.onError(new Error("Event stream unavailable after retries"));
+      handlers.onError(err instanceof Error ? err : new Error("Event stream unavailable after retries"));
       return;
     }
     const delay = Math.min(baseDelayMs * 2 ** attempt, 10_000);
@@ -819,7 +897,12 @@ export function streamConsoleEvents(
         signal,
         headers: await buildHeaders(),
       });
-      if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
+      if (!res.ok || !res.body) {
+        // Map to ApiError so callers get status classification
+        // (auth short-circuit, onboarding redirect) instead of a bare Error.
+        const { detail, code } = await extractErrorDetail(res);
+        throw new ApiError(res.status, res.statusText, detail, null, code);
+      }
       attempt = 0; // successful handshake resets the backoff
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -853,9 +936,9 @@ export function streamConsoleEvents(
       // Intentional close (unmount/navigation): stay silent so React
       // StrictMode remounts and failed handshakes surface honestly.
       if (stopped || signal.aborted) return;
-      scheduleReconnect();
+      scheduleReconnect(error);
       // NOTE: onError fires only from scheduleReconnect after the budget is
-      // spent — exactly once per stream lifetime.
+      // spent (or immediately for 401/403) — exactly once per stream lifetime.
     }
   }
 
@@ -875,6 +958,16 @@ async function buildHeaders(): Promise<Record<string, string>> {
   const token = await getMerchantToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
+}
+
+// Backend trace ids match `^trc_[0-9a-f]{32}$` (resolve_trace_id 422s
+// anything else). A persisted id from an older format must never be sent
+// raw — drop it so the backend mints a fresh trace instead of 422ing.
+const TRACE_ID_PATTERN = /^trc_[0-9a-f]{32}$/;
+
+function sanitizeTraceId(traceId: string | null | undefined): string | undefined {
+  if (!traceId) return undefined;
+  return TRACE_ID_PATTERN.test(traceId) ? traceId : undefined;
 }
 
 // --- Merchant store / onboarding (real per-user merchants) ---
@@ -927,15 +1020,26 @@ export async function createConsoleProduct(body: {
 
 // --- Console commerce flow (merchant JWT, never agent keys) ---
 
+export interface RefundResult {
+  refund_id: string;
+  order_id: string;
+  amount_paise: number;
+  provider_payment_id: string | null;
+  provider_refund_id: string | null;
+  refund_status: string;
+  reason: string;
+  trace_id: string;
+}
+
 export async function refundOrder(
   orderId: string,
   reason = "merchant_initiated",
   options?: { amountPaise?: number; idempotencyKey?: string }
-): Promise<{ status: string; order_id: string }> {
+): Promise<RefundResult> {
   const params = new URLSearchParams({ reason });
   if (options?.amountPaise !== undefined) params.set("amount_paise", String(options.amountPaise));
   if (options?.idempotencyKey) params.set("idempotency_key", options.idempotencyKey);
-  return apiFetch<{ status: string; order_id: string }>(`/orders/${orderId}/refund?${params.toString()}`, {
+  return apiFetch<RefundResult>(`/orders/${orderId}/refund?${params.toString()}`, {
     method: "POST",
   });
 }
@@ -966,11 +1070,13 @@ export async function consoleSellerRespond(
 ): Promise<SellerDecisionPayload> {
   // The trace rides the X-Trace-Id header so every negotiation turn in one
   // session lands on the same replayable trace instead of forking a fresh
-  // one per counteroffer.
+  // one per counteroffer. Malformed persisted ids are dropped — the backend
+  // 422s them and a fresh trace is strictly better than a failed turn.
   const { trace_id, ...payload } = body;
+  const cleanTrace = sanitizeTraceId(trace_id);
   return apiFetch<SellerDecisionPayload>("/console/agent/seller/respond", {
     method: "POST",
-    headers: trace_id ? { "X-Trace-Id": trace_id } : undefined,
+    headers: cleanTrace ? { "X-Trace-Id": cleanTrace } : undefined,
     body: JSON.stringify(payload),
   });
 }
@@ -988,9 +1094,14 @@ export async function consoleCreateOrder(body: {
   quantity?: number;
   buyer_offer_paise?: number | null;
 }): Promise<OrderCreateResult> {
+  // Drop malformed persisted trace ids (backend 422s them); the backend
+  // mints a fresh trace when none is supplied.
+  const cleanBody = body.trace_id && !TRACE_ID_PATTERN.test(body.trace_id)
+    ? { ...body, trace_id: undefined }
+    : body;
   return apiFetch<OrderCreateResult>("/console/orders", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify(cleanBody),
   });
 }
 
