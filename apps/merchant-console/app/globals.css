@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@plugin "tailwind-scrollbar";
 
 /* shadcn `dark:` utilities follow our data-theme instead of .dark class */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));

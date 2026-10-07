@@ -748,24 +748,31 @@ export default function ActivityPage() {
   };
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[26px] font-bold tracking-[-0.02em] text-neutral-900">Live Activity</h1>
-          <p className="text-[14px] text-neutral-500 mt-1">Real-time operational feed</p>
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Ledger
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Live Activity
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            Every ledger event as it lands. Run a buyer mission to watch one happen.
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-2 h-9 px-3 border border-black/[0.06] bg-white rounded-full">
             <Radio size={12} className={streamMode === "live" ? "text-green-600 animate-[blink_2s_ease-in-out_infinite]" : streamMode === "polling" ? "text-amber-600" : "text-red-600"} />
             <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-500">
               {streamMode === "live" ? "LIVE" : streamMode === "polling" ? "POLLING" : "OFFLINE"}
             </span>
           </div>
-          <button onClick={() => setMissionFormOpen((v) => !v)} className="inline-flex items-center gap-2 h-9 px-3 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-all cursor-pointer font-medium rounded-full">
-            {missionFormOpen ? <X size={12} /> : <Play size={12} />} {missionFormOpen ? "CLOSE MISSION" : "NEW BUYER MISSION"}
+          <button onClick={() => setMissionFormOpen((v) => !v)} className="inline-flex items-center gap-2 h-9 px-4 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-all cursor-pointer font-medium rounded-full">
+            {missionFormOpen ? <X size={12} /> : <Play size={12} />} {missionFormOpen ? "Close mission" : "New buyer mission"}
           </button>
-          <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-9 px-3 border border-black/[0.06] bg-white text-[13px] text-neutral-500 hover:text-neutral-900 hover:border-black/[0.12] transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full">
-            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> REFRESH
+          <button onClick={fetchData} disabled={loading} className="inline-flex items-center gap-2 h-9 px-4 border border-black/[0.06] bg-white text-[13px] text-neutral-500 hover:text-neutral-900 hover:border-black/[0.12] transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full">
+            <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> Refresh
           </button>
         </div>
       </div>

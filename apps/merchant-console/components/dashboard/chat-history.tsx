@@ -91,6 +91,8 @@ export interface ChatHistoryProps {
   onDelete: (sessionId: string) => void;
   showArchived: boolean;
   onToggleArchived: () => void;
+  /** Root layout override — the mobile drawer renders the same panel full-width. */
+  className?: string;
 }
 
 export default function ChatHistory({
@@ -103,6 +105,7 @@ export default function ChatHistory({
   onDelete,
   showArchived,
   onToggleArchived,
+  className,
 }: ChatHistoryProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -120,17 +123,17 @@ export default function ChatHistory({
   };
 
   return (
-    <aside className="hidden lg:flex w-[300px] shrink-0 flex-col min-h-0 border-r border-black/[0.06] bg-white">
+    <aside className={className ?? "hidden lg:flex w-[300px] shrink-0 flex-col min-h-0 border-r border-black/[0.06] bg-white"}>
       {/* Panel header */}
       <div className="px-4 py-3 border-b border-black/[0.06] flex items-center justify-between flex-shrink-0">
         <span className="inline-flex items-center gap-2 font-[var(--font-mono)] text-[0.52rem] tracking-[0.16em] uppercase text-neutral-600">
-          <History size={11} /> HISTORY
+          <History size={11} /> History
         </span>
         <button
           onClick={onNew}
           className="inline-flex items-center gap-1.5 h-7 px-2.5 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors cursor-pointer font-medium rounded-full"
         >
-          <Plus size={11} /> NEW SESSION
+          <Plus size={11} /> New session
         </button>
       </div>
 
@@ -228,7 +231,7 @@ export default function ChatHistory({
             onClick={onToggleArchived}
             className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer"
           >
-            {showArchived ? "HIDE ARCHIVED" : `SHOW ARCHIVED (${archivedCount})`}
+            {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
           </button>
         </div>
       )}

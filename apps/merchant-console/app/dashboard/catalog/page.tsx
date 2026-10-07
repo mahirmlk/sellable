@@ -17,7 +17,6 @@ import {
   ApiError,
   type Product,
 } from "@/lib/api";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -293,29 +292,36 @@ export default function CatalogPage() {
   const pageRows = pageSlice(visible, current);
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title="Products"
-        subtitle="Everything your AI seller can offer"
-        actions={
-          <>
-            <button
-              onClick={handleExport}
-              disabled={visible.length === 0}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
-            >
-              <Download size={14} /> Export
-            </button>
-            <button
-              onClick={() => setShowForm((v) => !v)}
-              className="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-neutral-900 text-[13px] font-semibold text-white shadow-sm hover:bg-black transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
-            >
-              {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? "Cancel" : "Add product"}
-            </button>
-            <RefreshButton onRefresh={() => fetchData(searchQuery)} loading={loading} />
-          </>
-        }
-      />
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Store
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Products
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            Everything the AI Seller can quote and sell. Each product carries a list price and a floor it can never go below.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={visible.length === 0}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
+          >
+            <Download size={14} /> Export
+          </button>
+          <button
+            onClick={() => setShowForm((v) => !v)}
+            className="inline-flex items-center gap-2 h-9 px-5 rounded-full bg-neutral-900 text-[13px] font-semibold text-white shadow-sm hover:bg-black transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
+          >
+            {showForm ? <X size={14} /> : <Plus size={14} />} {showForm ? "Cancel" : "Add product"}
+          </button>
+          <RefreshButton onRefresh={() => fetchData(searchQuery)} loading={loading} />
+        </div>
+      </div>
 
       {createdSku && (
         <div className="rounded-2xl bg-green-50 border border-green-200/60 px-4 py-3 flex items-center gap-2.5">
@@ -330,7 +336,7 @@ export default function CatalogPage() {
 
       {showForm && (
         <form onSubmit={handleCreate} className="rounded-[18px] bg-panel border border-hairline shadow-card p-6 space-y-5">
-          <div className="font-display text-[21px] leading-none tracking-[-0.005em] text-ink">New product</div>
+          <div className="text-[15px] font-semibold tracking-[-0.005em] text-ink">New product</div>
           {formError && (
             <div className="rounded-2xl bg-red-50 border border-red-200/60 px-4 py-3 flex items-start gap-2.5">
               <AlertCircle size={14} className="text-red-700 mt-0.5 shrink-0" />
@@ -387,7 +393,7 @@ export default function CatalogPage() {
                 Cancel
               </button>
               <button type="submit" disabled={saving} className="inline-flex items-center justify-center h-9 px-4 rounded-full bg-ink text-panel text-[13px] font-semibold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]">
-                {saving ? "SAVING…" : "CREATE PRODUCT"}
+                {saving ? "Saving…" : "Create product"}
               </button>
             </div>
           </div>
@@ -602,10 +608,9 @@ export default function CatalogPage() {
       )}
 
       <div className="rounded-2xl bg-panel-2 border border-black/[0.05] p-5">
-        <div className="text-[14px] text-neutral-500 leading-relaxed">
-          Offers below the minimum price are blocked by the policy engine. Minimum prices are merchant-configured and
-          enforced deterministically — the agent cannot override them. A product is available to the AI seller only
-          while it has stock.
+        <div className="text-[14px] text-muted leading-relaxed">
+          The policy engine blocks any offer below the minimum price, and the agent cannot override it.
+          A product stays available to the AI Seller only while it has stock.
         </div>
       </div>
     </div>

@@ -20,7 +20,6 @@ import {
   type ConsoleGrowthMetrics,
 } from "@/lib/api";
 import { formatPaise } from "@/lib/formatters";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -283,14 +282,23 @@ export default function StorefrontPage() {
   const inStock = (catalog ?? []).filter((p) => p.stock > 0).length;
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title="AI Storefront"
-        subtitle="Your store's AI sales channel."
-        actions={
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Channels
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            AI Storefront
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            The machine-readable side of your store: discovery documents, capabilities, and live channel state.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
-        }
-      />
+        </div>
+      </div>
 
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
       {partialError && <PartialBanner message={partialError} />}
@@ -308,7 +316,11 @@ export default function StorefrontPage() {
       ) : (
         <>
           {/* Store availability */}
-          <Section title="Store availability" hint="Live backend state">
+          <Section
+            title="Store availability"
+            hint="Live backend state"
+            description="Whether AI buyers can find you and transact right now."
+          >
             <div className="flex flex-col sm:flex-row sm:items-center gap-3">
               <span className={`inline-flex items-center gap-2 text-[14px] font-semibold ${discoverable ? "text-green-700" : "text-amber-600"}`}>
                 <Globe size={16} /> {discoverable ? "Discoverable" : "Offline — not verified"}
@@ -338,7 +350,11 @@ export default function StorefrontPage() {
           </Section>
 
           {/* AI discovery */}
-          <Section title="AI discovery" hint="From the live manifest only">
+          <Section
+            title="AI discovery"
+            hint="Live manifest"
+            description="The documents autonomous buyers read before their first request."
+          >
             {manifest ? (
               <div className="space-y-0">
                 {endpoints.map((ep, i) => {
@@ -375,7 +391,11 @@ export default function StorefrontPage() {
           </Section>
 
           {/* Capabilities — live manifest only */}
-          <Section title="Capabilities" hint="Live manifest only — nothing claimed without evidence">
+          <Section
+            title="Capabilities"
+            hint="Live manifest"
+            description="What the manifest says this store can do. No manifest, no claims."
+          >
             {manifest ? (
               capabilities.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -400,7 +420,11 @@ export default function StorefrontPage() {
 
           {/* Commerce pipeline: catalog / quotes / negotiation / checkout / payment */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Section title="Product catalog" hint={catalog ? `${catalog.length} products · ${inStock} in stock` : "Unavailable"}>
+            <Section
+              title="Product catalog"
+              hint={catalog ? `${catalog.length} products · ${inStock} in stock` : "Unavailable"}
+              description="What buyers can actually buy."
+            >
               {catalog === null ? (
                 <div className="text-[14px] text-neutral-500">Catalog could not be loaded.</div>
               ) : catalog.length === 0 ? (
@@ -420,7 +444,11 @@ export default function StorefrontPage() {
               )}
             </Section>
 
-            <Section title="Quotes" hint={transactions ? `${transactions.length} orders on record` : "Unavailable"}>
+            <Section
+              title="Quotes"
+              hint={transactions ? `${transactions.length} orders on record` : "Unavailable"}
+              description="Quotes the seller issued across recorded orders."
+            >
               {transactions === null ? (
                 <div className="text-[14px] text-neutral-500">Order data could not be loaded.</div>
               ) : (
@@ -439,7 +467,11 @@ export default function StorefrontPage() {
               )}
             </Section>
 
-            <Section title="Negotiation" hint="From sales metrics">
+            <Section
+              title="Negotiation"
+              hint="Sales metrics"
+              description="How price talks ended."
+            >
               {insights === null ? (
                 <div className="text-[14px] text-neutral-500">Negotiation metrics could not be loaded.</div>
               ) : (
@@ -459,7 +491,11 @@ export default function StorefrontPage() {
               )}
             </Section>
 
-            <Section title="Checkout" hint={transactions ? "Order state" : "Unavailable"}>
+            <Section
+              title="Checkout"
+              hint={transactions ? "Order state" : "Unavailable"}
+              description="Where open orders stand."
+            >
               {transactions === null ? (
                 <div className="text-[14px] text-neutral-500">Checkout data could not be loaded.</div>
               ) : (
@@ -477,7 +513,11 @@ export default function StorefrontPage() {
             </Section>
           </div>
 
-          <Section title="Payment" hint="Live status + order evidence">
+          <Section
+            title="Payment"
+            hint="Rail state"
+            description="How settlement works here, in one line."
+          >
             <div className="text-[13px] text-neutral-600">
               {status
                 ? `Provider ${status.payment_rail.provider} · ${status.payment_rail.mode} · ${status.payment_rail.configured ? "Configured" : "Not configured"} · webhook ${status.payment_rail.webhook_configured ? "configured" : "not configured"}`
@@ -491,7 +531,11 @@ export default function StorefrontPage() {
           </Section>
 
           {/* Sales channels */}
-          <Section title="Sales channels" hint="Derived from live status + order history">
+          <Section
+            title="Sales channels"
+            hint="Live state"
+            description="Human and agent paths into your checkout."
+          >
             <ChannelRow
               name="Human Chat"
               detail="Merchant-assisted checkout in the AI Sales inbox"

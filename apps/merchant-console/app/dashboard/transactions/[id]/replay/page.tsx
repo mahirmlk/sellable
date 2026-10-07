@@ -151,7 +151,7 @@ export default function ReplayPage() {
   }, [txEvents, id]);
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
       <Breadcrumbs
         items={[
           { label: "Orders", href: "/dashboard/transactions" },
