@@ -10,7 +10,6 @@ import {
   type Product,
 } from "@/lib/api";
 import { formatPaise } from "@/lib/formatters";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -226,19 +225,26 @@ export default function SellingRulesPage() {
   };
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title="Selling Rules"
-        subtitle="Boundaries you control · ENFORCED BY THE POLICY ENGINE"
-        actions={
-          <>
-            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
-            <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className={PRIMARY_PILL}>
-              <Save size={13} /> {saving ? "Saving…" : "Save changes"}
-            </button>
-          </>
-        }
-      />
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Policy
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Selling rules
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            The limits your AI Seller works inside. The policy engine checks every quote against them, and the agent cannot overrule a block.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+          <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className={PRIMARY_PILL}>
+            <Save size={13} /> {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
 
       {saveMsg === "success" && (
         <div className="rounded-2xl bg-green-50 border border-green-200/60 px-4 py-3 flex items-center gap-2.5">
@@ -262,24 +268,40 @@ export default function SellingRulesPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Section title="Pricing" hint={hasChanges ? "Unsaved changes" : "Max order + max item + max discount"}>
+            <Section
+              title="Pricing"
+              hint={hasChanges ? "Unsaved changes" : undefined}
+              description="Ceilings on order size and discounts."
+            >
               {paiseField("Max order value", "max_order_value_paise")}
               {paiseField("Max single-item value", "max_single_item_value_paise")}
               {countField("Max discount", "max_discount_percent", "%")}
             </Section>
-            <Section title="Negotiation" hint={hasChanges ? "Unsaved changes" : "Rounds the seller may counter"}>
+            <Section
+              title="Negotiation"
+              hint={hasChanges ? "Unsaved changes" : undefined}
+              description="How long the seller may haggle before holding firm."
+            >
               {countField("Max negotiation rounds", "max_negotiation_rounds")}
-              <div className="pt-3 text-[13px] text-neutral-500 leading-relaxed">
-                After this many rounds the seller holds its position or walks away, per backend policy.
+              <div className="pt-3 text-[13px] text-muted leading-relaxed">
+                Past this many rounds the seller holds its position or walks away.
               </div>
             </Section>
-            <Section title="Approvals" hint={hasChanges ? "Unsaved changes" : "Human-in-the-loop threshold"}>
+            <Section
+              title="Approvals"
+              hint={hasChanges ? "Unsaved changes" : undefined}
+              description="Which orders stop for your decision."
+            >
               {paiseField("Human approval threshold", "human_approval_threshold_paise", true)}
-              <div className="pt-3 text-[13px] text-neutral-500 leading-relaxed">
-                Orders at or above this amount are held for merchant approval before consent and payment.
+              <div className="pt-3 text-[13px] text-muted leading-relaxed">
+                Orders at or above this amount wait for your approval before consent and payment.
               </div>
             </Section>
-            <Section title="Products" hint={hasChanges ? "Unsaved changes" : "Categories the seller may sell"}>
+            <Section
+              title="Products"
+              hint={hasChanges ? "Unsaved changes" : undefined}
+              description="Categories the seller is allowed to sell."
+            >
               <div className="text-[13px] text-neutral-500 mb-2">Allowed categories</div>
               <input
                 type="text"
@@ -292,20 +314,27 @@ export default function SellingRulesPage() {
             </Section>
           </div>
 
-          <Section title="Upsells" hint={hasChanges ? "Unsaved changes" : "Attach limit per session"}>
+          <Section
+            title="Upsells"
+            hint={hasChanges ? "Unsaved changes" : undefined}
+            description="How many add-ons the seller may suggest per checkout."
+          >
             <div className="max-w-[420px]">
               {countField("Max upsells per session", "max_upsells_per_session")}
             </div>
           </Section>
 
           {/* Policy simulator — frontend-only preview */}
-          <Section title="Policy simulator" hint="Preview only — final decisions are made by the server">
+          <Section
+            title="Policy simulator"
+            hint="Preview only"
+            description="Test a hypothetical offer against the loaded rules. The server makes the final call on real orders."
+          >
             <div className="flex items-start gap-2 mb-4">
-              <FlaskConical size={14} className="text-neutral-400 mt-0.5 shrink-0" />
-              <p className="text-[14px] text-neutral-600 leading-relaxed">
-                Pick a loaded product and enter a hypothetical buyer offer. The simulator compares it against
-                the loaded policy values (floor, discount, category, item cap) in the browser only.
-                Preview only — final decisions are made by the server.
+              <FlaskConical size={14} className="text-faint mt-0.5 shrink-0" />
+              <p className="text-[14px] text-muted leading-relaxed">
+                Pick a product and type the offer a buyer might make. The page checks it against
+                floor, discount, category, and item caps without touching the server.
               </p>
             </div>
             {catalog === null ? (

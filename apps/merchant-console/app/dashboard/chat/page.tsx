@@ -7,17 +7,21 @@ import {
   Send,
   Loader2,
   CheckCircle2,
-  RotateCcw,
   Wallet,
   ShieldCheck,
+  ShieldAlert,
   Sparkles,
   Copy,
-  RefreshCw,
   ArrowRight,
-  ShieldAlert,
-  ExternalLink,
+  History,
+  PanelLeft,
+  SquarePen,
+  XCircle,
+  AlertTriangle,
+  CircleCheck,
+  Info,
 } from "lucide-react";
-import { formatPaise, formatTimestamp, formatDateTime } from "@/lib/formatters";
+import { formatPaise } from "@/lib/formatters";
 import {
   ApiError,
   getConsoleCatalog,
@@ -44,14 +48,50 @@ import {
   type CheckoutSessionStatus,
   type SellerDecisionPayload,
   type IntentMandate,
-  type CartPayload,
-  type PolicyDecisionPayload,
   type ConsentInfo,
   type PaymentAttemptPayload,
   type OrderCreateResult,
   type ConsolePolicySettings,
 } from "@/lib/api";
 import ChatHistory from "@/components/dashboard/chat-history";
+import {
+  Message,
+  MessageAvatar,
+  MessageContent,
+  MessageFooter,
+  MessageHeader,
+} from "@/components/ui/message";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  CartCard,
+  ConsentCard,
+  FieldRow,
+  PolicyCard,
+  ReceiptCard,
+} from "@/components/dashboard/chat-commerce-cards";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 type ChatPhase =
   | "idle"
@@ -141,171 +181,9 @@ function PhaseStepper({ phase }: { phase: ChatPhase }) {
   );
 }
 
-function ToolRow({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-[3px] border border-black/[0.05] bg-white font-[var(--font-mono)] text-[0.5rem] tracking-[0.06em] text-neutral-600 rounded-full">
-      <span className="text-green-600">{icon}</span>
-      {label}
-    </span>
-  );
-}
-
-function CartCard({ cart, productTitle }: { cart: CartPayload; productTitle?: string | null }) {
-  return (
-    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
-      <div className="flex items-center justify-between mb-1">
-        <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-neutral-600">Cart</span>
-        <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] uppercase text-neutral-600">
-          ROUND {cart.negotiation_round}
-        </span>
-      </div>
-      {productTitle && (
-        <div className="font-[var(--font-sans)] text-[0.8rem] text-neutral-900 mb-3 truncate" title={productTitle}>
-          {productTitle}
-        </div>
-      )}
-      <div className="space-y-2 mb-3">
-        {cart.items.map((item) => (
-          <div key={item.sku} className="flex items-center justify-between gap-3">
-            <div>
-              <div className="font-[var(--font-mono)] text-[0.72rem] text-neutral-900">{item.sku}</div>
-              <div className="font-[var(--font-mono)] text-[0.55rem] text-neutral-600 tabular-nums">
-                {item.quantity} × {formatPaise(item.offered_price_paise)}
-              </div>
-            </div>
-            <div className="font-[var(--font-mono)] text-[0.78rem] text-neutral-900 tabular-nums">
-              {formatPaise(item.line_total_paise ?? item.quantity * item.offered_price_paise)}
-            </div>
-          </div>
-        ))}
-      </div>
-      {cart.upsell_offered && (
-        <div className="border-l-2 border-hairline pl-3 py-1 mb-3">
-          <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-accent-strong mb-1">UPSELL</div>
-          {cart.upsell_rationale && (
-            <div className="font-[var(--font-sans)] text-[0.72rem] text-neutral-600 leading-relaxed">{cart.upsell_rationale}</div>
-          )}
-        </div>
-      )}
-      {cart.discount_paise > 0 && (
-        <div className="flex items-center justify-between py-1.5 border-t border-black/[0.05]">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Discount</span>
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-green-600 tabular-nums">−{formatPaise(cart.discount_paise)}</span>
-        </div>
-      )}
-      <div className="flex items-center justify-between pt-2.5 mt-1 border-t border-black/[0.06]">
-        <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.12em] uppercase text-neutral-600">Total</span>
-        <span className="font-[var(--font-mono)] text-[1.05rem] text-neutral-900 tabular-nums">{formatPaise(cart.total_paise)}</span>
-      </div>
-    </div>
-  );
-}
-
-function PolicyCard({ decision }: { decision: PolicyDecisionPayload }) {
-  const allowed = decision.verdict === "ALLOW";
-  const hitl = decision.verdict === "NEEDS_HUMAN_APPROVAL";
-  return (
-    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
-      <div className="flex items-center justify-between mb-2.5">
-        <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-neutral-600">Policy Decision</span>
-        <span className={`font-[var(--font-mono)] text-[0.62rem] tracking-[0.1em] ${allowed ? "text-green-600" : hitl ? "text-amber-600" : "text-red-600"}`}>
-          {allowed ? "✓ ALLOW" : hitl ? "HITL REQUIRED" : "✕ DENIED"}
-        </span>
-      </div>
-      {decision.reason_code && (
-        <div className="font-[var(--font-mono)] text-[0.62rem] text-neutral-900 mb-1">{decision.reason_code}</div>
-      )}
-      <div className="font-[var(--font-sans)] text-[0.74rem] text-neutral-600 leading-relaxed mb-3">{decision.reasoning_summary}</div>
-      {decision.policy_refs.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {decision.policy_refs.map((ref) => (
-            <span key={ref} className="font-[var(--font-mono)] text-[0.46rem] tracking-[0.06em] px-1.5 py-0.5 border border-black/[0.12] text-neutral-600 rounded-full">{ref}</span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ConsentCard({ consent }: { consent: ConsentInfo }) {
-  return (
-    <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
-      <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-neutral-600 mb-3">CONSENT</div>
-      <div className="space-y-2.5">
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Status</span>
-          <span className="font-[var(--font-mono)] text-[0.7rem] text-green-600 flex items-center gap-1.5"><span className="size-2 rounded-full bg-green-600" />{consent.status}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Amount</span>
-          <span className="font-[var(--font-mono)] text-[0.8rem] text-neutral-900">{formatPaise(consent.amount_paise)}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Payee</span>
-          <span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-600">{consent.payee_id}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Purpose</span>
-          <span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-600">{consent.purpose}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Single use</span>
-          <span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-900">{consent.single_use ? "Yes" : "No"}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Expires</span>
-          <span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-900">{formatDateTime(consent.expires_at)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ReceiptCard({ order, payment }: { order: OrderCreateResult; payment?: PaymentAttemptPayload | null }) {
-  return (
-    <div className="border border-green-600/20 bg-green-50 p-5 rounded-2xl shadow-card">
-      <div className="flex items-center gap-3 mb-4">
-        <CheckCircle2 size={22} className="text-green-600" />
-        <div>
-          <div className="font-[var(--font-sans)] text-[1rem] text-neutral-900">Payment captured</div>
-          <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-600">Verified via signed Razorpay webhook</div>
-        </div>
-      </div>
-      <div className="space-y-2 border-t border-green-600/15 pt-3">
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Order</span>
-          <Link href={`/dashboard/transactions/${order.order_id}`} className="font-[var(--font-mono)] text-[0.7rem] text-accent-strong hover:text-ink-2 flex items-center gap-1">{order.order_id} <ExternalLink size={10} /></Link>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Amount</span>
-          <span className="font-[var(--font-mono)] text-[0.9rem] text-neutral-900">{formatPaise(order.amount_paise)}</span>
-        </div>
-        {payment?.provider_order_id && (
-          <div className="flex items-center justify-between">
-            <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Razorpay order</span>
-            <span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-600">{payment.provider_order_id}</span>
-          </div>
-        )}
-        {payment?.provider_payment_id && (
-          <div className="flex items-center justify-between">
-            <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Payment ID</span>
-            <span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-600">{payment.provider_payment_id}</span>
-          </div>
-        )}
-        <div className="flex items-center justify-between">
-          <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Status</span>
-          <span className="font-[var(--font-mono)] text-[0.65rem] text-green-600">PAID</span>
-        </div>
-      </div>
-      <Link
-        href={`/dashboard/transactions/${order.order_id}/replay`}
-        className="mt-4 inline-flex items-center justify-center w-full h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 transition-colors font-medium rounded-full"
-      >
-        <RotateCcw size={12} className="mr-2" /> VIEW REPLAY
-      </Link>
-    </div>
-  );
-}
+/* Message tool chips use the shadcn Badge inline in the seller bubble footer. */
+/* Cart, policy, consent, and receipt visuals live in
+   components/dashboard/chat-commerce-cards.tsx (shadcn Card + Badge). */
 
 /** Most-recent visible session: ACTIVE rows first, then by recency. */
 function pickMostRecentSession(
@@ -353,10 +231,12 @@ export default function ChatPageInner() {
   // otherwise fire one redundant snapshot POST (harmless, but it pointlessly
   // bumps updated_at and reorders history). Skipped exactly once.
   const justRestoredRef = useRef(false);
-  // Chat history sidebar + two-pane layout state.
+  // Chat history rail state: desktop show/hide + a mobile drawer.
   const [sessions, setSessions] = useState<CheckoutSessionListItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyUnsupported, setHistoryUnsupported] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [historyDrawer, setHistoryDrawer] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const showArchivedRef = useRef(false);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -1526,24 +1406,69 @@ export default function ChatPageInner() {
   return (
     <div className="flex flex-col h-[calc(100vh-52px)]">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-black/[0.06] flex items-center justify-between gap-4 flex-shrink-0">
-        <div className="min-w-0">
-          <h1 className="text-[26px] font-bold tracking-[-0.02em] text-neutral-900">AI Sales</h1>
-          <p className="text-[14px] text-neutral-500 mt-1">
-            Your AI seller handles product discovery, quotes, negotiation and checkout. Search → quote → negotiate → checkout
-          </p>
+      <div className="px-4 sm:px-6 py-3.5 border-b border-hairline flex items-center justify-between gap-4 flex-shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            aria-label={sidebarOpen ? "Hide chat history" : "Show chat history"}
+            title={sidebarOpen ? "Hide chat history" : "Show chat history"}
+            className="hidden lg:inline-flex items-center justify-center size-9 rounded-full border border-hairline bg-panel text-muted hover:text-ink hover:shadow-sm transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <PanelLeft size={15} />
+          </button>
+          <button
+            onClick={() => setHistoryDrawer(true)}
+            aria-label="Open chat history"
+            className="lg:hidden inline-flex items-center justify-center size-9 rounded-full border border-hairline bg-panel text-muted hover:text-ink transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <History size={15} />
+          </button>
+          <div className="min-w-0">
+            <h1 className="text-[17px] font-semibold tracking-[-0.01em] text-ink">AI Sales</h1>
+            <p className="hidden sm:block text-[13px] leading-relaxed text-muted truncate max-w-[30rem]">
+              Talk to your AI Seller. Discovery, quotes, negotiation, and checkout happen here first.
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-4 flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           <PhaseStepper phase={phase} />
-          <button onClick={resetSession} className="inline-flex items-center gap-2 h-9 px-3 border border-black/[0.06] bg-transparent text-[13px] text-neutral-600 hover:text-neutral-900 hover:border-black/[0.12] transition-all cursor-pointer font-medium rounded-full">
-            <RefreshCw size={11} /> NEW SESSION
+          <button onClick={resetSession} className="inline-flex items-center gap-2 h-9 px-4 border border-hairline bg-panel shadow-sm text-[13px] text-ink-2 hover:text-ink hover:shadow transition-all cursor-pointer font-medium rounded-full">
+            <SquarePen size={13} /> New session
           </button>
         </div>
       </div>
 
+      {/* Mobile history drawer */}
+      <Sheet open={historyDrawer} onOpenChange={setHistoryDrawer}>
+        <SheetContent side="left" className="w-[320px] p-0">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Chat history</SheetTitle>
+          </SheetHeader>
+          <ChatHistory
+            sessions={enrichedSessions}
+            loading={historyLoading}
+            activeSessionId={checkoutSessionId}
+            onSelect={(id) => {
+              setHistoryDrawer(false);
+              void handleSelectSession(id);
+            }}
+            onNew={() => {
+              setHistoryDrawer(false);
+              void resetSession();
+            }}
+            onArchive={handleArchiveSession}
+            onDelete={handleDeleteSession}
+            showArchived={showArchived}
+            onToggleArchived={handleToggleArchived}
+            className="flex w-full h-full flex-col min-h-0 border-r-0 bg-panel"
+          />
+        </SheetContent>
+      </Sheet>
+
       {/* Main grid */}
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
-        {!historyUnsupported && (
+        {/* Collapsible history rail — camera-off when collapsed, drawer on mobile */}
+        {!historyUnsupported && sidebarOpen && (
           <ChatHistory
             sessions={enrichedSessions}
             loading={historyLoading}
@@ -1556,52 +1481,69 @@ export default function ChatPageInner() {
             onToggleArchived={handleToggleArchived}
           />
         )}
-        {/* Conversation column */}
-        <div className="flex flex-col flex-1 min-w-0 min-h-0">
-          <div ref={listRef} onScroll={handleListScroll} className="flex-1 overflow-y-auto px-6 py-6 space-y-5">
-            {loadingSession && (
-              <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-neutral-600">
-                Loading conversation…
-              </div>
-            )}
-            {sessionError && (
-              <div className="border border-amber-600/20 bg-amber-50 px-4 py-3 font-[var(--font-mono)] text-[0.62rem] text-amber-600 rounded-2xl">
-                {sessionError}
-              </div>
-            )}
-            {readOnly && (
-              <div className="border border-black/[0.06] bg-white px-4 py-3 font-[var(--font-sans)] text-[0.75rem] text-neutral-600 leading-relaxed rounded-2xl">
-                Historical session — review only. Start a NEW SESSION for a new purchase; replay and transaction links below keep working.
-              </div>
-            )}
+        {/* Conversation column — the chat window owns its scroll; the page never scrolls */}
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 p-3 sm:p-4 lg:pl-0 gap-3">
+          <MessageScrollerProvider autoScroll defaultScrollPosition="end">
+            <MessageScroller className="flex-1 min-h-0 rounded-[22px] border border-hairline bg-panel-2/70 shadow-card">
+              <MessageScrollerViewport
+                ref={listRef}
+                onScroll={handleListScroll}
+                aria-label="Conversation with the seller agent"
+                className="px-4 sm:px-6 py-6"
+              >
+                <MessageScrollerContent>
+                  {loadingSession && (
+                    <div className="text-[12px] text-muted">
+                      Loading conversation…
+                    </div>
+                  )}
+                  {sessionError && (
+                    <div className="rounded-2xl border border-amber-600/25 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+                      {sessionError}
+                    </div>
+                  )}
+                  {readOnly && (
+                    <div className="rounded-2xl border border-hairline bg-panel px-4 py-3 text-[13px] leading-relaxed text-muted shadow-card">
+                      Historical session, review only. Start a new session for a new purchase. Replay and transaction links keep working.
+                    </div>
+                  )}
             {messages.length === 0 && phase === "idle" && (
-              <div className="max-w-[520px] mx-auto mt-[7vh] tab-in">
-                <div className="flex items-center gap-2 mb-5">
-                  <span className="size-2 rounded-full bg-ink" />
-                  <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.18em] uppercase text-accent-strong">Seller Agent</span>
+              <div className="max-w-[520px] mx-auto my-auto w-full py-[8vh]">
+                <div className="flex items-center justify-center mb-5">
+                  <span className="flex size-11 items-center justify-center rounded-[16px] border border-hairline bg-panel shadow-card text-ink-2">
+                    <Sparkles size={19} aria-hidden />
+                  </span>
                 </div>
                 {catalogEmpty ? (
                   <>
-                    <div className="font-[var(--font-sans)] text-[1.25rem] text-neutral-900 mb-2 leading-snug">Your catalog is empty.</div>
-                    <div className="font-[var(--font-sans)] text-[0.85rem] text-neutral-600 leading-relaxed mb-6">
-                      The agent only sells what you actually stock. Add a few products first —
+                    <div className="text-center text-[19px] font-semibold tracking-[-0.01em] text-ink leading-snug mb-2">
+                      Your catalog is empty
+                    </div>
+                    <div className="text-center text-[14px] leading-relaxed text-muted mb-6">
+                      The agent only sells what you actually stock. Add a few products first,
                       then come back and describe what a buyer might ask for.
                     </div>
-                    <Link
-                      href="/dashboard/catalog"
-                      className="inline-flex items-center gap-2 h-9 px-4 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors cursor-pointer font-medium rounded-full"
-                    >
-                      Add products <ArrowRight size={12} />
-                    </Link>
+                    <div className="flex justify-center">
+                      <Link
+                        href="/dashboard/catalog"
+                        className="inline-flex items-center gap-2 h-9 px-5 bg-ink text-panel text-[13px] hover:bg-ink-2 transition-colors cursor-pointer font-medium rounded-full"
+                      >
+                        Add products <ArrowRight size={12} />
+                      </Link>
+                    </div>
                   </>
                 ) : (
                   <>
-                    <div className="font-[var(--font-sans)] text-[1.25rem] text-neutral-900 mb-2 leading-snug">Describe what you need.</div>
-                    <div className="font-[var(--font-sans)] text-[0.85rem] text-neutral-600 leading-relaxed mb-7">
-                      I search your catalog, quote a policy-valid cart, and negotiate within your
-                      guardrails. Every step lands in the ledger.
+                    <div className="text-center text-[19px] font-semibold tracking-[-0.01em] text-ink leading-snug mb-2">
+                      Describe what you need
                     </div>
-                    <div className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.14em] uppercase text-neutral-400 mb-2.5">Try a mission</div>
+                    <div className="text-center text-[14px] leading-relaxed text-muted mb-7">
+                      I search your catalog, quote a cart that fits your policy, and
+                      negotiate within your guardrails. Every step lands in the ledger.
+                    </div>
+                    <div className="mb-2.5 text-center text-[11px] font-medium tracking-[0.12em] uppercase text-faint">
+                      Try a mission
+                    </div>
                     <div className="flex flex-col gap-2">
                       {[
                         "I need a coffee setup for my desk under ₹2,000",
@@ -1611,10 +1553,10 @@ export default function ChatPageInner() {
                         <button
                           key={s}
                           onClick={() => handleSend(s)}
-                          className="group flex items-center justify-between gap-3 text-left px-3.5 py-2.5 border border-black/[0.06] bg-white hover:border-hairline hover:bg-ink/5 transition-all cursor-pointer rounded-[12px]"
+                          className="group flex items-center justify-between gap-3 text-left px-4 py-2.5 border border-hairline bg-panel shadow-sm hover:shadow hover:bg-panel-2 transition-all cursor-pointer rounded-[12px]"
                         >
-                          <span className="font-[var(--font-mono)] text-[0.65rem] text-neutral-600 group-hover:text-neutral-900 transition-colors">{s}</span>
-                          <ArrowRight size={12} className="text-neutral-400 group-hover:text-ink transition-colors shrink-0" />
+                          <span className="text-[13px] text-muted group-hover:text-ink transition-colors">{s}</span>
+                          <ArrowRight size={13} className="text-faint group-hover:text-ink transition-colors shrink-0" />
                         </button>
                       ))}
                     </div>
@@ -1624,193 +1566,271 @@ export default function ChatPageInner() {
             )}
 
             {phase === "thinking" && (
-              <div className="flex items-center gap-3 tab-in" aria-live="polite">
+              <div className="flex items-center gap-3" aria-live="polite">
                 <span className="flex gap-1">
-                  <span className="size-2 bg-ink typing-dot rounded-full" />
-                  <span className="size-2 bg-ink typing-dot [animation-delay:0.15s] rounded-full" />
-                  <span className="size-2 bg-ink typing-dot [animation-delay:0.3s] rounded-full" />
+                  <span className="size-1.5 bg-faint typing-dot rounded-full" />
+                  <span className="size-1.5 bg-faint typing-dot [animation-delay:0.15s] rounded-full" />
+                  <span className="size-1.5 bg-faint typing-dot [animation-delay:0.3s] rounded-full" />
                 </span>
-                <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-neutral-600">SEARCHING CATALOG · CHECKING POLICY · PREPARING QUOTE</span>
+                <span className="text-[12px] text-muted">
+                  Searching catalog, checking policy, preparing quote…
+                </span>
               </div>
             )}
 
             {messages.map((msg) => {
               if (msg.role === "user") {
                 return (
-                  <div key={msg.id} className="flex justify-end tab-in">
-                    <div className="max-w-[75%] px-4 py-2.5 rounded-2xl bg-ink text-white shadow-card">
-                      <div className="font-[var(--font-sans)] text-[0.85rem] text-white leading-relaxed">{msg.text}</div>
-                    </div>
-                  </div>
+                  <MessageScrollerItem key={msg.id} messageId={msg.id}>
+                    <Message align="end">
+                      <MessageContent>
+                        <Bubble align="end" variant="default" className="max-w-[88%] sm:max-w-[80%]">
+                          <BubbleContent className="text-[14px]">{msg.text}</BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
                 );
               }
               if (msg.role === "system") {
-                const tone =
-                  msg.status === "error"
-                    ? "border-l-2 border-red-600/50 text-red-600"
-                    : msg.status === "warning"
-                      ? "border-l-2 border-amber-600/50 text-amber-600"
-                      : msg.status === "success"
-                        ? "border-l-2 border-green-600/50 text-green-600"
-                        : "border-l-2 border-black/[0.12] text-neutral-600";
                 return (
-                  <div key={msg.id} className={`rounded-2xl bg-neutral-50 border border-black/[0.05] px-4 py-2.5 tab-in ${tone}`}>
-                    <div className="font-[var(--font-mono)] text-[0.68rem] leading-relaxed flex items-start gap-2">
-                      <span className={`mt-[3px] size-2 rounded-full rotate-45 shrink-0 ${msg.status === "error" ? "bg-red-600" : msg.status === "warning" ? "bg-amber-600" : msg.status === "success" ? "bg-green-600" : "bg-black/[0.12]"}`} />
-                      {msg.text}
-                    </div>
-                  </div>
+                  <MessageScrollerItem key={msg.id} messageId={msg.id}>
+                    <Message align="start">
+                      <MessageContent>
+                        <Bubble
+                          align="start"
+                          variant={
+                            msg.status === "error"
+                              ? "destructive"
+                              : msg.status === "warning"
+                                ? "outline"
+                                : "muted"
+                          }
+                          className="max-w-[94%] sm:max-w-[80%]"
+                        >
+                          <BubbleContent className="flex flex-row items-start gap-2.5 px-4 py-2.5">
+                            {msg.status === "error" ? (
+                              <XCircle size={14} className="text-red-600 mt-px shrink-0" aria-hidden />
+                            ) : msg.status === "warning" ? (
+                              <AlertTriangle size={14} className="text-amber-700 mt-px shrink-0" aria-hidden />
+                            ) : msg.status === "success" ? (
+                              <CircleCheck size={14} className="text-green-700 mt-px shrink-0" aria-hidden />
+                            ) : (
+                              <Info size={14} className="text-muted-foreground mt-px shrink-0" aria-hidden />
+                            )}
+                            <span className="pt-px">{msg.text}</span>
+                          </BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
                 );
               }
+              const calls = (msg.toolCalls ?? []).filter((c) =>
+                ["catalog.search", "catalog.get", "quotes.create", "quotes.negotiate", "upsell.suggest", "policy.evaluate"].includes(c)
+              );
               return (
-                <div key={msg.id} className="max-w-[85%] border border-black/[0.06] bg-white p-3.5 tab-in rounded-2xl shadow-card">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="size-2 rounded-full bg-ink" />
-                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.14em] uppercase text-accent-strong">SELLER AGENT</span>
-                  </div>
-                  <div className="font-[var(--font-sans)] text-[0.85rem] text-neutral-600 leading-relaxed">{msg.text}</div>
-                  {msg.toolCalls && msg.toolCalls.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2.5">
-                      {msg.toolCalls.includes("catalog.search") && <ToolRow icon={<CheckCircle2 size={10} />} label="catalog.search" />}
-                      {msg.toolCalls.includes("catalog.get") && <ToolRow icon={<CheckCircle2 size={10} />} label="catalog.get" />}
-                      {msg.toolCalls.includes("quotes.create") && <ToolRow icon={<CheckCircle2 size={10} />} label="quotes.create" />}
-                      {msg.toolCalls.includes("quotes.negotiate") && <ToolRow icon={<CheckCircle2 size={10} />} label="quotes.negotiate" />}
-                      {msg.toolCalls.includes("upsell.suggest") && <ToolRow icon={<Sparkles size={10} />} label="upsell.suggest" />}
-                      {msg.toolCalls.includes("policy.evaluate") && <ToolRow icon={<ShieldCheck size={10} />} label="policy.evaluate" />}
-                    </div>
-                  )}
-                </div>
+                <MessageScrollerItem key={msg.id} messageId={msg.id}>
+                  <Message align="start">
+                    <MessageAvatar>
+                      <Avatar size="sm">
+                        <AvatarFallback className="bg-primary text-[10px] font-semibold text-primary-foreground">
+                          AI
+                        </AvatarFallback>
+                      </Avatar>
+                    </MessageAvatar>
+                    <MessageContent>
+                      <MessageHeader>Seller agent</MessageHeader>
+                      <Bubble align="start" variant="outline" className="max-w-[94%] sm:max-w-[85%]">
+                        <BubbleContent className="px-4 py-3 text-[14px] text-ink-2">
+                          {msg.text}
+                        </BubbleContent>
+                      </Bubble>
+                      {calls.length > 0 && (
+                        <MessageFooter>
+                          <span className="flex flex-wrap gap-1.5">
+                            {calls.map((call) => (
+                              <Badge key={call} variant="outline" className="gap-1 font-mono text-[11px] font-normal">
+                                {call === "upsell.suggest" ? (
+                                  <Sparkles size={10} aria-hidden />
+                                ) : call === "policy.evaluate" ? (
+                                  <ShieldCheck size={10} aria-hidden />
+                                ) : (
+                                  <CheckCircle2 size={10} aria-hidden />
+                                )}
+                                {call}
+                              </Badge>
+                            ))}
+                          </span>
+                        </MessageFooter>
+                      )}
+                    </MessageContent>
+                  </Message>
+                </MessageScrollerItem>
               );
             })}
-          </div>
+                  <MessageScrollerButton />
+                </MessageScrollerContent>
+              </MessageScrollerViewport>
+            </MessageScroller>
+          </MessageScrollerProvider>
 
-          {/* Input */}
-          <div className="px-6 py-4 border-t border-black/[0.06] flex-shrink-0">
+          {/* Input — arcs onto the same rounded window */}
+          <div className="px-3 sm:px-4 pb-1 -mt-1">
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 handleSend(input);
               }}
-              className="flex items-center gap-2.5 border border-black/[0.06] bg-white focus-within:border-hairline focus-within:ring-[3px] focus-within:ring-ink/20 transition-colors px-3 h-11 rounded-[12px]"
+              className="flex items-end gap-2 border border-hairline bg-panel rounded-[18px] shadow-card focus-within:shadow-lift focus-within:ring-[3px] focus-within:ring-accent/20 transition-all px-3 py-2"
             >
-              <Sparkles size={14} className="text-neutral-400 shrink-0" aria-hidden />
-              <input
+              <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={readOnly ? "Historical session — start a NEW SESSION for a new purchase" : phase === "payment" || phase === "receipt" ? "Session is processing a payment — start a new session to continue" : "Describe what you need…"}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend(input);
+                  }
+                }}
+                rows={1}
+                placeholder={readOnly ? "Historical session, start a new session to buy again" : phase === "payment" || phase === "receipt" ? "Session is processing a payment, start a new session to continue" : "Describe what you need…"}
                 disabled={busy || phase === "thinking" || readOnly}
-                className="flex-1 font-[var(--font-sans)] text-[0.85rem] bg-transparent border-0 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-0 disabled:opacity-50"
+                className="flex-1 max-h-[120px] resize-none bg-transparent border-0 text-[14px] leading-[1.6] text-ink placeholder:text-faint focus:outline-none disabled:opacity-50 py-2"
                 aria-label="Message the seller agent"
               />
               <button
                 type="submit"
                 disabled={busy || phase === "thinking" || readOnly || !input.trim()}
-                className="inline-flex items-center justify-center size-9 bg-ink text-white hover:bg-ink-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex-shrink-0 rounded-full"
+                className="mb-1.5 inline-flex items-center justify-center size-8 bg-accent text-white shadow-sm hover:bg-accent-strong disabled:opacity-40 transition-colors cursor-pointer disabled:cursor-not-allowed shrink-0 rounded-full"
                 aria-label="Send message"
               >
-                {busy || phase === "thinking" ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                {busy || phase === "thinking" ? <Loader2 size={14} className="animate-spin" /> : <Send size={13} />}
               </button>
             </form>
-            <div className="mt-2 flex items-center justify-between gap-4">
-              <span className="font-[var(--font-mono)] text-[0.48rem] tracking-[0.08em] uppercase text-neutral-400 truncate">
+            <div className="mt-1.5 flex items-center justify-between gap-4 px-1">
+              <span className="text-[11px] text-faint truncate">
                 {readOnly
-                  ? "READ-ONLY HISTORY — START A NEW SESSION TO BUY AGAIN"
-                  : "ENTER TO SEND · EVERY QUOTE AND ORDER LANDS IN THE XAI LEDGER"}
+                  ? "Read-only history. Start a new session to buy again."
+                  : "Enter to send. Every quote and order lands in the ledger."}
               </span>
               {phase === "quote" && decision?.trace_id && (
-                <span className="font-[var(--font-mono)] text-[0.48rem] text-neutral-400 shrink-0">TRACE {decision.trace_id.slice(0, 14)}…</span>
+                <span className="font-mono text-[11px] text-faint truncate shrink-0">
+                  trace {decision.trace_id.slice(0, 14)}…
+                </span>
               )}
             </div>
           </div>
         </div>
 
         {/* Checkout panel */}
-        <div className="flex flex-col min-h-0 lg:w-[380px] border-t lg:border-t-0 lg:border-l border-black/[0.06]">
-          <div className="px-5 py-3 border-b border-black/[0.06] bg-white flex items-center justify-between flex-shrink-0 rounded-[12px]">
-            <div className="flex items-center gap-2">
-              <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.16em] uppercase text-neutral-600">Checkout Session</div>
-              <span
+        <div className="flex flex-col min-h-0 lg:w-[380px] border-t lg:border-t-0 lg:border-l border-hairline">
+          <div className="px-5 py-3 border-b border-hairline bg-panel-2 flex items-center justify-between flex-shrink-0 gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[12px] font-semibold text-ink truncate">Checkout session</span>
+              <Badge
+                variant="outline"
                 title={
                   syncState === "error"
-                    ? "Session sync failed — your order itself is always saved server-side; the next action retries this snapshot."
+                    ? "Session sync failed. Your order itself is always saved server-side; the next action retries this snapshot."
                     : syncState === "saving"
                       ? "Saving session snapshot…"
                       : "Session snapshot saved server-side"
                 }
-                className={`font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase ${
-                  syncState === "error" ? "text-red-600" : syncState === "saving" ? "text-amber-600" : "text-green-600"
+                className={`gap-1.5 font-mono text-[11px] font-normal ${
+                  syncState === "error"
+                    ? "text-red-700 border-red-600/30"
+                    : syncState === "saving"
+                      ? "text-amber-700 border-amber-600/30"
+                      : "text-green-700 border-green-600/30"
                 }`}
               >
-                {syncState === "error" ? "● UNSYNCED" : syncState === "saving" ? "● SAVING" : "● SAVED"}
-              </span>
+                <span
+                  className={`size-1.5 rounded-full ${
+                    syncState === "error"
+                      ? "bg-red-600"
+                      : syncState === "saving"
+                        ? "bg-amber-600"
+                        : "bg-green-600"
+                  }`}
+                />
+                {syncState === "error" ? "Unsynced" : syncState === "saving" ? "Saving" : "Saved"}
+              </Badge>
             </div>
             {phase === "quote" && decision?.trace_id && (
-              <button onClick={() => handleCopy(decision.trace_id!)} className="inline-flex items-center gap-1 h-7 px-2 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer font-medium rounded-full">
-                <Copy size={9} /> {copied ? "COPIED" : "TRACE"}
+              <button onClick={() => handleCopy(decision.trace_id!)} className="inline-flex items-center gap-1 h-7 px-2.5 border border-hairline bg-panel text-[12px] text-muted hover:text-ink hover:shadow-sm transition-colors cursor-pointer font-medium rounded-full shrink-0">
+                <Copy size={10} /> {copied ? "Copied" : "Trace"}
               </button>
             )}
           </div>
           <div className="overflow-y-auto p-5 space-y-4 max-h-[50vh] lg:max-h-none lg:flex-1">
-            {/* Session settings — always visible */}
-            <div className="space-y-2.5 pb-4 border-b border-black/[0.05]">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-neutral-600">Session budget</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="font-[var(--font-mono)] text-[0.65rem] text-neutral-600">₹</span>
-                  <input
-                    type="number"
-                    min="1"
-                    value={budgetDraft}
-                    onChange={(e) => { setBudgetDraft(e.target.value); setBudgetMsg(null); }}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyBudget(); } }}
-                    className="w-[84px] font-[var(--font-mono)] text-[14px] text-right bg-white border border-black/[0.06] text-neutral-900 px-2 py-1 tabular-nums focus:outline-none focus:border-hairline transition-colors focus:ring-[3px] focus:ring-ink/20"
-                    aria-label="Session budget in rupees (press Apply to confirm)"
-                  />
-                  <button
-                    onClick={applyBudget}
-                    className="h-7 px-2.5 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-colors cursor-pointer font-medium rounded-full"
-                  >
-                    APPLY
-                  </button>
+          {/* Session settings — always visible */}
+            <Card size="sm" className="shadow-card">
+              <CardHeader>
+                <CardTitle className="text-[13px]">Session budget</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[13px] text-muted">₹</span>
+                    <input
+                      type="number"
+                      min="1"
+                      value={budgetDraft}
+                      onChange={(e) => { setBudgetDraft(e.target.value); setBudgetMsg(null); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyBudget(); } }}
+                      className="w-[88px] h-8 text-[14px] text-right tabular-nums bg-panel border border-input text-ink px-2 py-1 focus:outline-none focus:border-accent focus:ring-[3px] focus:ring-accent/20 transition-colors rounded-[10px]"
+                      aria-label="Session budget in rupees (press Apply to confirm)"
+                    />
+                    <button
+                      onClick={applyBudget}
+                      className="h-8 px-3 border border-hairline bg-panel-2 text-[12px] text-ink hover:shadow-sm transition-colors cursor-pointer font-medium rounded-full"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  <span className="text-[12px] text-faint tabular-nums">{formatPaise(budgetPaise)}</span>
                 </div>
-              </div>
-              {budgetMsg && (
-                <div className={`font-[var(--font-mono)] text-[0.55rem] tracking-[0.06em] text-right ${budgetMsg.kind === "ok" ? "text-green-600" : "text-red-600"}`}>
-                  {budgetMsg.text}
+                {budgetMsg && (
+                  <div className={`text-[12px] text-right ${budgetMsg.kind === "ok" ? "text-green-700" : "text-red-700"}`}>
+                    {budgetMsg.text}
+                  </div>
+                )}
+                <p className="text-[12px] leading-relaxed text-muted">
+                  Buyer-side ceiling for this session. Merchant caps below still apply.
+                </p>
+                <div className="border-t border-hairline pt-2.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12px] text-muted">Upsells</span>
+                    <button
+                      onClick={() => setUpsellOn((v) => !v)}
+                      className={`h-7 px-3 rounded-full text-[12px] font-medium border transition-all cursor-pointer ${upsellOn ? "border-accent/35 bg-accent-soft text-accent-strong" : "border-hairline bg-panel text-muted hover:text-ink"}`}
+                      aria-pressed={upsellOn}
+                    >
+                      {upsellOn ? "On" : "Off"}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12px] text-muted">Approval threshold</span>
+                    <span className="text-[13px] font-medium tabular-nums text-ink">
+                      {policy ? formatPaise(policy.human_approval_threshold_paise) : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[12px] text-muted">Max item value</span>
+                    <span className="text-[13px] font-medium tabular-nums text-ink">
+                      {policy ? formatPaise(policy.max_single_item_value_paise) : "—"}
+                    </span>
+                  </div>
                 </div>
-              )}
-              <div className="font-[var(--font-mono)] text-[0.5rem] text-neutral-600 leading-relaxed">
-                Buyer-side session ceiling ({formatPaise(budgetPaise)} applied) — merchant caps below still apply.
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-neutral-600">Upsells</span>
-                <button
-                  onClick={() => setUpsellOn((v) => !v)}
-                  className={`h-7 px-3 rounded-full text-[13px] font-medium border transition-all cursor-pointer ${upsellOn ? "border-accent/35 bg-accent/12 text-accent-strong" : "border-black/[0.06] bg-white text-neutral-600 hover:text-neutral-900"}`}
-                  aria-pressed={upsellOn}
-                >
-                  {upsellOn ? "ON" : "OFF"}
-                </button>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-neutral-600">HITL threshold</span>
-                <span className="font-[var(--font-mono)] text-[0.65rem] text-neutral-900 tabular-nums">
-                  {policy ? formatPaise(policy.human_approval_threshold_paise) : "—"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-neutral-600">Max item value</span>
-                <span className="font-[var(--font-mono)] text-[0.65rem] text-neutral-900 tabular-nums">
-                  {policy ? formatPaise(policy.max_single_item_value_paise) : "—"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-[var(--font-mono)] text-[0.5rem] text-neutral-600 leading-relaxed">Merchant caps live in Settings</span>
-                <Link href="/dashboard/settings" className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] uppercase text-accent-strong hover:text-ink-2 transition-colors">
-                  EDIT IN SETTINGS →
-                </Link>
-              </div>
-            </div>
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[12px] text-muted">Caps live in Settings</span>
+                  <Link href="/dashboard/settings" className="text-[13px] font-medium text-accent-strong hover:underline">
+                    Edit →
+                  </Link>
+                </div>
+              </CardContent>
+            </Card>
 
             {phase === "idle" && (
               <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 leading-relaxed">
@@ -1828,11 +1848,13 @@ export default function ChatPageInner() {
                 {decision.policy_decision && <PolicyCard decision={decision.policy_decision} />}
 
                 {isDenied ? (
-                  <div className="border border-red-600/20 bg-red-50 p-4 rounded-2xl shadow-card">
-                    <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 leading-relaxed">
-                      The proposal was rejected by the deterministic Policy Engine. No Razorpay order was created and no money moved.
-                    </div>
-                  </div>
+                  <Card size="sm" className="border-red-600/25 bg-red-50 shadow-card dark:bg-red-950/20">
+                    <CardContent>
+                      <p className="text-[13px] leading-relaxed text-ink-2">
+                        The policy engine rejected this proposal. No order was created and no money moved.
+                      </p>
+                    </CardContent>
+                  </Card>
                 ) : (
                   <>
                     {cart.upsell_offered ? (
@@ -1841,7 +1863,7 @@ export default function ChatPageInner() {
                         disabled={busy}
                         className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-neutral-900 hover:border-black/[0.12] transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full"
                       >
-                        REMOVE UPSELL
+                        Remove upsell
                       </button>
                     ) : (
                       <button
@@ -1849,13 +1871,13 @@ export default function ChatPageInner() {
                         disabled={busy}
                         className="w-full h-9 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-all cursor-pointer disabled:opacity-50 font-medium rounded-full"
                       >
-                        ADD COMPATIBLE UPSELL
+                        Add compatible upsell
                       </button>
                     )}
 
                     <div className="border border-black/[0.06]">
                       <button onClick={() => setNegotiating((v) => !v)} className="w-full h-9 flex items-center justify-center gap-2 text-[13px] text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer font-medium rounded-full">
-                        <Wallet size={12} /> NEGOTIATE
+                        <Wallet size={12} /> Negotiate
                       </button>
                       {negotiating && (
                         <form
@@ -1874,7 +1896,7 @@ export default function ChatPageInner() {
                             className="flex-1 font-[var(--font-mono)] text-[0.7rem] bg-white border border-black/[0.06] text-neutral-900 px-2 py-1.5 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20"
                           />
                           <button type="submit" disabled={busy} className="h-9 px-3 border border-hairline text-ink text-[13px] cursor-pointer disabled:opacity-50 font-medium rounded-full">
-                            OFFER
+                            Offer
                           </button>
                         </form>
                       )}
@@ -1885,7 +1907,7 @@ export default function ChatPageInner() {
                       disabled={busy}
                       className="w-full h-10 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 font-medium rounded-full"
                     >
-                      PROCEED TO CHECKOUT <ArrowRight size={13} />
+                      Proceed to checkout <ArrowRight size={13} />
                     </button>
                   </>
                 )}
@@ -1900,138 +1922,163 @@ export default function ChatPageInner() {
             )}
 
             {phase === "approval" && order && (
-              <div className="border border-amber-600/20 bg-amber-50 p-5 rounded-2xl shadow-card">
-                <div className="flex items-center gap-3 mb-3">
-                  <ShieldAlert size={20} className="text-amber-600" />
+              <Card size="sm" className="border-amber-600/25 bg-amber-50 shadow-card dark:bg-amber-950/20">
+                <CardHeader className="flex flex-row items-center gap-2.5">
+                  <ShieldAlert size={18} className="shrink-0 text-amber-600" />
                   <div>
-                    <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.1em] uppercase text-amber-600">Orders waiting for your approval</div>
-                    <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 mt-1">
-                      Order {order.order_id} exceeds the configured HITL threshold. Payment remains blocked until a merchant approves it.
-                    </div>
+                    <CardTitle className="text-[13px] text-amber-700 dark:text-amber-400">
+                      Waiting for your approval
+                    </CardTitle>
+                    <CardDescription className="text-[12px]">
+                      Order {order.order_id} is above the approval threshold. Payment stays blocked until you decide.
+                    </CardDescription>
                   </div>
-                </div>
-                <Link href="/dashboard/approvals" className="inline-flex items-center justify-center w-full h-9 border border-amber-600/20 bg-amber-50 text-[13px] text-amber-600 hover:bg-amber-100 transition-colors font-medium rounded-full">
-                  OPEN APPROVAL QUEUE
-                </Link>
-              </div>
+                </CardHeader>
+                <CardContent>
+                  <Link
+                    href="/dashboard/approvals"
+                    className="inline-flex h-9 w-full items-center justify-center rounded-full border border-amber-600/25 bg-panel text-[13px] font-medium text-amber-700 transition-colors hover:bg-amber-100 dark:text-amber-400"
+                  >
+                    Open approval queue
+                  </Link>
+                </CardContent>
+              </Card>
             )}
 
             {phase === "consent" && consent && order && (
               <>
                 <ConsentCard consent={consent} />
-                <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
-                  <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-neutral-600 mb-3">ORDER READY</div>
-                  <div className="flex items-center justify-between py-1">
-                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Order</span>
-                    <Link href={`/dashboard/transactions/${order.order_id}`} className="font-[var(--font-mono)] text-[0.7rem] text-ink">{order.order_id}</Link>
-                  </div>
-                  <div className="flex items-center justify-between py-1">
-                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Amount</span>
-                    <span className="font-[var(--font-mono)] text-[0.9rem] text-neutral-900">{formatPaise(order.amount_paise)}</span>
-                  </div>
-                </div>
+                <Card size="sm" className="shadow-card">
+                  <CardHeader>
+                    <CardTitle className="text-[13px]">Order ready</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <FieldRow label="Order">
+                      <Link href={`/dashboard/transactions/${order.order_id}`} className="text-accent-strong hover:underline">
+                        {order.order_id}
+                      </Link>
+                    </FieldRow>
+                    <FieldRow label="Amount">{formatPaise(order.amount_paise)}</FieldRow>
+                  </CardContent>
+                </Card>
                 <button
                   onClick={handlePay}
                   disabled={busy}
                   className="w-full h-10 bg-ink text-white text-[13px] hover:bg-ink-2 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 font-medium rounded-full"
                 >
-                  <Wallet size={14} /> PAY {formatPaise(order.amount_paise)}
+                  <Wallet size={14} /> Pay {formatPaise(order.amount_paise)}
                 </button>
               </>
             )}
 
             {phase === "payment" && payment && order && (
               <div className="space-y-4">
-                <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
-                  <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-neutral-600 mb-3">PAYMENT</div>
-                  <div className="flex items-center justify-between py-1">
-                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Status</span>
-                    <span className="font-[var(--font-mono)] text-[0.7rem] text-amber-600 flex items-center gap-1.5">
-                      <span className="size-2 rounded-full bg-amber-600 animate-[blink_1.5s_ease-in-out_infinite]" />
-                      {orderStatus === "PAYMENT_PENDING" ? "AWAITING PROVIDER" : "PAYMENT PENDING"}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-1">
-                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Provider</span>
-                    <span className="font-[var(--font-mono)] text-[0.65rem] text-neutral-900">{payment.provider} · test</span>
-                  </div>
-                  <div className="flex items-center justify-between py-1">
-                    <span className="font-[var(--font-mono)] text-[0.55rem] uppercase text-neutral-600">Order ID</span>
-<span className="font-[var(--font-mono)] text-[0.6rem] text-neutral-600">{payment.provider_order_id}</span>
-                  </div>
-                  <div className="mt-3 border-t border-black/[0.05] pt-3 font-[var(--font-sans)] text-[0.7rem] text-neutral-600 leading-relaxed">
-                    Awaiting verified provider confirmation. The order will not be marked PAID from the browser — only a signature-verified webhook settles it.
-                  </div>
-                  {payment.payment_url && (
-                    <a
-                      href={payment.payment_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-3 inline-flex items-center justify-center w-full h-9 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-colors font-medium rounded-full"
-                    >
-                      REOPEN PAYMENT LINK ↗
-                    </a>
-                  )}
-                </div>
+                <Card size="sm" className="shadow-card">
+                  <CardHeader className="flex flex-row items-center justify-between gap-2">
+                    <CardTitle className="text-[13px]">Payment</CardTitle>
+                    <Badge variant="secondary" className="gap-1.5 bg-amber-50 text-amber-800">
+                      <span className="size-1.5 rounded-full bg-amber-600 animate-[blink_1.5s_ease-in-out_infinite]" />
+                      {orderStatus === "PAYMENT_PENDING" ? "Awaiting provider" : "Pending"}
+                    </Badge>
+                  </CardHeader>
+                  <CardContent>
+                    <FieldRow label="Provider">
+                      <span className="text-[12px]">{payment.provider} · test</span>
+                    </FieldRow>
+                    <FieldRow label="Order ID">
+                      <span className="block truncate text-[12px]" title={payment.provider_order_id}>
+                        {payment.provider_order_id}
+                      </span>
+                    </FieldRow>
+                    <p className="mt-3 border-t border-hairline pt-3 text-[12px] leading-relaxed text-muted">
+                      Waiting on provider confirmation. The browser cannot mark this paid, only a verified webhook settles it.
+                    </p>
+                    {payment.payment_url && (
+                      <a
+                        href={payment.payment_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-full border border-hairline bg-ink/10 text-[13px] font-medium text-ink transition-colors hover:bg-accent/20"
+                      >
+                        Reopen payment link
+                      </a>
+                    )}
+                  </CardContent>
+                </Card>
 
                 {DEMO_MODE && (
-                  <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
-                    <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.1em] uppercase text-neutral-600 mb-2">DEV HELPERS (SIGNED WEBHOOK BOUNDARY)</div>
-                    <div className="grid grid-cols-2 gap-2">
+                  <Card size="sm" className="shadow-card">
+                    <CardHeader>
+                      <CardTitle className="text-[12px] text-muted">Dev helpers</CardTitle>
+                      <CardDescription className="text-[12px]">
+                        Settle through the signed webhook boundary, no tunnel needed.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-2 gap-2">
                       <button onClick={() => handleSimulate("capture")} disabled={busy} className="h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 cursor-pointer disabled:opacity-50 font-medium rounded-full">
-                        CAPTURE
+                        Capture
                       </button>
                       <button onClick={() => handleSimulate("failure")} disabled={busy} className="h-9 border border-red-600/20 bg-red-50 text-[13px] text-red-600 hover:bg-red-100 cursor-pointer disabled:opacity-50 font-medium rounded-full">
-                        FAIL
+                        Fail
                       </button>
-                    </div>
-                  </div>
+                    </CardContent>
+                  </Card>
                 )}
               </div>
             )}
 
             {phase === "failed" && order && (
               <div className="space-y-4">
-                <div className="border border-red-600/20 bg-red-50 p-5 rounded-2xl shadow-card">
-                  <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-red-600 mb-2">PAYMENT FAILED</div>
-                  <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 leading-relaxed mb-3">
-                    Payment was declined in Razorpay Test Mode. The failure was classified by the backend and a single bounded retry is available. No duplicate settlement is possible.
-                  </div>
-                  <div className="font-[var(--font-mono)] text-[0.55rem] text-neutral-600">
-                    Final state: {orderStatus || "PAYMENT_FAILED"}
-                  </div>
-                </div>
+                <Card size="sm" className="border-red-600/25 bg-red-50 shadow-card dark:bg-red-950/20">
+                  <CardHeader>
+                    <CardTitle className="text-[13px] text-red-700 dark:text-red-400">Payment failed</CardTitle>
+                    <CardDescription className="text-[12px]">
+                      Declined in test mode. The backend classified the failure, and one bounded retry is available. Nothing was charged twice.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <FieldRow label="Final state">{orderStatus || "PAYMENT_FAILED"}</FieldRow>
+                  </CardContent>
+                </Card>
                 <button onClick={handleRetry} disabled={busy} className="w-full h-9 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
-                  RETRY (BOUNDED)
+                  Retry payment
                 </button>
                 {DEMO_MODE && (
                   <button onClick={() => handleSimulate("capture")} disabled={busy} className="w-full h-9 border border-green-600/20 bg-green-50 text-[13px] text-green-600 hover:bg-green-100 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
-                    SIMULATE CAPTURE (DEV)
+                    Simulate capture
                   </button>
                 )}
               </div>
             )}
 
             {phase === "aborted" && (
-              <div className="border border-red-600/20 bg-red-50 p-5 rounded-2xl shadow-card">
-                <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.12em] uppercase text-red-600 mb-2">ORDER ABORTED</div>
-                <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600 leading-relaxed">
-                  The bounded retry limit was reached. The order was aborted without a duplicate payment or settlement. Inventory and cart holds are released.
-                </div>
-                <button onClick={resetSession} className="mt-4 w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-neutral-900 transition-colors cursor-pointer font-medium rounded-full">
-                  START NEW SESSION
-                </button>
-              </div>
+              <Card size="sm" className="border-red-600/25 bg-red-50 shadow-card dark:bg-red-950/20">
+                <CardHeader>
+                  <CardTitle className="text-[13px] text-red-700 dark:text-red-400">Order aborted</CardTitle>
+                  <CardDescription className="text-[12px]">
+                    The retry limit was reached. The order closed without duplicate payment, and holds were released.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <button onClick={resetSession} className="w-full h-9 border border-hairline bg-panel text-[13px] text-ink-2 hover:text-ink transition-colors cursor-pointer font-medium rounded-full">
+                    Start new session
+                  </button>
+                </CardContent>
+              </Card>
             )}
 
             {phase === "receipt" && order && (
               <>
                 <ReceiptCard order={order} payment={payment} />
                 {orderStatus === "REFUNDED" && (
-                  <div className="border border-black/[0.06] p-4 rounded-2xl shadow-card">
-                    <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-neutral-600 mb-2">REFUNDED</div>
-                    <div className="font-[var(--font-sans)] text-[0.78rem] text-neutral-600">This order has been refunded. The refund is recorded in the ledger and replayable.</div>
-                  </div>
+                  <Card size="sm" className="shadow-card">
+                    <CardHeader>
+                      <CardTitle className="text-[13px]">Refunded</CardTitle>
+                      <CardDescription className="text-[12px]">
+                        Recorded in the ledger and replayable.
+                      </CardDescription>
+                    </CardHeader>
+                  </Card>
                 )}
                 {orderStatus === "PAID" && (
                   <button onClick={handleFulfill} disabled={busy} className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-green-700 hover:border-green-600/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
@@ -2040,7 +2087,7 @@ export default function ChatPageInner() {
                 )}
                 {orderStatus !== "REFUNDED" && (
                   <button onClick={handleRefund} disabled={busy} className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-red-600 hover:border-red-600/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
-                    REFUND ORDER
+                    Refund order
                   </button>
                 )}
               </>

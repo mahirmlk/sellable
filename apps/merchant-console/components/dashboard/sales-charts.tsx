@@ -1,16 +1,18 @@
 "use client";
 
-// Recharts time + status charts fed ONLY by the pure series math in
+// Vercel-style interactive Recharts charts fed ONLY by the pure series math in
 // ./charts (dailySeries / statusBuckets over real order records). No fake or
 // mock data: zero-value days are real calendar days without sales, and when
-// there is no data the callers render the existing EmptyState / ErrorBanner
-// instead of mounting these components.
+// there is not enough real data the callers render the existing EmptyState /
+// ErrorBanner instead of mounting these components.
 //
-// Theming: series colors resolve through var(--color-*) (set per-chart by
-// <ChartStyle> from the ChartConfig) and var(--c-hairline) for gridlines, so
-// every chart flips with [data-theme="light"|"dark"]. Solid fills only — no
-// translucency or blur in dashboard scope.
+// Design: shadcn Card header with an inline metric switcher (Revenue / Orders)
+// like the shadcn interactive line chart, gradients + tooltip + legend from
+// the ChartContainer family. Series colors resolve through var(--chart-1)
+// via the config, gridlines through var(--c-hairline), and everything flips
+// with [data-theme="light"|"dark"].
 
+import * as React from "react";
 import {
   Area,
   AreaChart,
@@ -31,6 +33,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatPaise } from "@/lib/formatters";
 import type { SeriesPoint, StatusBuckets } from "@/components/dashboard/charts";
 
@@ -46,23 +49,35 @@ export function formatAxisPaise(paise: number): string {
 export type TimeMetric = "revenue" | "orders";
 
 interface TimeRow {
-  /** Short axis label, e.g. "24 Aug" (from SeriesPoint.label). */
-  day: string;
+  /** ISO date for the axis (the chart reformats it per tick). */
+  date: string;
   /** Full date for the tooltip title — real bucket identity, never invented. */
   fullDate: string;
-  revenue: number;
-  orders: number;
+  /** The series value the caller computed for this metric. */
+  value: number;
 }
 
-const timeConfig = {
-  revenue: { label: "Revenue", color: "var(--chart-1)" },
-  orders: { label: "Orders", color: "var(--chart-1)" },
-} satisfies ChartConfig;
+function dailyFormatter(value: string | number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+}
+
+function fullFormatter(value: string | number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 /**
- * Daily revenue (AreaChart) or orders (BarChart) over real calendar days.
- * Mount only when at least one point is non-zero — empty ranges are the
- * caller's EmptyState.
+ * Daily sales chart in the shadcn interactive-card shape: header tile with the
+ * live period total, area series when revenue is on display and bars when the
+ * metric is order counts. Data comes straight from dailySeries over real
+ * orders; the switcher only reshapes what is already in memory.
  */
 export function SalesTimeChart({
   points,
@@ -73,112 +88,150 @@ export function SalesTimeChart({
   metric: TimeMetric;
   rangeLabel: string;
 }) {
-  const data: TimeRow[] = points.map((p) => ({
-    day: p.label,
-    fullDate: new Date(p.dateMs).toLocaleDateString("en-IN", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }),
-    revenue: metric === "revenue" ? p.value : 0,
-    orders: metric === "orders" ? p.value : 0,
-  }));
+  const [activeMetric, setActiveMetric] = React.useState<TimeMetric>(metric);
+  const isRevenue = activeMetric === "revenue";
+
+  const series: TimeRow[] = React.useMemo(
+    () =>
+      points.map((p) => {
+        const day = new Date(p.dateMs);
+        return {
+          date: day.toLocaleDateString("en-CA"),
+          fullDate: day.toLocaleDateString("en-IN", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          }),
+          value: p.value,
+        };
+      }),
+    [points]
+  );
+  const periodTotal = series.reduce((sum, row) => sum + row.value, 0);
+
+  const config = {
+    value: { label: isRevenue ? "Revenue" : "Orders", color: "var(--chart-1)" },
+  } satisfies ChartConfig;
 
   return (
-    <ChartContainer
-      config={timeConfig}
-      className="aspect-auto h-[280px] min-h-[260px] w-full"
-      role="img"
-      aria-label={`Daily ${metric === "revenue" ? "revenue" : "orders"} per day over ${rangeLabel}`}
-    >
-      {metric === "revenue" ? (
-        <AreaChart accessibilityLayer data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <defs>
-            <linearGradient id="salesRevenueFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-revenue)" stopOpacity={0.32} />
-              <stop offset="100%" stopColor="var(--color-revenue)" stopOpacity={0.04} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid vertical={false} stroke="var(--c-hairline)" />
-          <XAxis
-            dataKey="day"
-            tickLine={false}
-            axisLine={false}
-            tickMargin={8}
-            minTickGap={28}
-          />
-          <YAxis
-            tickLine={false}
-            axisLine={false}
-            width="auto"
-            tickFormatter={formatAxisPaise}
-          />
-          <ChartTooltip
-            content={
-              <ChartTooltipContent
-                indicator="dot"
-                labelFormatter={(_label, payload) => {
-                  const first = payload?.[0] as
-                    | { payload?: { fullDate?: unknown } }
-                    | undefined;
-                  const full = first?.payload?.fullDate;
-                  return typeof full === "string" ? full : _label;
-                }}
-                formatter={(value) => formatPaise(Number(value))}
+    <Card className="py-4 sm:py-0">
+      <CardHeader className="flex flex-col items-stretch border-b !p-0 sm:flex-row">
+        <div className="flex flex-1 flex-col justify-center gap-1 px-6 pb-3 sm:pb-0">
+          <CardTitle>{isRevenue ? "Revenue" : "Orders"}</CardTitle>
+          <CardDescription>
+            Daily {isRevenue ? "paid revenue" : "order counts"} for {rangeLabel}
+          </CardDescription>
+        </div>
+        <div className="flex">
+          {(
+            [
+              { key: "revenue" as const, label: "Revenue" },
+              { key: "orders" as const, label: "Orders" },
+            ]
+          ).map((option) => {
+            const isActive = activeMetric === option.key;
+            return (
+              <button
+                key={option.key}
+                data-active={isActive}
+                className="flex flex-1 flex-col justify-center gap-1 border-t px-6 py-4 text-left even:border-l data-[active=true]:bg-muted/50 sm:border-t-0 sm:border-l sm:px-8 sm:py-3"
+                onClick={() => setActiveMetric(option.key)}
+              >
+                <span className="text-[12px] text-muted-foreground">{option.label}</span>
+                <span className="text-[18px] leading-none font-semibold tabular-nums sm:text-[24px]">
+                  {isActive
+                    ? option.key === "revenue"
+                      ? formatPaise(periodTotal)
+                      : String(periodTotal)
+                    : <span className="opacity-50">—</span>}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </CardHeader>
+      <CardContent className="px-2 sm:p-6">
+        <ChartContainer config={config} className="aspect-auto h-[250px] w-full">
+          {activeMetric === "revenue" ? (
+            <AreaChart accessibilityLayer data={series} margin={{ left: 12, right: 12 }}>
+              <defs>
+                <linearGradient id="fillSalesRevenue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-value)" stopOpacity={0.8} />
+                  <stop offset="95%" stopColor="var(--color-value)" stopOpacity={0.1} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={32}
+                tickFormatter={dailyFormatter}
               />
-            }
-          />
-          <Area
-            dataKey="revenue"
-            type="monotone"
-            stroke="var(--color-revenue)"
-            strokeWidth={2}
-            fill="url(#salesRevenueFill)"
-            fillOpacity={1}
-          />
-        </AreaChart>
-      ) : (
-        <BarChart accessibilityLayer data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid vertical={false} stroke="var(--c-hairline)" />
-          <XAxis
-            dataKey="day"
-            tickLine={false}
-            axisLine={false}
-            tickMargin={8}
-            minTickGap={28}
-          />
-          <YAxis
-            tickLine={false}
-            axisLine={false}
-            width="auto"
-            allowDecimals={false}
-          />
-          <ChartTooltip
-            content={
-              <ChartTooltipContent
-                indicator="dot"
-                labelFormatter={(_label, payload) => {
-                  const first = payload?.[0] as
-                    | { payload?: { fullDate?: unknown } }
-                    | undefined;
-                  const full = first?.payload?.fullDate;
-                  return typeof full === "string" ? full : _label;
-                }}
-                formatter={(value) => {
-                  const n = Number(value);
-                  return `${n} order${n === 1 ? "" : "s"}`;
-                }}
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width="auto"
+                tickFormatter={formatAxisPaise}
               />
-            }
-          />
-          <Bar
-            dataKey="orders"
-            fill="var(--color-orders)"
-            radius={[4, 4, 0, 0]}
-          />
-        </BarChart>
-      )}
-    </ChartContainer>
+              <ChartTooltip
+                cursor={false}
+                content={
+                  <ChartTooltipContent
+                    className="w-[160px]"
+                    indicator="dot"
+                    labelFormatter={(value) => fullFormatter(String(value))}
+                    formatter={(value) => formatPaise(Number(value))}
+                  />
+                }
+              />
+              <Area
+                dataKey="value"
+                type="monotone"
+                stroke="var(--color-value)"
+                strokeWidth={2}
+                fill="url(#fillSalesRevenue)"
+                fillOpacity={1}
+              />
+            </AreaChart>
+          ) : (
+            <BarChart accessibilityLayer data={series} margin={{ left: 12, right: 12 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                minTickGap={32}
+                tickFormatter={dailyFormatter}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width="auto"
+                allowDecimals={false}
+              />
+              <ChartTooltip
+                cursor={false}
+                content={
+                  <ChartTooltipContent
+                    className="w-[140px]"
+                    indicator="dot"
+                    labelFormatter={(value) => fullFormatter(String(value))}
+                    formatter={(value) => {
+                      const n = Number(value);
+                      return `${n} order${n === 1 ? "" : "s"}`;
+                    }}
+                  />
+                }
+              />
+              <Bar dataKey="value" fill="var(--color-value)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          )}
+        </ChartContainer>
+      </CardContent>
+    </Card>
   );
 }
 

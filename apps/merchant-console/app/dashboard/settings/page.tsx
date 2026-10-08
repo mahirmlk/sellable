@@ -11,7 +11,6 @@ import {
 import { StatusIndicator } from "@/components/dashboard/status-indicator";
 import { useSystemStatus, classifyError, type StatusError } from "@/components/dashboard/use-system-status";
 import { providerLabel, modelLabel, llmDisplayState } from "@/lib/llm-display";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -172,26 +171,33 @@ export default function SettingsPage() {
     { label: "Max discount", key: "max_discount_percent" as const, isPaise: false, suffix: "%" },
     { label: "Negotiation rounds", key: "max_negotiation_rounds" as const, isPaise: false },
     { label: "Max upsells / session", key: "max_upsells_per_session" as const, isPaise: false },
-    { label: "HITL threshold", key: "human_approval_threshold_paise" as const, isPaise: true, highlight: true },
+    { label: "Approval threshold", key: "human_approval_threshold_paise" as const, isPaise: true, highlight: true },
   ];
 
   const llmState = llmDisplayState(status?.llm ?? null);
   const llmMeta = LLM_STATE_TEXT[llmState] ?? LLM_STATE_TEXT.unknown;
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title="Settings"
-        subtitle="Boundaries you control"
-        actions={
-          <>
-            <RefreshButton onRefresh={handleRefresh} loading={loading || statusLoading} />
-            <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className={PRIMARY_PILL}>
-              <Save size={13} /> {saving ? "Saving…" : "Save changes"}
-            </button>
-          </>
-        }
-      />
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Configure
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Settings
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            Identity, selling limits, payments, AI, and security. Policy edits take effect immediately and are written to the ledger.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <RefreshButton onRefresh={handleRefresh} loading={loading || statusLoading} />
+          <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className={PRIMARY_PILL}>
+            <Save size={13} /> {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
 
       {saveMsg === "success" && (
         <div className="rounded-2xl bg-green-50 border border-green-200/60 px-4 py-3 flex items-center gap-2.5">
@@ -215,7 +221,11 @@ export default function SettingsPage() {
       ) : (
         <>
           {/* Store — identity + what the seller may sell */}
-          <Section title="Store" hint="Merchant identity · read-only + categories">
+          <Section
+            title="Store"
+            hint="Identity · read-only"
+            description="Which store these settings belong to."
+          >
             <div className="py-2 border-b border-black/[0.06]">
               <div className="text-[13px] text-neutral-500 mb-1">Merchant</div>
               <div className="text-[15px] font-medium text-neutral-900">{current.merchant_id}</div>
@@ -238,7 +248,11 @@ export default function SettingsPage() {
           </Section>
 
           {/* Selling — the editable policy core (full editor lives in Selling Rules) */}
-          <Section title="Selling" hint={hasChanges ? "Unsaved changes" : "Full editor in Selling Rules"}>
+          <Section
+            title="Selling"
+            hint={hasChanges ? "Unsaved changes" : undefined}
+            description="The same limits as Selling rules. Edit them here or there."
+          >
             {sellingFields.map((field) => {
               const value = current[field.key];
               const isEditing = field.key in editing;
@@ -274,13 +288,17 @@ export default function SettingsPage() {
             <Link href="/dashboard/selling-rules" className={CROSS_LINK}>
               Open full selling rules + simulator <ArrowRight size={12} />
             </Link>
-            <div className="mt-3 text-[13px] text-neutral-500 leading-relaxed">
-              Changing a policy creates an auditable configuration event in the backend. All policy changes are logged in the XAI Ledger and enforced deterministically by the Policy Engine — never by the browser.
+            <div className="mt-3 text-[13px] text-muted leading-relaxed">
+              Every change is written to the ledger and enforced by the policy engine, not the browser.
             </div>
           </Section>
 
           {/* Payments — read-only rail status */}
-          <Section title="Payments" hint="Read from backend /agents/status">
+          <Section
+            title="Payments"
+            hint="Read-only"
+            description="Rail state straight from the backend."
+          >
             {statusError ? (
               <PartialBanner message="Backend unreachable while fetching status." />
             ) : (
@@ -299,7 +317,11 @@ export default function SettingsPage() {
           </Section>
 
           {/* AI — model configuration + agent states */}
-          <Section title="AI" hint="Provider substitutable without touching commerce">
+          <Section
+            title="AI"
+            hint="Swappable provider"
+            description="Model setup. Swapping providers never touches orders, policy, or the ledger."
+          >
             {statusError ? (
               <PartialBanner message="Backend unreachable while fetching status." />
             ) : (
@@ -329,15 +351,19 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
-                <div className="mt-3 text-[13px] text-neutral-500 leading-relaxed">
-                  Provider and model can be substituted without changing Commerce Core, Policy, Payments, Ledger, or the console. Credentials never leave the backend.
+                <div className="mt-3 text-[13px] text-muted leading-relaxed">
+                  Switching providers never touches Commerce Core, policy, payments, ledger, or this console. Keys stay on the backend.
                 </div>
               </>
             )}
           </Section>
 
           {/* Security — trust boundaries, read-only */}
-          <Section title="Security" hint="Trust boundaries · read-only">
+          <Section
+            title="Security"
+            hint="Read-only"
+            description="The boundaries money cannot cross without verification."
+          >
             {statusError ? (
               <PartialBanner message="Backend unreachable while fetching status." />
             ) : (
@@ -353,7 +379,11 @@ export default function SettingsPage() {
           </Section>
 
           {/* Developer — pointers to the Developers page */}
-          <Section title="Developer" hint="Keys · discovery · endpoints">
+          <Section
+            title="Developer"
+            hint="Keys · discovery · endpoints"
+            description="Agent API keys, webhooks, and transaction endpoints."
+          >
             <div className="text-[14px] text-neutral-600 leading-relaxed mb-1">
               Agent API keys, webhook verification, discovery surfaces, and transaction endpoints live on the Developers page.
             </div>

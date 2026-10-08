@@ -344,3 +344,39 @@ export function statusBuckets(
   }
   return buckets;
 }
+
+export interface ChannelSplit {
+  /** Orders placed by external AI buyers (agent_to_agent + unknown). */
+  aiOrders: number;
+  /** Orders placed through human chat. */
+  humanOrders: number;
+  /** PAID revenue per channel. Paise. */
+  aiRevenuePaise: number;
+  humanRevenuePaise: number;
+}
+
+/**
+ * Human vs AI-buyer mix from real order records in the half-open window
+ * [startMs, endMs). Channel follows the same convention as the display
+ * mapper: anything that is not explicitly human_chat counts as agent
+ * traffic. All-zero means "no orders in range" — callers hide the section.
+ */
+export function channelSplit(
+  orders: ConsoleTransaction[],
+  startMs: number,
+  endMs: number
+): ChannelSplit {
+  const split: ChannelSplit = { aiOrders: 0, humanOrders: 0, aiRevenuePaise: 0, humanRevenuePaise: 0 };
+  for (const o of orders) {
+    const ts = +new Date(o.created_at);
+    if (Number.isNaN(ts) || ts < startMs || ts >= endMs) continue;
+    const ai = o.channel !== "human_chat";
+    if (ai) split.aiOrders += 1;
+    else split.humanOrders += 1;
+    if (isSale(o)) {
+      if (ai) split.aiRevenuePaise += o.amount_paise;
+      else split.humanRevenuePaise += o.amount_paise;
+    }
+  }
+  return split;
+}

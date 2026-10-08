@@ -14,7 +14,6 @@ import { StatusBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { formatTimeAgo } from "@/lib/formatters";
 import { getConsoleApprovals, getConsoleTransactions } from "@/lib/api";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -204,23 +203,30 @@ export default function TransactionsPage() {
   const pageRows = pageSlice(visible, current);
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title="Orders"
-        subtitle="Every order through your store"
-        actions={
-          <>
-            <button
-              onClick={handleExport}
-              disabled={visible.length === 0}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
-            >
-              <Download size={14} /> Export
-            </button>
-            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
-          </>
-        }
-      />
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Sales
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Orders
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            Every order placed here or by an AI buyer. Open one for its full ledger trace.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={visible.length === 0}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
+          >
+            <Download size={14} /> Export
+          </button>
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+        </div>
+      </div>
 
       <FilterTabs<OrderTab>
         tabs={[
@@ -291,7 +297,7 @@ export default function TransactionsPage() {
           title={transactions.length === 0 ? "No orders yet" : "No orders match"}
           message={
             transactions.length === 0
-              ? "No orders yet. Orders created through your store will appear here."
+              ? "New orders show up here with buyer, value, and status."
               : "No orders match the current search and filters."
           }
         />

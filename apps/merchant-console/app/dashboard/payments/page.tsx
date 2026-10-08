@@ -10,7 +10,6 @@ import {
   type AgentsStatusResponse,
 } from "@/lib/api";
 import { formatPaise, formatTimeAgo } from "@/lib/formatters";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -108,23 +107,30 @@ export default function PaymentsPage() {
   }, []);
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title="Payments"
-        subtitle="Payment records from your transactions"
-        actions={
-          <>
-            <button
-              onClick={handleExport}
-              disabled={visible.length === 0}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
-            >
-              <Download size={14} /> Export
-            </button>
-            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
-          </>
-        }
-      />
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Money
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Payments
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            Every payment attempt on your orders. Only a signed webhook can mark an order paid.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={visible.length === 0}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
+          >
+            <Download size={14} /> Export
+          </button>
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+        </div>
+      </div>
 
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
       {partialError && <PartialBanner message={partialError} />}
@@ -135,18 +141,32 @@ export default function PaymentsPage() {
         <EmptyState title="Payments unavailable" message="Transaction data could not be loaded from the backend." />
       ) : (
         <>
-          <Section title="Payment rail" hint="Live system status">
+          <Section
+            title="Payment rail"
+            hint={rail ? rail.provider : "Status"}
+            description="How money reaches you. Settlement is confirmed by signed webhook, never by the browser."
+          >
             {rail ? (
-              <div className="text-[14px] text-neutral-600 leading-relaxed">
-                Provider <span className="font-medium text-neutral-900">{rail.provider}</span> · {rail.mode} ·{" "}
-                {rail.configured ? "Configured" : "Not configured"} · webhook{" "}
-                {rail.webhook_configured ? "configured" : "not configured"}
-                {rail.webhook_last_verified_at && (
-                  <> · last verified {new Date(rail.webhook_last_verified_at).toLocaleString("en-IN", { hour12: false })}</>
-                )}
-              </div>
+              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
+                {[
+                  ["Provider", rail.provider],
+                  ["Mode", rail.mode],
+                  ["Credentials", rail.configured ? "Connected" : "Not connected"],
+                  [
+                    "Webhook",
+                    rail.webhook_configured
+                      ? `Verified${rail.webhook_last_verified_at ? ` · ${new Date(rail.webhook_last_verified_at).toLocaleString("en-IN", { hour12: false })}` : ""}`
+                      : "Not configured",
+                  ],
+                ].map(([term, value]) => (
+                  <div key={term} className="flex items-baseline justify-between gap-3 py-2.5 border-b border-hairline last:border-b-0 sm:[&:nth-last-child(2)]:border-b-0">
+                    <dt className="text-[13px] text-muted">{term}</dt>
+                    <dd className="text-[13px] font-medium text-ink tabular-nums text-right">{value}</dd>
+                  </div>
+                ))}
+              </dl>
             ) : (
-              <div className="text-[14px] text-neutral-500">Payment rail status unavailable.</div>
+              <div className="text-[14px] text-muted">Payment rail status is unavailable right now.</div>
             )}
           </Section>
 
@@ -165,8 +185,8 @@ export default function PaymentsPage() {
 
           {records.length === 0 ? (
             <EmptyState
-              title="No payment records yet."
-              message="Payment records appear here once orders reach the payment stage — start a checkout in AI Sales."
+              title="No payment records yet"
+              message="Records show up here once an order reaches the payment stage. Start a checkout in AI Sales to create the first one."
             />
           ) : (
             <>
