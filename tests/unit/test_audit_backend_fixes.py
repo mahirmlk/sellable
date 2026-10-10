@@ -130,7 +130,7 @@ def test_negotiation_rounds_ignore_colliding_foreign_trace(two_tenant_cores) -> 
     )
     state = {"request": request, "trace_id": trace_id, "tool_calls": []}
     state.update(agent._search_catalog(state))
-    out = agent._create_quote(state)
+    out = agent._build_cart(state)
     assert out["candidate_cart"] is not None
     # Foreign counters must not inflate this merchant's round counter.
     assert out["candidate_cart"].negotiation_round == 1
