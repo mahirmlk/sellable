@@ -31,6 +31,47 @@ export function IconSearch(p: IconProps) {
   );
 }
 
+/* Operations — rounded pulse/activity line */
+export function IconOperations(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M1.5 8h3l1.5-4 3 8 1.5-4h4" />
+    </svg>
+  );
+}
+
+/* Support — rounded lifebuoy */
+export function IconSupport(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <circle cx="8" cy="8" r="6" />
+      <circle cx="8" cy="8" r="2" />
+      <path d="M3.8 3.8l2.4 2.4M9.8 9.8l2.4 2.4M12.2 3.8l-2.4 2.4M6.2 9.8l-2.4 2.4" />
+    </svg>
+  );
+}
+
+/* Evaluations — rounded flask */
+export function IconFlask(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M6.5 1.5h3M7 1.5v4.2L3 12a1.5 1.5 0 0 0 1.3 2.2h7.4A1.5 1.5 0 0 0 13 12L9 5.7V1.5" />
+      <path d="M5 10.5h6" />
+    </svg>
+  );
+}
+
+/* Connectors — rounded plug nodes */
+export function IconPlug(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <circle cx="3.5" cy="8" r="2" />
+      <circle cx="12.5" cy="8" r="2" />
+      <path d="M5.5 8h5" />
+    </svg>
+  );
+}
+
 /* Overview — 2x2 rounded grid (like SF square.grid.2x2) */
 export function IconOverview(p: IconProps) {
   return (

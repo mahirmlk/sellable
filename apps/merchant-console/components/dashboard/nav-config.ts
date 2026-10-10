@@ -14,6 +14,10 @@ import {
   IconBuyers,
   IconPayments,
   IconDevelopers,
+  IconOperations,
+  IconSupport,
+  IconFlask,
+  IconPlug,
 } from "./icons";
 
 export type NavIcon = ComponentType<{ size?: number; className?: string }>;
@@ -59,6 +63,7 @@ export const NAV_SECTIONS: NavSection[] = [
     label: "Sales",
     items: [
       { label: "AI Sales", href: "/dashboard/chat", icon: IconChat },
+      { label: "Support", href: "/dashboard/support", icon: IconSupport },
       { label: "AI Storefront", href: "/dashboard/storefront", icon: IconStorefront },
       { label: "Selling Rules", href: "/dashboard/selling-rules", icon: IconShield },
       {
@@ -74,12 +79,15 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Analytics", href: "/dashboard/growth", icon: IconGrowth },
       { label: "Live Activity", href: "/dashboard/activity", icon: IconActivity },
+      { label: "Evaluations", href: "/dashboard/evals", icon: IconFlask },
     ],
   },
   {
     label: "System",
     items: [
       { label: "Payments", href: "/dashboard/payments", icon: IconPayments },
+      { label: "Operations", href: "/dashboard/operations", icon: IconOperations },
+      { label: "Connectors", href: "/dashboard/connectors", icon: IconPlug },
       { label: "Developers", href: "/dashboard/developers", icon: IconDevelopers },
       { label: "Settings", href: "/dashboard/settings", icon: IconSettings },
     ],
