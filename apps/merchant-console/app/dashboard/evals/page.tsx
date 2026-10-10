@@ -45,7 +45,8 @@ export default function EvalsPage() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    const t = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(t);
   }, [refresh]);
 
   const onRun = async (suiteId: string) => {

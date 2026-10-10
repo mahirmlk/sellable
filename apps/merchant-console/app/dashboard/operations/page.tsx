@@ -125,7 +125,8 @@ export default function OperationsPage() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    const t = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(t);
   }, [refresh]);
 
   const onDrain = async () => {
