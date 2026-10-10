@@ -1,5 +1,13 @@
 """Resumable buyer-mission continuation (post-approval / post-consent).
 
+.. deprecated::
+    Target architecture (``SELLABLE_ARCHITECTURE.md`` §7, §55) runs **no
+    Buyer Agent as a core platform component**. This service stays
+    operational during the revamp but is frozen: no new features, and it
+    will be externalized to eval/sandbox reference-client status. New
+    customer-side flows must go through delegation + Protocol Gateway
+    (target §14, §17) instead of mission pointers.
+
 The Buyer Agent graph intentionally ends after CREATE_ORDER for HITL carts.
 This service owns what happens NEXT, without ever becoming a second
 financial state machine:

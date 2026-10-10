@@ -1,4 +1,12 @@
-"""Reference Buyer Agent proving the agent-to-agent discovery and quote loop."""
+"""Reference Buyer Agent proving the agent-to-agent discovery and quote loop.
+
+.. deprecated::
+    Target architecture (``SELLABLE_ARCHITECTURE.md`` §7, §55) runs **no
+    Buyer Agent as a core platform component** — external customer-side
+    agents are clients of the Protocol Gateway, not in-process runtimes.
+    This module is retained as a reference/external test client for evals
+    and the future sandbox (§31); new commerce paths must not depend on it.
+"""
 
 from __future__ import annotations
 
