@@ -6,7 +6,63 @@ from agents.seller.agent import SellerAgent, SellerDecision, SellerRequest
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import CatalogSearchRequest, Product
 from sellable.core import CommerceCore
+from sellable.delegations import AuthorizationDecision, OperationScope
 from sellable.repositories import MerchantRepository
+
+
+class DelegationDeniedError(ValueError):
+    """A presented delegation is invalid for this action (HTTP 403)."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__(f"Delegation denied: {reason_code}")
+        self.reason_code = reason_code
+
+
+class DelegationHoldError(ValueError):
+    """A presented delegation needs customer/human approval first (HTTP 409)."""
+
+    def __init__(self, outcome: str, reason_code: str) -> None:
+        super().__init__(f"Delegation held: {outcome} ({reason_code})")
+        self.outcome = outcome
+        self.reason_code = reason_code
+
+
+def enforce_delegation(
+    commerce: CommerceCore,
+    *,
+    delegation_id: str | None,
+    scope: OperationScope,
+    amount_paise: int | None = None,
+    trace_id: str | None = None,
+    route: str = "",
+) -> AuthorizationDecision | None:
+    """Resolve an optional delegation header at the gateway (target §14).
+
+    No header → None (legacy callers flow unchanged). Presented delegations
+    are resolved through the authorization service with full ledger
+    attribution: DENY raises (403), REQUIRE_* raises a hold (409), ALLOW
+    returns the decision. Amount binding stays at the commerce layer, which
+    re-resolves with the exact totals.
+    """
+    from sellable.delegations import AuthorizationOutcome
+
+    if not delegation_id:
+        return None
+    decision = commerce.authorization_service.authorize(
+        delegation_id=delegation_id,
+        scope=scope,
+        merchant_id=commerce.merchant_scope,
+        amount_paise=amount_paise,
+    )
+    if trace_id is not None:
+        commerce.log_gateway_authorization(
+            trace_id=trace_id, decision=decision, route=route or scope.value
+        )
+    if decision.outcome is AuthorizationOutcome.DENY:
+        raise DelegationDeniedError(decision.reason_code)
+    if decision.outcome is not AuthorizationOutcome.ALLOW:
+        raise DelegationHoldError(decision.outcome.value, decision.reason_code)
+    return decision
 
 
 class AgentGateway:
@@ -45,10 +101,24 @@ class AgentGateway:
                 "quote_negotiate": "/agent/quotes.negotiate",
                 "payment": "/orders/{order_id}/payment",
             },
+            "delegation": {
+                "header": "X-Delegation-Id",
+                "required": False,
+                "note": (
+                    "Customer delegation is optional on read/quote routes and "
+                    "enforced when presented; order and consent routes bind "
+                    "it to exact totals. Revoked or expired delegations are "
+                    "rejected."
+                ),
+            },
             "payment": {
                 "provider": "razorpay",
                 "mode": "test",
                 "settlement_authority": "signed_webhook",
+            },
+            "api_versions": ["v1"],
+            "versioning": {
+                "note": "Every route is served unversioned and under /v1/* identically.",
             },
         }
 
