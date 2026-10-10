@@ -1224,3 +1224,431 @@ export async function continueBuyerMission(
     { method: "POST" }
   );
 }
+
+// --- Console: Operations (event bus, notifications, analytics, webhooks) ---
+
+export interface OpsOverview {
+  merchant_id: string;
+  outbox: { pending: number; dead_lettered: number };
+  risk: { recent_blocks: number; recent_decisions: number };
+  fraud: { recent: Array<{ kind: string; subject_id: string; created_at: string }> };
+  agent_runs: {
+    recent: number;
+    failures: number;
+    runs: Array<{
+      run_id: string;
+      trace_id: string;
+      agent_id: string;
+      agent_version: string;
+      status: string;
+      outcome: string | null;
+      error: string | null;
+      started_at: string;
+      ended_at: string | null;
+    }>;
+  };
+  webhooks: {
+    dispatches: number;
+    failures: number;
+    recent: Array<{
+      dispatch_id: string;
+      subscription_id: string;
+      event_id: string;
+      event_type: string;
+      status: string;
+      attempts: number;
+      last_status_code: number | null;
+      last_error: string | null;
+      created_at: string;
+    }>;
+  };
+}
+
+export interface MerchantNotification {
+  notification_id: string;
+  event_type: string;
+  title: string;
+  body: string;
+  urgency: string;
+  status: string;
+  trace_id: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface AnalyticsOverview {
+  gmv_paise: number;
+  orders_created: number;
+  orders_paid: number;
+  conversion_rate_bps: number;
+  aov_paise: number;
+  checkouts_completed: number;
+  agent_assisted_checkouts: number;
+  refunds_completed: number;
+  refund_amount_paise: number;
+  returns_created: number;
+  promotion_redemptions: number;
+  promotion_discount_paise: number;
+  computed_at: string;
+}
+
+export interface AnalyticsDay {
+  date: string;
+  gmv_paise: number;
+  orders: number;
+}
+
+export interface WebhookSubscriptionView {
+  subscription_id: string;
+  url: string;
+  events: string[];
+  active: boolean;
+  created_at: string;
+}
+
+export async function getOpsOverview(): Promise<OpsOverview> {
+  return apiFetch<OpsOverview>("/console/ops/overview");
+}
+
+export async function drainEventBus(): Promise<Record<string, number>> {
+  return apiFetch<Record<string, number>>("/console/ops/bus/drain", {
+    method: "POST",
+  });
+}
+
+export async function listDeadLetters(): Promise<
+  Array<{
+    event_id: string;
+    event_type: string;
+    merchant_id: string;
+    aggregate_type: string;
+    aggregate_id: string;
+    trace_id: string;
+    attempts: number;
+    last_error: string | null;
+    occurred_at: string;
+  }>
+> {
+  return apiFetch("/console/ops/dead-letters");
+}
+
+export async function retryDeadLetter(eventId: string): Promise<unknown> {
+  return apiFetch(
+    `/console/ops/dead-letters/${encodeURIComponent(eventId)}/retry`,
+    { method: "POST" }
+  );
+}
+
+export async function listNotifications(
+  unreadOnly = false
+): Promise<MerchantNotification[]> {
+  return apiFetch<MerchantNotification[]>(
+    `/console/notifications${unreadOnly ? "?unread_only=true" : ""}`
+  );
+}
+
+export async function markNotificationRead(
+  notificationId: string
+): Promise<unknown> {
+  return apiFetch(
+    `/console/notifications/${encodeURIComponent(notificationId)}/read`,
+    { method: "POST" }
+  );
+}
+
+export async function getAnalyticsOverview(
+  days = 30
+): Promise<AnalyticsOverview> {
+  return apiFetch<AnalyticsOverview>(
+    `/console/analytics/overview?days=${days}`
+  );
+}
+
+export async function getAnalyticsTimeseries(
+  days = 30
+): Promise<AnalyticsDay[]> {
+  return apiFetch<AnalyticsDay[]>(
+    `/console/analytics/timeseries?days=${days}`
+  );
+}
+
+export async function listWebhookSubscriptions(): Promise<
+  WebhookSubscriptionView[]
+> {
+  return apiFetch<WebhookSubscriptionView[]>("/console/webhooks/subscriptions");
+}
+
+export async function createWebhookSubscription(
+  url: string,
+  events: string[]
+): Promise<WebhookSubscriptionView & { secret: string }> {
+  return apiFetch("/console/webhooks/subscriptions", {
+    method: "POST",
+    body: JSON.stringify({ url, events }),
+  });
+}
+
+export async function deleteWebhookSubscription(
+  subscriptionId: string
+): Promise<unknown> {
+  return apiFetch(
+    `/console/webhooks/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    { method: "DELETE" }
+  );
+}
+
+export interface WebhookDispatchView {
+  dispatch_id: string;
+  subscription_id: string;
+  event_id: string;
+  event_type: string;
+  status: string;
+  attempts: number;
+  last_status_code: number | null;
+  last_error: string | null;
+  created_at: string;
+}
+
+export async function listWebhookDispatches(
+  limit = 50
+): Promise<WebhookDispatchView[]> {
+  return apiFetch<WebhookDispatchView[]>(
+    `/console/webhooks/dispatches?limit=${limit}`
+  );
+}
+
+// --- Console: Customer Service Agent ---
+
+export interface CSResponse {
+  trace_id: string;
+  action: string;
+  response_message: string;
+  case_id: string | null;
+  order_status: string | null;
+  tool_calls: string[];
+  stage: string;
+  agent_id: string;
+  agent_version: string;
+  prompt_version: string;
+  guardrail_blocks: string[];
+}
+
+export async function consoleServiceRespond(body: {
+  message: string;
+  customer_id?: string | null;
+  order_id?: string | null;
+  return_id?: string | null;
+  action_hint?: string | null;
+  items?: Array<{ sku: string; quantity: number }>;
+  replacement_sku?: string | null;
+  replacement_quantity?: number;
+  amount_paise?: number | null;
+  reason?: string | null;
+}): Promise<CSResponse> {
+  return apiFetch<CSResponse>("/console/agent/service/respond", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+// --- Console: Evaluation ---
+
+export interface EvalSuiteView {
+  suite_id: string;
+  name: string;
+  version: string;
+  description: string;
+  cases: number;
+  latest_run: {
+    run_id: string;
+    status: string;
+    passed: number;
+    failed: number;
+    started_at: string;
+  } | null;
+}
+
+export interface EvalRunSummary {
+  run_id: string;
+  suite_id: string;
+  passed: number;
+  failed: number;
+  duration_ms: number;
+  cost_usd: number;
+}
+
+export interface EvalCaseResult {
+  result_id: string;
+  run_id: string;
+  case_id: string;
+  passed: boolean;
+  score_bps: number;
+  duration_ms: number;
+  error: string | null;
+  details: Record<string, unknown>;
+}
+
+export async function listEvalSuites(): Promise<EvalSuiteView[]> {
+  return apiFetch<EvalSuiteView[]>("/console/evals/suites");
+}
+
+export async function runEvalSuite(suiteId: string): Promise<EvalRunSummary> {
+  return apiFetch<EvalRunSummary>(
+    `/console/evals/suites/${encodeURIComponent(suiteId)}/run`,
+    { method: "POST" }
+  );
+}
+
+export async function getEvalRun(runId: string): Promise<{
+  run_id: string;
+  results: EvalCaseResult[];
+}> {
+  return apiFetch(`/console/evals/runs/${encodeURIComponent(runId)}`);
+}
+
+export interface DriftMetric {
+  metric: string;
+  baseline: number;
+  current: number;
+  delta_bps: number;
+  drifted: boolean;
+}
+
+export async function getEvalDrift(
+  days = 7,
+  baselineDays = 7
+): Promise<{
+  drifted: boolean;
+  baseline: Record<string, number>;
+  current: Record<string, number>;
+  metrics: DriftMetric[];
+}> {
+  return apiFetch(
+    `/console/evals/drift?days=${days}&baseline_days=${baselineDays}`
+  );
+}
+
+// --- Console: Connectors ---
+
+export interface ConnectorView {
+  connector_id: string;
+  kind: string;
+  provider: string;
+  base_url: string;
+  active: boolean;
+  status: string;
+  last_sync_at: string | null;
+}
+
+export async function listConnectors(): Promise<ConnectorView[]> {
+  return apiFetch<ConnectorView[]>("/console/connectors");
+}
+
+export async function registerConnector(body: {
+  connector_id: string;
+  provider?: string;
+  kind?: string;
+  base_url?: string;
+  products_path?: string;
+  field_map?: Record<string, string>;
+  timeout_seconds?: number;
+}): Promise<ConnectorView> {
+  return apiFetch<ConnectorView>("/console/connectors", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteConnector(connectorId: string): Promise<unknown> {
+  return apiFetch(
+    `/console/connectors/${encodeURIComponent(connectorId)}`,
+    { method: "DELETE" }
+  );
+}
+
+export async function connectorHealth(
+  connectorId: string
+): Promise<{ connector_id: string; ok: boolean; detail: string }> {
+  return apiFetch(
+    `/console/connectors/${encodeURIComponent(connectorId)}/health`
+  );
+}
+
+export async function syncConnector(
+  connectorId: string
+): Promise<Record<string, unknown>> {
+  return apiFetch(
+    `/console/connectors/${encodeURIComponent(connectorId)}/sync`,
+    { method: "POST" }
+  );
+}
+
+// --- Console: Billing + onboarding readiness ---
+
+export interface BillingView {
+  merchant_id: string;
+  plan: string;
+  window_days: number;
+  usage: { orders: number; agent_runs: number; ledger_events: number };
+  quotas: {
+    orders_per_month: number;
+    agent_runs_per_month: number;
+    events_per_month: number;
+  };
+  over_quota: boolean;
+}
+
+export async function getBilling(days = 30): Promise<BillingView> {
+  return apiFetch<BillingView>(`/console/billing?days=${days}`);
+}
+
+export interface ReadinessView {
+  merchant_id: string;
+  stage: string;
+  checks: Record<string, boolean>;
+  activation_ready: boolean;
+}
+
+export async function getOnboardingReadiness(): Promise<ReadinessView> {
+  return apiFetch<ReadinessView>("/console/onboarding/readiness");
+}
+
+// --- Console: Replay + metrics ---
+
+export interface ReplayView {
+  trace_id: string;
+  merchant_id: string;
+  order_id: string | null;
+  sections: Array<{
+    section: string;
+    events: Array<{
+      action: string;
+      actor: string;
+      summary: string | null;
+      policies: string[];
+      outcome: Record<string, unknown> | null;
+      at: string;
+    }>;
+  }>;
+  event_count: number;
+}
+
+export async function getTransactionReplay(
+  orderId: string
+): Promise<ReplayView> {
+  return apiFetch<ReplayView>(
+    `/console/transactions/${encodeURIComponent(orderId)}/replay`
+  );
+}
+
+export async function getAgentMetrics(
+  days = 7
+): Promise<Record<string, unknown>> {
+  return apiFetch(`/console/metrics/agents?days=${days}`);
+}
+
+export async function getCommerceMetrics(
+  days = 30
+): Promise<Record<string, unknown>> {
+  return apiFetch(`/console/metrics/commerce?days=${days}`);
+}
