@@ -1356,6 +1356,27 @@ a:active:not([aria-disabled="true"]) {
   }
 }
 
+/* --------------------------------------------------
+   PORTALED FLOATING SURFACES — opaque by construction.
+   Base UI portals mount at document.body, outside the `.dashboard-app`
+   scope where the shadcn --color-popover / --color-border aliases live,
+   so those tokens resolve transparent there. This unlayered rule wins
+   over layered utilities regardless of class order, using tokens that
+   are defined globally on :root for both themes.
+   -------------------------------------------------- */
+[data-slot="dropdown-menu-content"],
+[data-slot="dropdown-menu-sub-content"],
+[data-slot="popover-content"],
+[data-slot="select-content"],
+[data-slot="select-scroll-up-button"],
+[data-slot="select-scroll-down-button"],
+[data-slot="dialog-content"],
+[data-slot="sheet-content"] {
+  background-color: var(--c-panel);
+  color: var(--c-ink);
+  border-color: var(--c-hairline);
+}
+
 /* ==================================================
    SOLID SURFACE DESIGN SYSTEM (dashboard only)
    Material rule: chrome surfaces (sidebar, topbar,
