@@ -12,7 +12,6 @@ import { Package, ShieldAlert, ArrowRight } from "lucide-react";
 import { formatPaise } from "@/lib/formatters";
 import { getConsoleCatalogItem, ApiError, type Product } from "@/lib/api";
 import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -34,15 +33,20 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
 
 function Section({
   title,
+  description,
   children,
 }: {
   title: string;
+  description?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden">
       <div className="px-6 py-4 border-b border-black/[0.06]">
         <div className="text-[15px] font-semibold text-neutral-900">{title}</div>
+        {description && (
+          <p className="mt-1 text-[13px] leading-relaxed text-muted">{description}</p>
+        )}
       </div>
       {children}
     </div>
@@ -104,8 +108,15 @@ export default function ProductDetailPage() {
 
   if (loading) {
     return (
-      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-        <PageHeader title={sku || "Product"} subtitle="Product detail" />
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+        <div>
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Products
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            {sku || "Product"}
+          </h1>
+        </div>
         <TableSkeleton rows={8} />
       </div>
     );
@@ -113,7 +124,7 @@ export default function ProductDetailPage() {
 
   if (loadError) {
     return (
-      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
         <Breadcrumbs
           items={[{ label: "Products", href: "/dashboard/catalog" }, { label: sku }]}
         />
@@ -124,7 +135,7 @@ export default function ProductDetailPage() {
 
   if (notFound || !product) {
     return (
-      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
         <Breadcrumbs
           items={[{ label: "Products", href: "/dashboard/catalog" }, { label: sku }]}
         />
@@ -179,7 +190,10 @@ export default function ProductDetailPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-6">
-          <Section title="Product information">
+          <Section
+            title="Product information"
+            description="The record as buyers and the agent see it."
+          >
             <DetailRow label="Title" value={product.title} />
             <DetailRow label="SKU" value={product.sku} />
             <DetailRow label="Category" value={product.category} />
@@ -189,7 +203,10 @@ export default function ProductDetailPage() {
             />
           </Section>
 
-          <Section title="Inventory">
+          <Section
+            title="Inventory"
+            description="What is on the shelf right now."
+          >
             <DetailRow label="Available stock" value={`${product.stock} units`} />
             <DetailRow
               label="Status"
@@ -210,7 +227,10 @@ export default function ProductDetailPage() {
             )}
           </Section>
 
-          <Section title="Attributes">
+          <Section
+            title="Attributes"
+            description="Extra fields the agent reads when selling."
+          >
             {otherAttributes.length === 0 && !upsellSku ? (
               <div className="px-6 py-6 text-center text-[13px] text-neutral-400">
                 No extra attributes on this product.
@@ -238,7 +258,10 @@ export default function ProductDetailPage() {
         </div>
 
         <div className="space-y-6">
-          <Section title="Pricing">
+          <Section
+            title="Pricing"
+            description="List price, floor, and the room between them."
+          >
             <DetailRow label="Selling price" value={formatPaise(product.price_paise)} />
             <DetailRow label="Minimum price" value={formatPaise(product.floor_paise)} />
             <DetailRow label="Negotiation room" value={formatPaise(marginGap)} />
@@ -265,9 +288,11 @@ export default function ProductDetailPage() {
             </div>
           </Section>
 
-          <Section title="AI selling">
+          <Section
+            title="AI selling"
+            description="Whether the agent can sell this right now."
+          >
             <YesNo yes={available} hint="Available to AI Seller" />
-            <YesNo yes={available} hint="Shown in catalog search" />
             <YesNo yes={available && negotiationEnabled} hint="Open to negotiation" />
             <div className="px-6 py-4 text-[13px] text-neutral-500 leading-relaxed">
               {available

@@ -251,7 +251,7 @@ export default function TransactionDetailPage() {
 
   if (loading) {
     return (
-      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
         <div className="text-[13px] text-neutral-500">Loading order…</div>
         <TableSkeleton rows={8} />
       </div>
@@ -260,7 +260,7 @@ export default function TransactionDetailPage() {
 
   if (notFound) {
     return (
-      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
         <Breadcrumbs
           items={[{ label: "Orders", href: "/dashboard/transactions" }, { label: `#${id}` }]}
         />
@@ -274,7 +274,7 @@ export default function TransactionDetailPage() {
 
   if (loadError || !tx || !detail) {
     return (
-      <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
         <Breadcrumbs
           items={[{ label: "Orders", href: "/dashboard/transactions" }, { label: `#${id}` }]}
         />

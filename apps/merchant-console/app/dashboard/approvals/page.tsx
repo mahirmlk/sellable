@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { ShieldCheck, CheckCircle, XCircle, ArrowRight, Download } from "lucide-react";
+import { CheckCircle, XCircle, ArrowRight, Download } from "lucide-react";
 import { MoneyValue } from "@/components/dashboard/money-value";
 import { RefreshButton } from "@/components/dashboard/commerce-ui";
 import { formatTimestamp, formatPaise } from "@/lib/formatters";
@@ -18,7 +18,6 @@ import {
   type ConsoleApproval,
   type ConsoleTransaction,
 } from "@/lib/api";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -283,13 +282,13 @@ export default function ApprovalsPage() {
     const floor = firstSku && firstSku in floors ? floors[firstSku] : null;
     const budget = tx?.buyer_budget_paise ?? null;
     return (
-      <div key={approval.orderId} className="rounded-2xl bg-white border border-amber-200/60 shadow-card p-6 transition-all duration-200 hover:-translate-y-px hover:shadow-lift">
+      <div key={approval.orderId} className="rounded-[18px] bg-panel border border-hairline shadow-card p-6 transition-all duration-200 hover:-translate-y-px hover:shadow-lift">
         <div className="flex flex-col lg:flex-row lg:items-start gap-4">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <span className="text-[15px] font-semibold text-neutral-900 tabular-nums">{approval.orderId}</span>
+              <span className="text-[15px] font-semibold text-ink tabular-nums">{approval.orderId}</span>
               <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium bg-amber-50 text-amber-800">{approval.reason}</span>
-              <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${buyerType === "ai" ? "bg-blue-50 text-blue-700" : buyerType === "human" ? "bg-green-50 text-green-700" : "bg-neutral-100 text-neutral-600"}`}>
+              <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium bg-panel-3 border border-hairline text-ink-2">
                 {buyerType === "ai" ? "AI buyer" : buyerType === "human" ? "Human buyer" : "Unknown buyer"}
               </span>
               {high && (
@@ -341,7 +340,7 @@ export default function ApprovalsPage() {
             <button onClick={() => handleReject(approval)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-red-50 border border-red-200/60 text-[13px] font-medium text-red-700 hover:bg-red-100 transition-all cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]">
               <XCircle size={14} /> {busyOrders.has(approval.orderId) ? "Working…" : "Reject"}
             </button>
-            <button onClick={() => handleApprove(approval)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-green-600 text-[13px] font-semibold text-white shadow-sm hover:bg-green-600 transition-all cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]">
+            <button onClick={() => handleApprove(approval)} disabled={busyOrders.has(approval.orderId)} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-full bg-green-600 text-[13px] font-semibold text-white shadow-sm hover:bg-green-700 transition-all cursor-pointer disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]">
               <CheckCircle size={14} /> {busyOrders.has(approval.orderId) ? "Working…" : "Approve"}
             </button>
           </div>
@@ -351,23 +350,32 @@ export default function ApprovalsPage() {
   };
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title={approvals.length > 0 ? `${approvals.length} waiting for you` : "Approvals"}
-        subtitle="Orders waiting for your approval"
-        actions={
-          <>
-            <button
-              onClick={handleExport}
-              disabled={exported.length === 0}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
-            >
-              <Download size={14} /> Export
-            </button>
-            <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
-          </>
-        }
-      />
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Human review
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            {approvals.length > 0 ? `${approvals.length} waiting for you` : "Approvals"}
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            {thresholdPaise !== null
+              ? `Orders at or above ${formatPaise(thresholdPaise)} stop here. Approving releases consent and payment; rejecting closes the order for good.`
+              : "Orders the policy held back. Approving releases consent and payment; rejecting closes the order for good."}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={exported.length === 0}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-white border border-black/10 shadow-sm text-[13px] font-medium text-neutral-700 hover:text-neutral-900 hover:shadow transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.98]"
+          >
+            <Download size={14} /> Export
+          </button>
+          <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
+        </div>
+      </div>
 
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
       {partialError && <PartialBanner message={partialError} />}
@@ -400,11 +408,18 @@ export default function ApprovalsPage() {
       ) : tab === "pending" ? (
         pending.length === 0 ? (
           <EmptyState
-            title={approvals.length === 0 ? "No approvals pending." : "No orders match this filter."}
+            title={approvals.length === 0 ? "No approvals pending" : "No orders match this filter"}
             message={approvals.length === 0
-              ? "Transactions below your configured approval threshold can proceed automatically."
-              : "Try a different filter — the pending queue itself is intact."}
-            action={<ShieldCheck size={28} className="text-faint" />}
+              ? "Orders below your approval threshold go through on their own. Anything held will land here."
+              : "Try a different filter. The pending queue itself is intact."}
+            action={
+              <Link
+                href="/dashboard/selling-rules"
+                className="inline-flex items-center h-9 px-5 rounded-full bg-panel border border-hairline shadow-sm text-[13px] font-medium text-ink-2 hover:text-ink hover:shadow transition-all"
+              >
+                Review the threshold
+              </Link>
+            }
           />
         ) : (
           <div className="space-y-4 stagger-child">{pending.map(approvalCard)}</div>
@@ -412,13 +427,13 @@ export default function ApprovalsPage() {
       ) : reviewed.length === 0 ? (
         <EmptyState
           title="Nothing reviewed yet"
-          message="Orders you approve or reject this session appear here. The backend keeps no review history — this list resets on reload."
+          message="Orders you approve or reject stay listed here until you reload the page."
         />
       ) : (
         <div className="rounded-[18px] bg-panel border border-hairline shadow-card overflow-hidden">
           <div className="px-6 py-4 border-b border-hairline bg-panel-2">
-            <div className="font-display text-[21px] leading-none tracking-[-0.005em] text-ink">Recently reviewed</div>
-            <div className="text-[12px] text-neutral-400 mt-0.5">The backend keeps no review history — this list resets on reload</div>
+            <div className="text-[15px] font-semibold tracking-[-0.005em] text-ink">Recently reviewed</div>
+            <div className="text-[13px] text-muted mt-1">Decisions from this session. Reloading clears the list, the orders keep their state.</div>
           </div>
           {reviewed.map((a, i) => (
             <div key={a.orderId} className={`px-6 py-3.5 flex items-center justify-between gap-3 hover:bg-black/[0.02] ${i < reviewed.length - 1 ? "border-b border-black/[0.05]" : ""}`}>

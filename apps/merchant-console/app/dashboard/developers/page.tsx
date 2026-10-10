@@ -22,7 +22,6 @@ import {
   type AgentApiKeyView,
   type AgentsStatusResponse,
 } from "@/lib/api";
-import { PageHeader } from "@/components/dashboard/page-header";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -194,14 +193,23 @@ export default function DevelopersPage() {
   ];
 
   return (
-    <div className="px-6 lg:px-8 py-6 space-y-8 max-w-[1200px]">
-      <PageHeader
-        title="Developers"
-        subtitle="API, webhooks, keys and discovery"
-        actions={
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Integrate
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Developers
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
+            Keys, discovery documents, and endpoints for connecting AI buyers. The backend stores hashes only, so a secret is shown exactly once.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
-        }
-      />
+        </div>
+      </div>
 
       {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
       {partialError && <PartialBanner message={partialError} />}
@@ -213,7 +221,11 @@ export default function DevelopersPage() {
       ) : (
         <>
           {/* Agent API */}
-          <Section title="Agent API" hint="Existing backend contracts only">
+          <Section
+            title="Agent API"
+            hint="Live backend contracts"
+            description="How external AI buyers authenticate and transact."
+          >
             <div className="text-[14px] text-neutral-600 leading-relaxed mb-3">
               External AI buyers authenticate with an agent key (<code className="rounded-[6px] bg-neutral-100 border border-black/[0.06] px-1.5 py-0.5 text-[12px] text-neutral-700">X-Agent-Key</code>) on
               discovery and transaction endpoints. Transactional requests use timestamp + nonce + body-bound HMAC signatures with replay protection.
@@ -224,7 +236,11 @@ export default function DevelopersPage() {
           </Section>
 
           {/* Webhooks */}
-          <Section title="Webhooks" hint="From live payment rail status">
+          <Section
+            title="Webhooks"
+            hint="Live rail status"
+            description="Which event settles money, and when it last verified."
+          >
             {status ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
@@ -251,7 +267,11 @@ export default function DevelopersPage() {
           </Section>
 
           {/* API keys — primary surface */}
-          <Section title="API keys" hint="Primary management surface · plaintext shown once">
+          <Section
+            title="API keys"
+            hint="Plaintext shown once"
+            description="Issue and rotate credentials for external buyers. Revoking takes effect immediately."
+          >
             {keyActionError && (
               <div className="mb-4">
                 <ErrorBanner message={keyActionError} />
@@ -363,7 +383,11 @@ export default function DevelopersPage() {
           </Section>
 
           {/* Agent discovery */}
-          <Section title="Agent discovery" hint="Live manifest">
+          <Section
+            title="Agent discovery"
+            hint="Live manifest"
+            description="The machine-readable storefront AI buyers start from."
+          >
             {manifest ? (
               <div className="space-y-2">
                 {[{ label: "Manifest", path: "/.well-known/agents.json" }, ...Object.entries(discovery).map(([label, path]) => ({ label, path }))].map((row) => {
@@ -395,6 +419,11 @@ export default function DevelopersPage() {
 
           {/* Endpoints */}
           {manifest && endpointRows.length > 0 && (
+            <Section
+              title="Endpoints"
+              hint={`${endpointRows.length} routes`}
+              description="Transaction and discovery routes served by the backend right now."
+            >
             <DataTable>
               <table>
                 <thead>
@@ -410,7 +439,7 @@ export default function DevelopersPage() {
                       <td data-label="Endpoint" className="text-[13px] font-medium text-neutral-900">{row.name}</td>
                       <td data-label="Path" className="text-[13px] text-neutral-600 break-all tabular-nums">{row.path}</td>
                       <td data-label="Kind">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${row.kind === "TRANSACTION" ? "bg-blue-50 text-blue-700" : "bg-neutral-100 text-neutral-600"}`}>
+                        <span className="inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium bg-panel-3 border border-hairline text-ink-2">
                           {row.kind === "TRANSACTION" ? "Transaction" : "Discovery"}
                         </span>
                       </td>
@@ -419,6 +448,7 @@ export default function DevelopersPage() {
                 </tbody>
               </table>
             </DataTable>
+            </Section>
           )}
         </>
       )}

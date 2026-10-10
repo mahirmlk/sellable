@@ -18,22 +18,30 @@ export { PartialBanner } from "./commerce-ui";
 export function Section({
   title,
   hint,
+  description,
   children,
 }: {
   title: string;
   hint?: string;
+  /** One-line finishing under the title (muted, 13px). */
+  description?: string;
   children: ReactNode;
 }) {
   return (
     <section className="rounded-[18px] bg-card text-card-foreground border border-hairline shadow-card overflow-hidden">
-      <CardHeader className="flex items-center justify-between gap-3 rounded-t-[18px] border-b border-hairline bg-panel-2 px-6 py-4">
-        <CardTitle className="font-display text-[21px] leading-none tracking-[-0.005em] text-ink">
-          {title}
-        </CardTitle>
-        {hint && (
-          <div className="text-[13px] text-muted text-right">
-            {hint}
-          </div>
+      <CardHeader className="rounded-t-[18px] border-b border-hairline bg-panel-2 px-6 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-[15px] font-semibold tracking-[-0.005em] text-ink">
+            {title}
+          </CardTitle>
+          {hint && (
+            <div className="text-[13px] text-muted text-right shrink-0">
+              {hint}
+            </div>
+          )}
+        </div>
+        {description && (
+          <p className="mt-1 text-[13px] leading-relaxed text-muted">{description}</p>
         )}
       </CardHeader>
       <CardContent className="px-6 py-5">{children}</CardContent>

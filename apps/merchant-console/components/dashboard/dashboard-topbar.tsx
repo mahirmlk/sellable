@@ -72,7 +72,12 @@ function AccountMenu({ store, fallback }: { store: StoreInfo | null; fallback: s
         align="start"
         sideOffset={12}
         collisionPadding={12}
-        className="w-[280px] bg-popover p-2 shadow-pop border border-hairline"
+        // Solid surface: Base UI portals mount at document.body, outside the
+        // `.dashboard-app` scope where the shadcn --color-popover/--color-border
+        // aliases live, so the stock translucent tokens resolve to transparent
+        // here. Globally-scoped panel/ink/hairline tokens keep this opaque in
+        // both themes (see SOLID SURFACE rule in globals.css).
+        className="w-[280px] bg-panel text-ink border border-hairline p-2 shadow-xl"
       >
         <div className="px-2.5 pt-2 pb-3">
           <div className="flex items-center gap-2.5">
@@ -86,9 +91,11 @@ function AccountMenu({ store, fallback }: { store: StoreInfo | null; fallback: s
               <div className="text-[14px] font-semibold text-ink truncate">
                 {store?.name ?? fallback}
               </div>
-              <div className="font-mono text-[11px] text-faint truncate">
-                {store?.merchant_id ?? ""}
-              </div>
+              {store?.merchant_id ? (
+                <div className="mt-0.5 text-[11px] text-faint truncate">
+                  Merchant ID · <span className="font-mono">{store.merchant_id}</span>
+                </div>
+              ) : null}
             </div>
           </div>
           {store?.role ? (
@@ -97,9 +104,13 @@ function AccountMenu({ store, fallback }: { store: StoreInfo | null; fallback: s
             </span>
           ) : null}
         </div>
-        <DropdownMenuSeparator />
+        <DropdownMenuSeparator className="bg-ink/10" />
         {rows.map(({ label, href, Icon }) => (
-          <DropdownMenuItem key={href} onClick={() => router.push(href)}>
+          <DropdownMenuItem
+            key={href}
+            onClick={() => router.push(href)}
+            className="text-ink"
+          >
             <Icon size={15} className="text-faint" aria-hidden />
             {label}
           </DropdownMenuItem>
