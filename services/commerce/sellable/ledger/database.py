@@ -296,6 +296,752 @@ class CatalogProductRecord(Base):
     attributes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class DelegationRecord(Base):
+    """Bounded customer→agent delegation grants (target §14.2).
+
+    The authorization service resolves these into explicit decisions; a
+    revoked or expired grant invalidates future actions. Scope lists and
+    category lists are stored as JSON arrays of the canonical scope names.
+    """
+
+    __tablename__ = "delegations"
+
+    delegation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    principal_customer_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    subject_agent_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    operation_scopes_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    category_scopes_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    amount_limit_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="INR")
+    frequency_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approval_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="AUTO")
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentIdentityRecord(Base):
+    """First-class agent registry rows (target §13)."""
+
+    __tablename__ = "agents"
+
+    agent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    issuer: Mapped[str] = mapped_column(String(256), nullable=False)
+    client_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    credential_status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    credential_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    capability_profile: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentReputationRecord(Base):
+    """Behavioral reputation counters per agent (target §13.3)."""
+
+    __tablename__ = "agent_reputations"
+
+    agent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    successful_transactions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_transactions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    policy_denials: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fraud_flags: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    abuse_flags: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    authorization_failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    average_order_value_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    support_incidents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    merchant_acceptance_rate_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    customer_complaints: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reputation_score_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    score_confidence_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MerchantOnboardingRecord(Base):
+    """Per-merchant onboarding pointer (target §10). One row per merchant;
+    the row tracks the lifecycle stage, never commerce state."""
+
+    __tablename__ = "merchant_onboarding"
+
+    merchant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED")
+    completed_checks_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OutboxEventRecord(Base):
+    """Transactional-outbox rows for the future Event Bus (target §27).
+
+    Domain services publish envelopes here; Phase 6 consumers will claim
+    unpublished rows. The ledger stays the durable evidence layer — this
+    table is a delivery queue, never queried as audit truth. ``published_at``
+    marks handoff to the bus; publishers write best-effort so a queue
+    failure can never break commerce (shared-transaction atomicity arrives
+    with the Phase 6 bus implementation).
+    """
+
+    __tablename__ = "outbox_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    event_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    aggregate_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    actor_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    data_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Bus delivery state (§27 retry policy + dead-letter queue). Attempts
+    # count failed consumer deliveries; dead_lettered rows stop retrying and
+    # surface in merchant operations for manual replay.
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    dead_lettered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class CartRecord(Base):
+    """Persistent cart header (target §18.2). Money truth lives in the
+    item rows + server-derived totals; promotion/tax/shipping snapshot
+    columns are reserved for the Phase 2b pricing services."""
+
+    __tablename__ = "carts"
+
+    cart_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    agent_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    subtotal_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    discount_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tax_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    shipping_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    grand_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CartItemRecord(Base):
+    """One cart line: SKU + quantity + server-snapshotted unit price."""
+
+    __tablename__ = "cart_items"
+
+    cart_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sku: Mapped[str] = mapped_column(String(64), primary_key=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class PromotionCampaignRecord(Base):
+    """Persisted promotion definitions (target §20.3, §38
+    promotion_campaigns). Evaluation reads ACTIVE rows only."""
+
+    __tablename__ = "promotion_campaigns"
+
+    promotion_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    title: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    coupon_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    percent_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    buy_sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    buy_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    get_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bundle_skus_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    bundle_amount_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    volume_sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    volume_min_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_cart_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_discount_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stacking: Mapped[str] = mapped_column(String(32), nullable=False, default="STACKABLE")
+    budget_limit_paise: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    redemption_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    product_skus_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    categories_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    customer_ids_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    channels_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    free_shipping: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PromotionRedemptionRecord(Base):
+    """One counted promotion application (§38 promotion_redemptions, §20.4
+    budget/cap engine input). Written when a checkout completes."""
+
+    __tablename__ = "promotion_redemptions"
+
+    redemption_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    promotion_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    checkout_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    discount_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RiskDecisionRecord(Base):
+    """Persisted risk decisions (target §24.3, §38 risk_decisions)."""
+
+    __tablename__ = "risk_decisions"
+
+    decision_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    level: Mapped[str] = mapped_column(String(32), nullable=False)
+    score_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reasons_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    subject_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    subject_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class FraudEventRecord(Base):
+    """Abuse/fraud signals (target §24.4, §38 fraud_events)."""
+
+    __tablename__ = "fraud_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentTrustEventRecord(Base):
+    """Append-only agent trust history (§38 agent_trust_events)."""
+
+    __tablename__ = "agent_trust_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SupportCaseRecord(Base):
+    """Customer-service cases (target §26.1, §38 support_cases)."""
+
+    __tablename__ = "support_cases"
+
+    case_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    checkout_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="other")
+    priority: Mapped[str] = mapped_column(String(32), nullable=False, default="MEDIUM")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="OPEN")
+    summary: Mapped[str] = mapped_column(String(2000), nullable=False)
+    context_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class QuoteRecord(Base):
+    """Bounded commercial-offer snapshots (target §18.3, §38 quotes)."""
+
+    __tablename__ = "quotes"
+
+    quote_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    cart_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    base_subtotal_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    negotiated_subtotal_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    applied_promotion_ids_json: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    promotion_discount_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="OPEN")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class QuoteItemRecord(Base):
+    """Quote lines: base snapshot + negotiated offer per SKU."""
+
+    __tablename__ = "quote_items"
+
+    quote_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sku: Mapped[str] = mapped_column(String(64), primary_key=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_unit_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    negotiated_unit_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class CheckoutRecord(Base):
+    """First-class checkout sessions (target §18.4, §38 checkouts). Money
+    truth still settles through orders; the checkout is the validated,
+    priced, authorized preparation state."""
+
+    __tablename__ = "checkouts"
+
+    checkout_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cart_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    cart_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    quote_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    delegation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    subtotal_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    discount_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tax_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    shipping_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    grand_total_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    applied_promotion_ids_json: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    promotion_discounts_json: Mapped[dict[str, int]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    free_shipping_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED")
+    risk_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    authorization_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    price_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CheckoutLineRecord(Base):
+    """Checkout price snapshot lines (target §38 checkout line state)."""
+
+    __tablename__ = "checkout_lines"
+
+    checkout_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sku: Mapped[str] = mapped_column(String(64), primary_key=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class CheckoutEventRecord(Base):
+    """Append-only checkout transition log (§38 checkout_events)."""
+
+    __tablename__ = "checkout_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    checkout_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(128), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    detail: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TaxRateRecord(Base):
+    """Merchant GST rates per category (target §22, §38 price_rules
+    family). Missing categories fall back to the standard 18% split."""
+
+    __tablename__ = "tax_rates"
+
+    merchant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    category: Mapped[str] = mapped_column(String(64), primary_key=True)
+    cgst_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    sgst_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    igst_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ShippingMethodRecord(Base):
+    """Merchant shipping methods (target §23.1, §38 shipping_methods)."""
+
+    __tablename__ = "shipping_methods"
+
+    merchant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    method: Mapped[str] = mapped_column(String(32), primary_key=True)
+    price_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    eta_min_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    eta_max_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pincode_prefixes_json: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class FulfillmentRecord(Base):
+    """Basic fulfillment rows (target §23.2, §38 fulfillments)."""
+
+    __tablename__ = "fulfillments"
+
+    fulfillment_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(32), nullable=False)
+    tracking_reference: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    carrier: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="FULFILLMENT_PENDING")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class TrackingEventRecord(Base):
+    """Carrier/shipping status ingestion log (§38 tracking_events)."""
+
+    __tablename__ = "tracking_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    fulfillment_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    location: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ReturnRecord(Base):
+    """Post-purchase return cases (target §26, §38 returns)."""
+
+    __tablename__ = "returns"
+
+    return_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    items_json: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="REQUESTED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExchangeRecord(Base):
+    """Replacement-shipment asks linked to a return (§38 exchanges)."""
+
+    __tablename__ = "exchanges"
+
+    exchange_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    return_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    replacement_sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    replacement_quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="REQUESTED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class RefundRequestRecord(Base):
+    """Merchant-gated refund asks (§38 refund_requests)."""
+
+    __tablename__ = "refund_requests"
+
+    refund_request_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    return_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentRunRecord(Base):
+    """Agent execution runs (target §29.1 run level, §38 agent_runs)."""
+
+    __tablename__ = "agent_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    agent_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    policy_bundle_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    tool_registry_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    model_version: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING")
+    outcome: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AgentModelCallRecord(Base):
+    """Model-level telemetry (target §29.1, §38 model_calls)."""
+
+    __tablename__ = "model_calls"
+
+    call_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_cost_usd: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    finish_reason: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentToolCallRecord(Base):
+    """Tool-level telemetry (target §29.1, §38 tool_calls)."""
+
+    __tablename__ = "tool_calls"
+
+    tool_call_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    tool_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    tool_version: Mapped[str] = mapped_column(String(32), nullable=False, default="1")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="OK")
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    policy_decision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    risk_decision_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    authorization_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ProtocolSessionRecord(Base):
+    """Negotiated capability sessions (target §15.3, §38 agent_sessions
+    family). One row per agent × merchant × protocol pairing."""
+
+    __tablename__ = "protocol_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    protocol: Mapped[str] = mapped_column(String(16), nullable=False, default="rest")
+    protocol_version: Mapped[str] = mapped_column(String(16), nullable=False, default="1")
+    active_capabilities_json: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    auth_context_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    delegation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IdentityLinkRecord(Base):
+    """Customer identity links (target §12, §38 customer_identities family).
+    Only the link-code hash is stored; the code itself is shown once."""
+
+    __tablename__ = "identity_links"
+
+    link_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    customer_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    protocol: Mapped[str] = mapped_column(String(16), nullable=False, default="rest")
+    scopes_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    link_code_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AnalyticsEventRecord(Base):
+    """Normalized analytical facts (target §34, §38 analytics_events)."""
+
+    __tablename__ = "analytics_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    aggregate_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    trace_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    amount_paise: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    data_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class NotificationRecord(Base):
+    """Merchant notifications (target §35, §38 notifications). Written by
+    the notification consumer, read by the console feed."""
+
+    __tablename__ = "notifications"
+
+    notification_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False, default="inapp")
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(280), nullable=False)
+    body: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    urgency: Mapped[str] = mapped_column(String(32), nullable=False, default="NORMAL")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WebhookSubscriptionRecord(Base):
+    """Outbound webhook subscriptions (target §36.2). Secrets are stored
+    in clear (needed for signing) behind the deny-by-default RLS posture;
+    per-merchant carrier secrets arrive in Phase 8."""
+
+    __tablename__ = "webhook_subscriptions"
+
+    subscription_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    events_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    secret: Mapped[str] = mapped_column(String(128), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WebhookDispatchRecord(Base):
+    """Outbound delivery log: one row per (subscription, event) with
+    attempt accounting for operations triage."""
+
+    __tablename__ = "webhook_dispatches"
+
+    dispatch_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    subscription_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EvaluationSuiteRecord(Base):
+    """Versioned evaluation suites (target §30.2, §38 evaluation_suites)."""
+
+    __tablename__ = "evaluation_suites"
+
+    suite_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    version: Mapped[str] = mapped_column(String(32), nullable=False, default="v1")
+    description: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EvaluationCaseRecord(Base):
+    """Versioned scenario cases (target §30.2, §38 evaluation_cases).
+    Inputs and expectations are inline JSON so datasets are self-contained
+    and replayable without code changes."""
+
+    __tablename__ = "evaluation_cases"
+
+    case_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    suite_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="P1")
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    params_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    expects_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EvaluationRunRecord(Base):
+    """Suite executions (target §30, §38 evaluation_runs)."""
+
+    __tablename__ = "evaluation_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    suite_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    agent_version: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING")
+    passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EvaluationResultRecord(Base):
+    """Per-case outcomes (target §30, §38 evaluation_results)."""
+
+    __tablename__ = "evaluation_results"
+
+    result_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    case_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    score_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SandboxRunRecord(Base):
+    """Sandbox workflow runs (target §31.2): stage-gated agent onboarding
+    from registration through conformance to production approval."""
+
+    __tablename__ = "sandbox_runs"
+
+    sandbox_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="REGISTERED")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MerchantConnectorRecord(Base):
+    """Merchant source-system connectors (target §38 merchant_connectors).
+    Config holds non-secret mapping only; secrets live in env/secret
+    manager and are referenced by name."""
+
+    __tablename__ = "merchant_connectors"
+
+    connector_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="commerce")
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="custom_rest")
+    base_url: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    products_path: Mapped[str] = mapped_column(String(512), nullable=False, default="/products")
+    field_map_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    headers_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="NEW")
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 def make_engine(config: Settings = settings):
     url = config.database_url
     if ":memory:" not in url:
@@ -393,6 +1139,30 @@ def _migrate_sqlite(engine) -> None:
                 )
             except OperationalError as error:
                 log.warning("Skipping active-session unique index: %s", error)
+        if "checkouts" in tables:
+            checkout_cols = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(checkouts)"))
+            }
+            if "promotion_discounts_json" not in checkout_cols:
+                connection.execute(text("ALTER TABLE checkouts ADD COLUMN promotion_discounts_json JSON NOT NULL DEFAULT '{}'"))
+            if "free_shipping_applied" not in checkout_cols:
+                connection.execute(
+                    text("ALTER TABLE checkouts ADD COLUMN free_shipping_applied BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+        if "outbox_events" in tables:
+            outbox_cols = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(outbox_events)"))
+            }
+            if "attempts" not in outbox_cols:
+                connection.execute(
+                    text("ALTER TABLE outbox_events ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
+                )
+            if "last_error" not in outbox_cols:
+                connection.execute(text("ALTER TABLE outbox_events ADD COLUMN last_error VARCHAR(500)"))
+            if "dead_lettered" not in outbox_cols:
+                connection.execute(
+                    text("ALTER TABLE outbox_events ADD COLUMN dead_lettered BOOLEAN NOT NULL DEFAULT FALSE")
+                )
 
 
 def _migrate(engine) -> None:
@@ -424,6 +1194,40 @@ def _migrate(engine) -> None:
             if "archived" not in session_cols:
                 connection.execute(
                     text("ALTER TABLE checkout_sessions ADD COLUMN archived BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+        checkouts_exists = connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'checkouts')")
+        ).scalar()
+        if checkouts_exists:
+            checkout_cols = {
+                row[0]
+                for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'checkouts'"))
+            }
+            if "promotion_discounts_json" not in checkout_cols:
+                connection.execute(
+                    text("ALTER TABLE checkouts ADD COLUMN promotion_discounts_json JSONB NOT NULL DEFAULT '{}'")
+                )
+            if "free_shipping_applied" not in checkout_cols:
+                connection.execute(
+                    text("ALTER TABLE checkouts ADD COLUMN free_shipping_applied BOOLEAN NOT NULL DEFAULT FALSE")
+                )
+        outbox_exists = connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'outbox_events')")
+        ).scalar()
+        if outbox_exists:
+            outbox_cols = {
+                row[0]
+                for row in connection.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'outbox_events'"))
+            }
+            if "attempts" not in outbox_cols:
+                connection.execute(
+                    text("ALTER TABLE outbox_events ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
+                )
+            if "last_error" not in outbox_cols:
+                connection.execute(text("ALTER TABLE outbox_events ADD COLUMN last_error VARCHAR(500)"))
+            if "dead_lettered" not in outbox_cols:
+                connection.execute(
+                    text("ALTER TABLE outbox_events ADD COLUMN dead_lettered BOOLEAN NOT NULL DEFAULT FALSE")
                 )
         if not exists:
             return
