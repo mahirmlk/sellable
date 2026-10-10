@@ -5,6 +5,15 @@ Base URLs:
 - Production: `https://api.sellable.shop`
 - Local development: `http://localhost:8000`
 
+> **Platform revamp note:** this reference documents the original
+> agent/console surfaces in depth. The newer platform surfaces are
+> documented where they live: canonical commerce + protocols in
+> `docs/AGENT_INTEGRATION.md`, connectors/carriers/providers in
+> `docs/CONNECTORS.md`, and the endpoint table in `README.md#api-reference`.
+> Every route below is additionally served under `/v1/*` identically
+> (prefix-rewriting middleware, §42) — e.g. `/v1/commerce/search` —
+> and every response carries an `X-Trace-Id` header.
+
 ## Authentication
 
 SELLABLE keeps two authentication surfaces separate (`WORKFLOW.md` §55):

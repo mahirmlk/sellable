@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Revamp (target architecture SELLABLE_ARCHITECTURE.md, Phases 0–8)
+- Foundation: agent identity/reputation, delegation + authorization service (`ALLOW/DENY/REQUIRE_CUSTOMER/REQUIRE_HUMAN`), event envelope, merchant onboarding lifecycle
+- Commerce: persistent versioned carts, deterministic pricing, promotion engine (10 primitives, eligibility/stacking/budgets), bounded quotes/negotiation, checkout FSM with hash-bound authorization, GST tax, shipping + basic fulfillment, returns/exchanges/refund asks
+- Trust: risk/fraud engines with tiers and signals, trust recording, checkout risk gating, unified policy-on-grand, gateway delegation enforcement, support cases + escalation payloads
+- Agents: staged Seller Agent (recommend/promote/checkout-assist), new Customer Service Agent, guardrail middleware, version registry, model-gateway telemetry, run/model/tool observability
+- Protocols: canonical `/commerce/*` API, MCP/A2A/UCP adapters, capability negotiation + sessions, customer identity linking
+- Operations: outbox event bus with idempotent consumers/retries/DLQ, notifications + signed webhooks, carrier inbound, analytics, ops console + Operations page, trace correlation
+- Evaluation: 5 versioned suites (35 cases incl. 12 adversarial), release gates, drift monitors, stage-gated sandbox with simulated payments
+- Ecosystem: connector framework (custom REST live), carrier adapters, Stripe test-mode rail behind the provider protocol, usage-metered billing, fail-closed admin surface
+- Sweep: `/v1/*` version aliases on every route, delegation frequency/category enforcement, normalized payment receipts, bot-abuse detection, PII redaction on case/return paths, cart/quote/checkout + profile/permissions/read CS tools, transaction replay endpoint, agent/commerce metric rollups, readiness endpoint, currency-mismatch + sweep tests
+- Console: Support chat, Evaluations, Connectors pages; Operations gains deliveries/billing/readiness; onboarding readiness + replay/metrics API coverage
+- `ARCHITECTURE.md` retired to a pointer; `docs/AGENT_INTEGRATION.md` and `docs/CONNECTORS.md` added
+
 ### Added
 - LLM provider abstraction (`agents/llm/`) — `get_llm()` factory with openai, openrouter, anthropic, google, and mock adapters
 - Buyer agent state/policies/prompts/graph modules (`agents/buyer/{state,policies,prompts,graph}.py`) with explicit financial guardrails

@@ -59,15 +59,17 @@ The important part is what stays outside the LLM: pricing rules, spend limits, c
 
 ## Features
 
-- **Commerce Core** -- Catalog, pricing, quotes, orders, consent, refunds -- all deterministic
-- **Agent Gateway** -- Machine-facing discovery (`/.well-known/agents.json`) and transactional API with HMAC signed-key auth
-- **Seller Agent** -- LangGraph state machine: search -> quote -> upsell -> respond, bounded by policy
-- **Buyer Agent** -- Reference implementation: discover -> research -> request_quote -> evaluate
-- **Policy Engine** -- Pure, LLM-independent evaluator: budget, floor price, categories, stock, negotiation rounds, HITL threshold
-- **XAI Ledger** -- Append-only audit trail with reasoning summaries for every material action
-- **Merchant Console** -- Next.js dashboard: activity feed, approval queue, catalog management, growth insights, and agent API key management for external AI buyers
-- **Payment Integration** -- Razorpay test-mode with webhook reconciliation and refund support
-- **Evaluation Framework** -- 7 deterministic scenarios covering valid purchase, denial, HITL, payment failure, idempotency
+- **Commerce Core** -- Persistent carts, quotes, deterministic pricing/promotions, checkout FSM, orders, GST tax, shipping, returns -- all deterministic
+- **Agent Gateway + Protocols** -- Machine-facing discovery (`/.well-known/ucp`, `agents.json`, `llms.txt`, `catalog.ai.json`) and one canonical `/commerce/*` API over REST/MCP/A2A/UCP with HMAC signed-key auth, capability negotiation, and delegation
+- **Seller Agent** -- Staged LangGraph machine (search -> recommend -> quote -> promote -> checkout-assist), bounded by policy, guardrailed, versioned, observed
+- **Customer Service Agent** -- Authenticated support: order help, shipping, returns, exchanges, bounded refund asks, human escalation
+- **Buyer Agent** -- Reference external-client implementation (deprecated in-core; external agents are gateway clients)
+- **Policy / Risk / Trust** -- Independent deterministic layers: merchant policy, risk/fraud decisions, agent/customer/merchant trust tiers
+- **Event Bus + Ledger** -- Async fan-out (analytics, notifications, fulfillment, trust) with retries/DLQ; append-only audit trail for every material action
+- **Merchant Console** -- Next.js dashboard: activity, approvals, catalog, growth, operations (bus/notifications/analytics/webhooks), developers, settings
+- **Payments** -- Provider protocol: Razorpay + Stripe (test modes) with webhook reconciliation and refund support
+- **Evaluation + Sandbox** -- 5 versioned suites (35 cases incl. 12 adversarial), release gates, drift monitors, stage-gated sandbox with simulated money
+- **Connectors** -- Source-system adapters (custom REST live; Shopify/Woo presets documented), carrier adapters, Fail-closed admin surface, usage-metered billing
 
 ---
 
@@ -177,8 +179,13 @@ open http://localhost:3000
 | Endpoint | Method | Description |
 |---|---|---|
 | `/.well-known/agents.json` | GET | Agent manifest for AI buyer discovery |
+| `/.well-known/ucp` | GET | Full merchant declaration (identity, capabilities, protocols, auth, payments) |
+| `/agent/profile` | GET | Platform agents and versions |
+| `/agent/capabilities` | GET | Negotiable capability profile |
 | `/llms.txt` | GET | Machine-readable merchant description |
 | `/catalog.ai.json` | GET | Full product catalog for agents |
+| `/a2a/card` | GET | A2A actor card (seller + service) |
+| `/mcp/tools` | GET | MCP-compatible tool list (agent key) |
 
 ### Agent APIs
 
@@ -194,14 +201,50 @@ open http://localhost:3000
 | `/agent/orders.status` | POST | Query authoritative order state |
 | `/agent/refunds.create` | POST | Issue a refund for a paid order |
 | `/agent/buyer/run` | POST | Run the reference buyer agent end-to-end |
+| `/agent/service/respond` | POST | Customer Service Agent (order help, shipping, returns, refunds) |
+
+### Canonical Commerce (`/commerce/*`, all protocols)
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/commerce/search` | POST | Service-backed catalog search |
+| `/commerce/catalog/lookup` | POST | Product by SKU |
+| `/commerce/recommendations` | POST | Deterministic recommendations |
+| `/commerce/cart` | POST | Open a persistent, versioned cart |
+| `/commerce/cart/items` | POST | Add/set/remove a line (`op`, optimistic concurrency) |
+| `/commerce/quotes` | POST | Snapshot a bounded offer from a cart |
+| `/commerce/quotes/negotiate` | POST | Propose within floor/round bounds |
+| `/commerce/promotions/evaluate` | POST | Eligibility + stacking over cart/checkout |
+| `/commerce/checkout` | POST | Lock cart → checkout session |
+| `/commerce/checkout/authorize` | POST | Validate → price → risk → authorize |
+| `/commerce/orders` | POST | Order from an authorized checkout (idempotent) |
+| `/commerce/orders/{id}` | GET | Authoritative order state |
+| `/commerce/shipping/quote` | POST | Serviceable options for a pincode |
+| `/commerce/returns` | POST | Return case on a settled order |
+| `/commerce/refunds/requests` | POST | Merchant-gated refund ask |
+| `/commerce/support/cases` | POST | Case-managed support |
+| `/commerce/sessions/negotiate` | POST | Capability handshake → session |
+| `/commerce/sessions/{id}` | GET | Negotiated session view |
+| `/commerce/identity/link` | POST | Open a customer identity link (+ one-time code) |
+| `/commerce/identity/link/approve` | POST | Approve by code or merchant approval |
+| `/commerce/identity/me` | GET | Resolved linked context |
+| `/mcp/call` | POST | Invoke one MCP tool (`tool`, `arguments`) |
+| `/a2a/tasks` | POST | Route a task to an agent actor (`actor`, `input`) |
+| `/ucp/negotiate` | POST | UCP capability handshake |
+
+All mutating canonical routes accept `X-Session-Id` (negotiated
+capabilities) and `X-Delegation-Id` (bounded customer delegation);
+`X-Protocol` selects rest/mcp/a2a/ucp attribution.
 
 ### Payments
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/orders/{id}/payment` | POST | Initiate Razorpay payment |
+| `/orders/{id}/payment` | POST | Initiate provider payment (`PAYMENT_PROVIDER`: razorpay/stripe test) |
 | `/orders/{id}/payment/retry` | POST | One bounded, idempotent retry after a verified failure |
-| `/webhooks/razorpay` | POST | Receive signed webhook |
+| `/webhooks/razorpay` | POST | Receive signed Razorpay webhook (drains the event bus) |
+| `/webhooks/stripe` | POST | Receive signed Stripe webhook (drains the event bus) |
+| `/webhooks/shipping/{carrier}` | POST | Carrier tracking update (shared-secret authed) |
 | `/orders/{id}/refund` | POST | Process refund (merchant auth) |
 
 ### Merchant Console
@@ -241,6 +284,27 @@ open http://localhost:3000
 | `/console/checkout/session/{id}` | GET/PATCH/DELETE | Open, rename/archive a chat session |
 | `/console/orders/{id}/simulate-capture` | POST | Dev-only signed-webhook-boundary capture simulation |
 | `/console/orders/{id}/simulate-failure` | POST | Dev-only payment-failure simulation |
+| `/console/agent/service/respond` | POST | Customer-service chat (merchant JWT) |
+| `/console/notifications` | GET | Merchant notification feed |
+| `/console/notifications/{id}/read` | POST | Mark a notification read |
+| `/console/analytics/overview` | GET | GMV, conversion, AOV, agent-assisted, promos, refunds |
+| `/console/analytics/timeseries` | GET | Daily GMV + order counts |
+| `/console/ops/overview` | GET | Bus health, risk/fraud, runs, webhook health |
+| `/console/ops/bus/drain` | POST | Drain the merchant's event queue |
+| `/console/ops/dead-letters` | GET | Dead-letter queue |
+| `/console/ops/dead-letters/{id}/retry` | POST | Requeue for redelivery |
+| `/console/webhooks/subscriptions` | GET/POST | List/create signed outbound subscriptions (secret shown once) |
+| `/console/webhooks/subscriptions/{id}` | DELETE | Remove a subscription |
+| `/console/webhooks/dispatches` | GET | Delivery log with attempt accounting |
+| `/console/connectors` | GET/POST | List/register source-system connectors |
+| `/console/connectors/{id}` | DELETE | Remove a connector |
+| `/console/connectors/{id}/health` | GET | Probe the source system |
+| `/console/connectors/{id}/sync` | POST | Pull → normalize → upsert catalog |
+| `/console/billing` | GET | Metered usage vs plan quotas |
+| `/console/evals/suites` | GET | Versioned suites + latest run status |
+| `/console/evals/suites/{id}/run` | POST | Run a suite on an isolated core |
+| `/console/evals/runs/{id}` | GET | Per-case results with evidence |
+| `/console/evals/drift` | GET | Production-vs-baseline drift report |
 
 ---
 
@@ -372,8 +436,11 @@ python -m evals.runner.scenario_runner
 
 | Document | Description |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Complete system architecture & design decisions |
+| [SELLABLE_ARCHITECTURE.md](SELLABLE_ARCHITECTURE.md) | Target platform architecture (authoritative) |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Retired buildathon slice (pointer + mapping) |
 | [ARCHITECTURE_GUIDE.md](docs/ARCHITECTURE_GUIDE.md) | Architecture deep-dive for developers |
+| [AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md) | External agent integration (auth, delegation, protocols) |
+| [CONNECTORS.md](docs/CONNECTORS.md) | Connectors, carriers, and payment providers |
 | [API.md](docs/API.md) | Full API reference with examples |
 | [DATABASE.md](docs/DATABASE.md) | Database schema & migrations |
 | [DATA_MODEL.md](docs/DATA_MODEL.md) | Domain model reference |
@@ -414,8 +481,8 @@ python -m evals.runner.scenario_runner
 - psycopg 3 (PostgreSQL driver)
 
 **Payments**
-- Razorpay SDK (test mode)
-- HMAC webhook verification
+- Razorpay SDK (test mode) + Stripe HTTPS adapter (test mode)
+- HMAC webhook verification (both rails)
 
 **DevOps & Testing**
 - Docker + Docker Compose
