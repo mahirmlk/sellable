@@ -311,12 +311,15 @@ def test_ledger_replay_records_offer_policy_and_counter(core: CommerceCore) -> N
     events = core.ledger.for_trace(decision.trace_id)
     actions = [e.action for e in events]
     # No LLM wired: the deterministic message is used and no phrasing event
-    # is recorded.
+    # is recorded. The staged graph appends promotion evaluation and the
+    # persistent-cart bridge after the policy check.
     assert actions == [
         "catalog.get",
         "negotiation.countered",
         "quote.received",
         "policy.checked",
+        "promotion.evaluated",
+        "checkout.cart_prepared",
         "seller.response_ready",
     ]
     countered = next(e for e in events if e.action == "negotiation.countered")
