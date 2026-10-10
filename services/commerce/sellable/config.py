@@ -107,6 +107,16 @@ class Settings:
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
 
+    # Payment provider selection: razorpay (default) | stripe | simulated.
+    payment_provider: str = "razorpay"
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
+
+    # Carrier/shipping inbound webhooks (shared secret, per-deploy).
+    # Per-merchant carrier secrets arrive with the connector framework
+    # in Phase 8; until then one deploy secret gates all carriers.
+    shipping_webhook_secret: str | None = None
+
     # LLM provider abstraction
     llm_provider: str = "mock"
     llm_model: str | None = None
@@ -125,6 +135,10 @@ class Settings:
     # Agent authentication (store only hashes/secrets server-side)
     agent_api_key_hashes: tuple[str, ...] = ()
     agent_hmac_secret: str | None = None
+
+    # Platform admin (fail-closed: unset key disables the admin surface
+    # with 404s, never an open console).
+    admin_api_key: str | None = None
 
     @property
     def is_dev_environment(self) -> bool:
@@ -163,6 +177,10 @@ class Settings:
             razorpay_key_id=os.getenv("RAZORPAY_KEY_ID"),
             razorpay_key_secret=os.getenv("RAZORPAY_KEY_SECRET"),
             razorpay_webhook_secret=os.getenv("RAZORPAY_WEBHOOK_SECRET"),
+            payment_provider=os.getenv("PAYMENT_PROVIDER", "razorpay"),
+            stripe_secret_key=os.getenv("STRIPE_SECRET_KEY"),
+            stripe_webhook_secret=os.getenv("STRIPE_WEBHOOK_SECRET"),
+            shipping_webhook_secret=os.getenv("SHIPPING_WEBHOOK_SECRET"),
             llm_provider=os.getenv("LLM_PROVIDER", "mock"),
             llm_model=os.getenv("LLM_MODEL") or None,
             llm_temperature=float(os.getenv("LLM_TEMPERATURE", "0")),
@@ -176,6 +194,7 @@ class Settings:
             supabase_jwt_secret=os.getenv("SUPABASE_JWT_SECRET"),
             agent_api_key_hashes=key_hashes,
             agent_hmac_secret=os.getenv("BUYER_AGENT_HMAC_SECRET"),
+            admin_api_key=os.getenv("SELLABLE_ADMIN_API_KEY"),
             cors_origins=_parse_cors_origins(os.getenv("CORS_ORIGINS"))
             or (
                 "https://sellable.shop",
