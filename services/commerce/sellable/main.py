@@ -22,12 +22,19 @@ from slowapi.errors import RateLimitExceeded
 from starlette.responses import JSONResponse, StreamingResponse
 
 from sellable.agents.buyer import BuyerAgent, BuyerResult
+from sellable.agents.customer_service import (
+    CSDecision,
+    CSRequest,
+    CustomerServiceAgent,
+)
 from sellable.agents.seller import SellerAgent, SellerDecision, SellerRequest
+from agents.runtime.versions import CUSTOMER_SERVICE_AGENT_ID, SELLER_AGENT_ID
 from agents.seller.intent import TurnKind, classify_buyer_message
 from sellable.auth import AgentApiKey, get_agent_api_key, get_agent_api_key_signed
 from sellable.buyer_missions import BuyerMissionService, UnknownBuyerMissionError
 from sellable.config import settings
 from sellable.contracts import (
+    AgentProfile,
     BuyerMission,
     CatalogGetRequest,
     CatalogSearchRequest,
@@ -45,6 +52,7 @@ from sellable.contracts import (
     ConsoleTransactionDetail,
     ConsoleTransactionItem,
     ConsentStatus,
+    IntentMandate,
     LedgerActor,
     MerchantPolicy,
     OrderCreateRequest,
@@ -57,7 +65,18 @@ from sellable.contracts import (
     RefundCreateRequest,
 )
 from sellable.core import CommerceCore, IdempotencyReuseError
-from sellable.gateway import AgentGateway
+from sellable.delegations import OperationScope
+from sellable.protocols import a2a, dispatch, mcp, ucp
+from sellable.protocols.capabilities import build_merchant_profile
+from sellable.protocols.dispatch import ProtocolContext, ProtocolError
+from sellable.protocols.identity import IdentityLinkService
+from sellable.protocols.sessions import ProtocolSessionService
+from sellable.gateway import (
+    AgentGateway,
+    DelegationDeniedError,
+    DelegationHoldError,
+    enforce_delegation,
+)
 from sellable.ledger.database import initialise_database
 from sellable.ledger.service import LedgerRepository
 from sellable.merchant_auth import (
@@ -88,8 +107,11 @@ from sellable.registry import (
 from sellable.repositories import (
     CatalogRepository,
     CheckoutSessionRepository,
+    IdentityLinkRepository,
     MerchantRepository,
+    ObservabilityRepository,
     OrderRepository,
+    ProtocolSessionRepository,
 )
 from sellable.status import build_status
 
@@ -162,11 +184,30 @@ app.add_middleware(
     allow_origins=list(settings.cors_origins),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "PUT", "HEAD", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Agent-Key", "Accept", "X-Agent-Id", "X-Timestamp", "X-Nonce", "X-Signature", "X-Trace-Id"],
+    allow_headers=["Authorization", "Content-Type", "X-Agent-Key", "Accept", "X-Agent-Id", "X-Timestamp", "X-Nonce", "X-Signature", "X-Trace-Id", "X-Delegation-Id", "X-Session-Id", "X-Protocol", "X-Customer-Id"],
     max_age=600,
 )
 
 app.add_middleware(RequestBodyCaptureMiddleware)
+
+from sellable.tracing import trace_middleware
+
+app.middleware("http")(trace_middleware)
+
+
+async def version_prefix_middleware(request, call_next):
+    """API versioning (§42, §17.1): `/v1/*` aliases the unversioned routes
+    by stripping the prefix before routing. One implementation serves both
+    shapes, so versioning can never drift between them."""
+    path = request.scope.get("path", "")
+    if path == "/v1" or path.startswith("/v1/"):
+        stripped = path[3:] or "/"
+        request.scope["path"] = stripped
+        request.scope["raw_path"] = stripped.encode("latin-1")
+    return await call_next(request)
+
+
+app.middleware("http")(version_prefix_middleware)
 
 app.state.limiter = limiter
 app.add_exception_handler(
@@ -199,6 +240,15 @@ def _make_llm() -> tuple[object | None, str | None]:
         return None, str(exc)
 
 
+def _agent_recorder(core: CommerceCore, agent_id: str):
+    """Run recorder writing §29.1 telemetry for the merchant's own store."""
+    from agents.runtime.recorder import AgentRunRecorder
+
+    return AgentRunRecorder(
+        ObservabilityRepository(), merchant_id=core.merchant_scope, agent_id=agent_id
+    )
+
+
 _seller_llm, _llm_init_error = _make_llm()
 
 # Create tables and the real demo-merchant records before wiring components.
@@ -206,12 +256,23 @@ initialise_database()
 registry = MerchantRegistry()
 registry.ensure_demo_merchant()
 commerce_core = registry.get(DEMO_MERCHANT_ID)
-seller_agent = SellerAgent(commerce_core, llm=_seller_llm)
+seller_agent = SellerAgent(
+    commerce_core,
+    llm=_seller_llm,
+    recorder=_agent_recorder(commerce_core, SELLER_AGENT_ID),
+)
 agent_gateway = AgentGateway(commerce_core, seller_agent)
+customer_service_agent = CustomerServiceAgent(
+    commerce_core,
+    llm=_seller_llm,
+    recorder=_agent_recorder(commerce_core, CUSTOMER_SERVICE_AGENT_ID),
+)
 buyer_agent = BuyerAgent(agent_gateway, llm=_make_llm()[0])
 payment_service = PaymentService(commerce_core, RazorpayAdapter(settings), core_resolver=registry.get)
 refund_service = RefundService(commerce_core, RazorpayAdapter(settings))
 buyer_mission_service = BuyerMissionService()
+session_service = ProtocolSessionService(ProtocolSessionRepository())
+identity_service = IdentityLinkService(IdentityLinkRepository())
 
 
 def merchant_buyer_agent(core: CommerceCore) -> BuyerAgent:
@@ -267,8 +328,52 @@ def resolve_trace_id(
     return candidate
 
 
+def _gate_delegation(
+    commerce: CommerceCore,
+    *,
+    delegation_id: str | None,
+    scope: OperationScope,
+    amount_paise: int | None,
+    trace_id: str,
+    route: str,
+    hold_status: int = 409,
+) -> None:
+    """Resolve an optional delegation header: DENY → 403, hold → ``hold_status``.
+
+    No header → legacy behavior unchanged. Amount binding stays at the
+    commerce layer, which re-resolves with exact totals.
+    """
+    try:
+        enforce_delegation(
+            commerce,
+            delegation_id=delegation_id,
+            scope=scope,
+            amount_paise=amount_paise,
+            trace_id=trace_id,
+            route=route,
+        )
+    except DelegationDeniedError as error:
+        raise HTTPException(
+            status_code=403,
+            detail={"reason_code": error.reason_code, "route": route},
+        ) from error
+    except DelegationHoldError as error:
+        raise HTTPException(
+            status_code=hold_status,
+            detail={
+                "outcome": error.outcome,
+                "reason_code": error.reason_code,
+                "route": route,
+            },
+        ) from error
+
+
 def get_seller_agent() -> SellerAgent:
     return seller_agent
+
+
+def get_customer_service_agent() -> CustomerServiceAgent:
+    return customer_service_agent
 
 
 def get_payment_service() -> PaymentService:
@@ -330,6 +435,1627 @@ def seller_respond(
     return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
 
 
+@app.post(
+    "/agent/service/respond",
+    response_model=CSDecision,
+    tags=["customer-service-agent"],
+    summary="Authenticated post-purchase support: order help, shipping, returns, refunds.",
+)
+@limiter.limit("30/minute")
+def service_respond(
+    request: Request,
+    body: CSRequest,
+    agent: CustomerServiceAgent = Depends(get_customer_service_agent),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+) -> CSDecision:
+    """Never executes refunds, mutates account security, or overrides policy."""
+    return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
+
+
+# ---------------------------------------------------------------------------
+# Protocol interoperability (target §15-§17): one commerce core, many
+# protocol surfaces. Canonical /commerce/* commands plus MCP/A2A/UCP
+# adapters, capability negotiation, and identity linking.
+# ---------------------------------------------------------------------------
+
+SUPPORTED_PROTOCOLS = ("rest", "mcp", "a2a", "ucp")
+
+
+def _protocol_ctx(
+    *,
+    protocol: str | None,
+    trace_id: str,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+    delegation_id: str | None = None,
+    customer_id: str | None = None,
+) -> ProtocolContext:
+    name = (protocol or "rest").lower()
+    if name not in SUPPORTED_PROTOCOLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown protocol '{protocol}'. Choose one of {list(SUPPORTED_PROTOCOLS)}.",
+        )
+    return ProtocolContext(
+        protocol=name,
+        trace_id=trace_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        delegation_id=delegation_id,
+        customer_id=customer_id,
+    )
+
+
+def _protocol_result(result: object) -> object:
+    """Serialize dispatcher results (pydantic → JSON, lists, plain dicts)."""
+    if isinstance(result, list):
+        return [_protocol_result(item) for item in result]
+    if hasattr(result, "model_dump"):
+        return result.model_dump(mode="json")
+    return result
+
+
+def _protocol_call(fn, *args, **kwargs):
+    try:
+        return _protocol_result(fn(*args, **kwargs))
+    except ProtocolError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"reason_code": error.reason_code, "detail": str(error)},
+        ) from error
+    except Exception as error:  # noqa: BLE001 — adapters degrade, never 500 commerce
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get("/.well-known/ucp", tags=["protocol-ucp"])
+@limiter.exempt
+def ucp_well_known(request: Request) -> dict[str, object]:
+    return ucp.discovery_document(
+        commerce_core, base_url=str(request.base_url).rstrip("/")
+    )
+
+
+@app.get("/agent/profile", tags=["protocol-discovery"])
+@limiter.exempt
+def agent_profile() -> dict[str, object]:
+    """Merchant agent profile: the two platform agents and versions."""
+    from agents.runtime.versions import VersionRegistry, seed_registry
+
+    versions = seed_registry(VersionRegistry(), commerce_core.policy)
+    return {
+        "merchant_id": commerce_core.merchant_scope,
+        "agents": [version.as_dict() for version in versions.all()],
+    }
+
+
+@app.get("/agent/capabilities", tags=["protocol-discovery"])
+@limiter.exempt
+def agent_capabilities() -> dict[str, object]:
+    """Merchant capability profile for negotiation (§15.1)."""
+    return build_merchant_profile(commerce_core.merchant_scope).model_dump(mode="json")
+
+
+@app.post("/commerce/sessions/negotiate", tags=["protocol-sessions"])
+@limiter.limit("30/minute")
+def session_negotiate(
+    request: Request,
+    body: AgentProfile,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    try:
+        session = session_service.negotiate(
+            commerce.merchant_scope,
+            body,
+            build_merchant_profile(commerce.merchant_scope),
+        )
+    except Exception as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return session.model_dump(mode="json")
+
+
+@app.get("/commerce/sessions/{session_id}", tags=["protocol-sessions"])
+@limiter.limit("60/minute")
+def session_get(
+    session_id: str,
+    request: Request,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    try:
+        session = session_service.get(session_id, commerce.merchant_scope)
+    except Exception as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return session.model_dump(mode="json")
+
+
+@app.post("/ucp/negotiate", tags=["protocol-ucp"])
+@limiter.limit("30/minute")
+def ucp_negotiate(
+    request: Request,
+    body: AgentProfile,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    try:
+        session = ucp.negotiate(commerce, session_service, body)
+    except Exception as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return session.model_dump(mode="json")
+
+
+@app.post("/commerce/identity/link", tags=["protocol-identity"])
+@limiter.limit("30/minute")
+def identity_link_create(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    customer_id = body.get("customer_id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="customer_id is required")
+    link, code = identity_service.create_link(
+        commerce.merchant_scope,
+        str(customer_id),
+        agent_id=body.get("agent_id"),
+        protocol="rest",
+        scopes=list(body.get("scopes") or []),
+    )
+    dumped = link.model_dump(mode="json")
+    dumped.pop("link_code_hash", None)
+    dumped["link_code"] = code  # shown exactly once
+    return dumped
+
+
+@app.post("/commerce/identity/link/approve", tags=["protocol-identity"])
+@limiter.limit("30/minute")
+def identity_link_approve(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    if not body.get("link_id"):
+        raise HTTPException(status_code=400, detail="link_id is required")
+    try:
+        link = identity_service.approve_link(
+            str(body["link_id"]),
+            commerce.merchant_scope,
+            link_code=body.get("link_code"),
+            merchant_approved=bool(body.get("merchant_approved")),
+        )
+    except Exception as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    dumped = link.model_dump(mode="json")
+    dumped.pop("link_code_hash", None)
+    return dumped
+
+
+@app.get("/commerce/identity/me", tags=["protocol-identity"])
+@limiter.limit("60/minute")
+def identity_me(
+    request: Request,
+    link_id: str,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    try:
+        link = identity_service.get_link(link_id, commerce.merchant_scope)
+    except Exception as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if link.status.value != "LINKED":
+        raise HTTPException(status_code=404, detail="No linked identity")
+    return {
+        "customer_id": link.customer_id,
+        "agent_id": link.agent_id,
+        "scopes": list(link.scopes),
+        "expires_at": link.expires_at.isoformat(),
+    }
+
+
+def _commerce_ctx(
+    *,
+    api_key: AgentApiKey,
+    trace_id: str,
+    protocol: str | None,
+    session_id: str | None,
+    delegation_id: str | None,
+    customer_id: str | None,
+) -> ProtocolContext:
+    return _protocol_ctx(
+        protocol=protocol,
+        trace_id=trace_id,
+        agent_id=getattr(api_key, "buyer_agent_id", None),
+        session_id=session_id,
+        delegation_id=delegation_id,
+        customer_id=customer_id,
+    )
+
+
+def _require(body: dict, *fields: str) -> None:
+    missing = [name for name in fields if body.get(name) is None]
+    if missing:
+        raise HTTPException(
+            status_code=400, detail=f"Missing required fields: {missing}"
+        )
+
+
+@app.post("/commerce/search", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_search(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> list:
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.search_catalog, commerce, session_service, ctx,
+        query=str(body.get("query", "")),
+        categories=body.get("categories"),
+    )
+
+
+@app.post("/commerce/catalog/lookup", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_lookup(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "sku")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.lookup_product, commerce, session_service, ctx, sku=str(body["sku"])
+    )
+
+
+@app.post("/commerce/recommendations", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_recommendations(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> list:
+    _require(body, "sku")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.get_recommendations, commerce, session_service, ctx,
+        sku=str(body["sku"]), limit=int(body.get("limit") or 3),
+    )
+
+
+@app.post("/commerce/cart", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_cart_create(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+    x_customer_id: str | None = Header(default=None),
+) -> dict:
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=x_customer_id or body.get("customer_id"),
+    )
+    return _protocol_call(
+        dispatch.create_cart, commerce, session_service, ctx,
+        customer_id=body.get("customer_id"),
+    )
+
+
+@app.post("/commerce/cart/items", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_cart_items(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "cart_id", "op", "sku", "quantity", "expected_version")
+    if body["op"] not in ("add", "set", "remove"):
+        raise HTTPException(status_code=400, detail="op must be add, set, or remove")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.mutate_cart_item, commerce, session_service, ctx,
+        cart_id=str(body["cart_id"]), op=str(body["op"]), sku=str(body["sku"]),
+        quantity=int(body["quantity"]), expected_version=int(body["expected_version"]),
+    )
+
+
+@app.post("/commerce/quotes", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_quote_create(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "cart_id")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.create_quote, commerce, session_service, ctx,
+        cart_id=str(body["cart_id"]),
+    )
+
+
+@app.post("/commerce/quotes/negotiate", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_quote_negotiate(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "quote_id", "proposed_total_paise")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    result = _protocol_call(
+        dispatch.negotiate_quote, commerce, session_service, ctx,
+        quote_id=str(body["quote_id"]),
+        proposed_total_paise=int(body["proposed_total_paise"]),
+    )
+    result["quote"] = _protocol_result(result["quote"])
+    return result
+
+
+@app.post("/commerce/promotions/evaluate", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_promotions_evaluate(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    if not body.get("cart_id") and not body.get("checkout_id"):
+        raise HTTPException(status_code=400, detail="cart_id or checkout_id is required")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.evaluate_promotions, commerce, session_service, ctx,
+        cart_id=body.get("cart_id"), checkout_id=body.get("checkout_id"),
+        coupon_code=body.get("coupon_code"), channel=str(body.get("channel") or "agent"),
+    )
+
+
+@app.post("/commerce/checkout", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_checkout_create(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "cart_id")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id or body.get("delegation_id"),
+        customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.create_checkout, commerce, session_service, ctx,
+        cart_id=str(body["cart_id"]),
+        expected_version=body.get("expected_version"),
+        delegation_id=body.get("delegation_id"),
+        quote_id=body.get("quote_id"),
+    )
+
+
+@app.post("/commerce/checkout/authorize", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_checkout_authorize(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "checkout_id")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.authorize_checkout_pipeline, commerce, session_service, ctx,
+        checkout_id=str(body["checkout_id"]),
+        coupon_code=body.get("coupon_code"), channel=str(body.get("channel") or "agent"),
+        tax_total_paise=int(body.get("tax_total_paise") or 0),
+        shipping_total_paise=int(body.get("shipping_total_paise") or 0),
+        merchant_state=body.get("merchant_state"),
+        customer_state=body.get("customer_state"),
+        shipping_method=body.get("shipping_method"),
+        pincode=str(body.get("pincode") or ""),
+    )
+
+
+@app.post("/commerce/orders", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_order_create(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "checkout_id", "intent", "idempotency_key")
+    try:
+        intent = IntentMandate.model_validate(body["intent"])
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=f"Invalid intent: {error}") from error
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id or body.get("delegation_id"),
+        customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.create_order, commerce, session_service, ctx,
+        checkout_id=str(body["checkout_id"]), intent=intent,
+        idempotency_key=str(body["idempotency_key"]),
+        delegation_id=body.get("delegation_id"),
+    )
+
+
+@app.get("/commerce/orders/{order_id}", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_order_get(
+    order_id: str,
+    request: Request,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.get_order, commerce, session_service, ctx, order_id=order_id
+    )
+
+
+@app.post("/commerce/shipping/quote", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_shipping_quote(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> list:
+    _require(body, "pincode")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.shipping_quote, commerce, session_service, ctx,
+        pincode=str(body["pincode"]),
+        free_shipping=bool(body.get("free_shipping")),
+    )
+
+
+@app.post("/commerce/returns", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_return_create(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+    x_customer_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "order_id", "items", "reason")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=x_customer_id,
+    )
+    return _protocol_call(
+        dispatch.create_return, commerce, session_service, ctx,
+        order_id=str(body["order_id"]), items=list(body["items"]),
+        reason=str(body["reason"]), customer_id=x_customer_id,
+    )
+
+
+@app.post("/commerce/refunds/requests", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_refund_request(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "order_id", "amount_paise", "reason")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=None,
+    )
+    return _protocol_call(
+        dispatch.request_refund, commerce, session_service, ctx,
+        order_id=str(body["order_id"]), amount_paise=int(body["amount_paise"]),
+        reason=str(body["reason"]), return_id=body.get("return_id"),
+    )
+
+
+@app.post("/commerce/support/cases", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_support_create(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    x_trace_id: str | None = Header(default=None),
+    x_protocol: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+    x_customer_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "summary")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol=x_protocol, session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=x_customer_id,
+    )
+    return _protocol_call(
+        dispatch.create_support_case, commerce, session_service, ctx,
+        summary=str(body["summary"]), order_id=body.get("order_id"),
+        category=str(body.get("category") or "other"),
+    )
+
+
+@app.get("/mcp/tools", tags=["protocol-mcp"])
+@limiter.limit("60/minute")
+def mcp_tools(
+    request: Request,
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> list:
+    return mcp.list_tools()
+
+
+@app.post("/mcp/call", tags=["protocol-mcp"])
+@limiter.limit("30/minute")
+def mcp_call(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+    x_customer_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "tool")
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol="mcp", session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=x_customer_id,
+    )
+    try:
+        result = mcp.call_tool(
+            commerce, session_service, ctx,
+            tool=str(body["tool"]), arguments=dict(body.get("arguments") or {}),
+        )
+    except ProtocolError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"reason_code": error.reason_code, "detail": str(error)},
+        ) from error
+    except Exception as error:  # noqa: BLE001 — adapters degrade, never 500 commerce
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"tool": body["tool"], "result": _protocol_result(result)}
+
+
+@app.get("/a2a/card", tags=["protocol-a2a"])
+@limiter.exempt
+def a2a_card() -> dict[str, object]:
+    from sellable.repositories import MerchantRepository
+
+    merchant_id = commerce_core.merchant_scope
+    name = MerchantRepository().name_of(merchant_id) or merchant_id
+    return a2a.agent_card(merchant_id, name)
+
+
+@app.post("/a2a/tasks", tags=["protocol-a2a"])
+@limiter.limit("30/minute")
+def a2a_task(
+    request: Request,
+    body: dict,
+    commerce: CommerceCore = Depends(get_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+    x_customer_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "actor", "input")
+    from sellable.agents.seller import SellerAgent
+
+    from agents.customer_service.agent import CustomerServiceAgent
+
+    ctx = _commerce_ctx(
+        api_key=_api_key, trace_id=resolve_trace_id(x_trace_id),
+        protocol="a2a", session_id=x_session_id,
+        delegation_id=x_delegation_id, customer_id=x_customer_id,
+    )
+    try:
+        result = a2a.handle_task(
+            SellerAgent(commerce),
+            CustomerServiceAgent(commerce),
+            ctx,
+            actor=str(body["actor"]),
+            input=dict(body["input"]),
+        )
+    except ProtocolError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"reason_code": error.reason_code, "detail": str(error)},
+        ) from error
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Event bus, notifications, analytics, operations (target §27, §29, §34-§36)
+# ---------------------------------------------------------------------------
+
+def _build_bus():
+    """Assemble the standard bus from current engines (per-call so tests
+    with isolated databases get isolated buses)."""
+    from sellable.event_bus import build_bus
+    from sellable.notifications import WebhookDispatcher
+    from sellable.repositories import (
+        AnalyticsRepository,
+        NotificationRepository,
+        OutboxRepository,
+        WebhookRepository,
+    )
+
+    outbox = OutboxRepository()
+    analytics = AnalyticsRepository()
+    notifications_repo = NotificationRepository()
+    webhooks = WebhookRepository()
+    dispatcher = WebhookDispatcher(webhooks)
+    return build_bus(
+        outbox_repo=outbox,
+        analytics_repo=analytics,
+        notification_repo=notifications_repo,
+        webhook_dispatcher=dispatcher,
+        core_resolver=lambda merchant_id: registry.get(merchant_id),
+    )
+
+
+def _drain_bus_best_effort(*, merchant_id: str | None = None) -> None:
+    try:
+        from sellable.event_bus import drain_once
+
+        drain_once(_build_bus(), merchant_id=merchant_id)
+    except Exception as exc:  # noqa: BLE001 — drains never break webhooks
+        logger.warning("Event bus drain failed: %s", exc)
+
+
+@app.post(
+    "/webhooks/shipping/{carrier}",
+    tags=["webhooks"],
+    summary="Ingest a carrier tracking update (shared-secret authenticated).",
+)
+@limiter.limit("120/minute")
+def shipping_webhook(
+    carrier: str,
+    request: Request,
+    body: dict,
+    x_carrier_secret: str | None = Header(default=None),
+) -> dict:
+    """Carrier status ingestion (§23.1, §36.1): signature-light shared
+    secret per deploy; per-merchant carrier secrets arrive in Phase 8."""
+    import hmac as _hmac
+
+    secret = settings.shipping_webhook_secret
+    if not secret:
+        raise HTTPException(status_code=503, detail="Shipping webhooks are not configured")
+    if not x_carrier_secret or not _hmac.compare_digest(x_carrier_secret, secret):
+        raise HTTPException(status_code=401, detail="Invalid carrier secret")
+    tracking_reference = body.get("tracking_reference")
+    status = body.get("status")
+    if not tracking_reference or not status:
+        raise HTTPException(
+            status_code=400, detail="tracking_reference and status are required"
+        )
+    from sellable.contracts import FulfillmentStatus
+    from sellable.repositories import FulfillmentRepository
+
+    try:
+        target = FulfillmentStatus(str(status).upper())
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown fulfillment status: {status}"
+        ) from None
+    fulfillment = FulfillmentRepository().for_tracking(str(tracking_reference))
+    if fulfillment is None:
+        raise HTTPException(status_code=404, detail="Unknown tracking reference")
+    core = registry.get(fulfillment.merchant_id)
+    try:
+        updated = core.track_fulfillment(
+            fulfillment.fulfillment_id,
+            target,
+            trace_id=resolve_trace_id(request.headers.get("X-Trace-Id")),
+            location=body.get("location"),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    _drain_bus_best_effort()
+    return {
+        "fulfillment_id": updated.fulfillment_id,
+        "status": updated.status.value,
+        "carrier": carrier,
+    }
+
+
+@app.get("/console/notifications", tags=["console"])
+@limiter.limit("60/minute")
+def console_notifications(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    unread_only: bool = False,
+    limit: int = 50,
+) -> list:
+    from sellable.repositories import NotificationRepository
+
+    return NotificationRepository().list_for_merchant(
+        session.merchant_id, limit=limit, unread_only=unread_only
+    )
+
+
+@app.post("/console/notifications/{notification_id}/read", tags=["console"])
+@limiter.limit("60/minute")
+def console_notification_read(
+    notification_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from sellable.repositories import NotificationRepository
+
+    if not NotificationRepository().mark_read(notification_id, session.merchant_id):
+        raise HTTPException(status_code=404, detail="Unknown notification")
+    return {"notification_id": notification_id, "status": "READ"}
+
+
+@app.get("/console/analytics/overview", tags=["console"])
+@limiter.limit("60/minute")
+def console_analytics_overview(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    days: int = 30,
+) -> dict:
+    from datetime import timedelta
+
+    from sellable.contracts import utc_now
+    from sellable.repositories import AnalyticsRepository, PromotionRepository
+
+    since = utc_now() - timedelta(days=max(days, 1))
+    overview = AnalyticsRepository().overview(session.merchant_id, since=since)
+    usage = PromotionRepository().usage(session.merchant_id)
+    overview["promotion_redemptions"] = sum(u["count"] for u in usage.values())
+    overview["promotion_discount_paise"] = sum(u["discount_paise"] for u in usage.values())
+    return overview
+
+
+@app.get("/console/analytics/timeseries", tags=["console"])
+@limiter.limit("60/minute")
+def console_analytics_timeseries(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    days: int = 30,
+) -> list:
+    from sellable.repositories import AnalyticsRepository
+
+    return AnalyticsRepository().timeseries(session.merchant_id, days=days)
+
+
+@app.get("/console/onboarding/readiness", tags=["console"])
+@limiter.limit("30/minute")
+def console_onboarding_readiness(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    """Automated merchant readiness checks (§10.3) with per-check results
+    recorded on the onboarding row."""
+    from sellable.repositories import SandboxRepository
+
+    core = merchant_core(session)
+    results = core.refresh_onboarding_readiness(
+        trace_id=resolve_trace_id(x_trace_id),
+        payment_configured=bool(
+            settings.razorpay_is_configured or settings.stripe_secret_key
+        ),
+        webhook_configured=bool(
+            settings.razorpay_webhook_secret or settings.shipping_webhook_secret
+        ),
+        sandbox_repo=SandboxRepository(),
+    )
+    onboarding = core.onboarding_repo.get(session.merchant_id)
+    return {
+        "merchant_id": session.merchant_id,
+        "stage": onboarding.stage.value if onboarding else "CREATED",
+        "checks": results,
+        "activation_ready": onboarding.is_activation_ready if onboarding else False,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Agent evaluation (target §30, §33): versioned suites, release runs, drift.
+# Eval runs execute against an ISOLATED in-memory core — never merchant data.
+# ---------------------------------------------------------------------------
+
+def _fresh_eval_core():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    from sellable.ledger.database import Base
+    from sellable.ledger.service import LedgerRepository
+
+    engine = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    core = CommerceCore.from_seed(LedgerRepository(engine), engine=engine)
+    return core, engine
+
+
+@app.get("/console/evals/suites", tags=["console"])
+@limiter.limit("60/minute")
+def console_eval_suites(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> list:
+    from evals.datasets.v1 import SUITES
+    from sellable.repositories import EvaluationRepository
+
+    repo = EvaluationRepository()
+    suites = []
+    for suite_id, spec in SUITES.items():
+        latest = repo.latest_run_for_suite(suite_id)
+        suites.append(
+            {
+                "suite_id": spec.suite_id,
+                "name": spec.name,
+                "version": spec.version,
+                "description": spec.description,
+                "cases": len(spec.cases),
+                "latest_run": latest,
+            }
+        )
+    return suites
+
+
+@app.post("/console/evals/suites/{suite_id}/run", tags=["console"])
+@limiter.limit("10/minute")
+def console_eval_run(
+    suite_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from evals.datasets.v1 import SUITES
+    from evals.runner.harness import EvaluationHarness
+    from sellable.repositories import EvaluationRepository
+
+    if suite_id not in SUITES:
+        raise HTTPException(status_code=404, detail="Unknown suite")
+    harness = EvaluationHarness(EvaluationRepository())
+    report = harness.run_suite(lambda: _fresh_eval_core()[0], suite_id)
+    return {
+        "run_id": report.run_id,
+        "suite_id": report.suite_id,
+        "passed": report.passed,
+        "failed": report.failed,
+        "duration_ms": report.duration_ms,
+        "cost_usd": report.cost_usd,
+    }
+
+
+@app.get("/console/evals/runs/{run_id}", tags=["console"])
+@limiter.limit("60/minute")
+def console_eval_run_detail(
+    run_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from sellable.repositories import EvaluationRepository
+
+    repo = EvaluationRepository()
+    results = repo.results_for_run(run_id)
+    if not results:
+        raise HTTPException(status_code=404, detail="Unknown eval run")
+    return {"run_id": run_id, "results": results}
+
+
+@app.get("/console/evals/drift", tags=["console"])
+@limiter.limit("30/minute")
+def console_eval_drift(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    days: int = 7,
+    baseline_days: int = 7,
+) -> dict:
+    from datetime import timedelta
+
+    from evals.drift import collect_production_stats, compare
+    from sellable.contracts import utc_now
+    from sellable.ledger.service import LedgerRepository
+    from sellable.repositories import AnalyticsRepository, ObservabilityRepository
+
+    moment = utc_now()
+    current = collect_production_stats(
+        ledger=LedgerRepository(),
+        observability_repo=ObservabilityRepository(),
+        analytics_repo=AnalyticsRepository(),
+        merchant_id=session.merchant_id,
+        days=max(days, 1),
+        now=moment,
+    )
+    baseline = collect_production_stats(
+        ledger=LedgerRepository(),
+        observability_repo=ObservabilityRepository(),
+        analytics_repo=AnalyticsRepository(),
+        merchant_id=session.merchant_id,
+        days=max(baseline_days, 1),
+        now=moment - timedelta(days=max(days, 1)),
+    )
+    report = compare(baseline, current)
+    return {
+        "drifted": report.drifted,
+        "baseline": baseline,
+        "current": current,
+        "metrics": [
+            {
+                "metric": m.metric,
+                "baseline": m.baseline,
+                "current": m.current,
+                "delta_bps": m.delta_bps,
+                "drifted": m.drifted,
+            }
+            for m in report.metrics
+        ],
+    }
+
+
+@app.get("/console/ops/overview", tags=["console"])
+@limiter.limit("60/minute")
+def console_ops_overview(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from sellable.repositories import (
+        FraudRepository,
+        ObservabilityRepository,
+        OutboxRepository,
+        RiskRepository,
+        WebhookRepository,
+    )
+
+    merchant_id = session.merchant_id
+    outbox = OutboxRepository()
+    runs = ObservabilityRepository().list_runs(merchant_id, limit=50)
+    dispatches = WebhookRepository().recent_dispatches(merchant_id, limit=50)
+    risk_recent = RiskRepository().recent(merchant_id, limit=50)
+    return {
+        "merchant_id": merchant_id,
+        "outbox": {
+            "pending": outbox.pending_count(merchant_id),
+            "dead_lettered": outbox.dead_letter_count(merchant_id),
+        },
+        "risk": {
+            "recent_blocks": sum(1 for r in risk_recent if r.level.value == "BLOCK"),
+            "recent_decisions": len(risk_recent),
+        },
+        "fraud": {
+            "recent": [
+                {
+                    "kind": f.kind.value,
+                    "subject_id": f.subject_id,
+                    "created_at": f.created_at.isoformat(),
+                }
+                for f in FraudRepository().list_for(merchant_id, limit=20)
+            ]
+        },
+        "agent_runs": {
+            "recent": len(runs),
+            "failures": sum(1 for r in runs if r["status"] not in ("COMPLETED", "RUNNING")),
+            "runs": runs[:20],
+        },
+        "webhooks": {
+            "dispatches": len(dispatches),
+            "failures": sum(1 for d in dispatches if d["status"] != "SENT"),
+            "recent": dispatches[:20],
+        },
+    }
+
+
+@app.post("/console/ops/bus/drain", tags=["console"])
+@limiter.limit("10/minute")
+def console_bus_drain(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from sellable.event_bus import drain_once
+
+    return drain_once(_build_bus(), merchant_id=session.merchant_id)
+
+
+@app.get("/console/ops/dead-letters", tags=["console"])
+@limiter.limit("60/minute")
+def console_dead_letters(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    limit: int = 50,
+) -> list:
+    from sellable.repositories import OutboxRepository
+
+    return OutboxRepository().list_dead_letters(session.merchant_id, limit=limit)
+
+
+@app.post("/console/ops/dead-letters/{event_id}/retry", tags=["console"])
+@limiter.limit("30/minute")
+def console_dead_letter_retry(
+    event_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from sellable.repositories import OutboxRepository
+
+    if not OutboxRepository().reset_delivery(event_id, session.merchant_id):
+        raise HTTPException(status_code=404, detail="Unknown dead-lettered event")
+    return {"event_id": event_id, "status": "REQUEUED"}
+
+
+@app.get("/console/webhooks/subscriptions", tags=["console"])
+@limiter.limit("60/minute")
+def console_webhook_subscriptions(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> list:
+    from sellable.repositories import WebhookRepository
+
+    return WebhookRepository().list_subscriptions(session.merchant_id)
+
+
+@app.post("/console/webhooks/subscriptions", tags=["console"])
+@limiter.limit("30/minute")
+def console_webhook_subscribe(
+    request: Request,
+    body: dict,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    import secrets as _secrets
+
+    from sellable.notifications import SUBSCRIBABLE_EVENTS
+    from sellable.repositories import WebhookRepository
+
+    url = body.get("url")
+    events = list(body.get("events") or [])
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    unknown = [e for e in events if e not in SUBSCRIBABLE_EVENTS]
+    if unknown:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown event types: {unknown}"
+        )
+    if not events:
+        raise HTTPException(status_code=400, detail="At least one event is required")
+    secret = _secrets.token_urlsafe(32)
+    try:
+        subscription = WebhookRepository().create_subscription(
+            merchant_id=session.merchant_id,
+            url=str(url),
+            events=events,
+            secret=secret,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {
+        **subscription.model_dump(mode="json"),
+        "secret": secret,
+        "_note": "Persist the secret now; it is shown exactly once.",
+    }
+
+
+@app.delete("/console/webhooks/subscriptions/{subscription_id}", tags=["console"])
+@limiter.limit("30/minute")
+def console_webhook_unsubscribe(
+    subscription_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    from sellable.repositories import WebhookRepository
+
+    if not WebhookRepository().delete_subscription(subscription_id, session.merchant_id):
+        raise HTTPException(status_code=404, detail="Unknown subscription")
+    return {"subscription_id": subscription_id, "status": "DELETED"}
+
+
+@app.get("/console/webhooks/dispatches", tags=["console"])
+@limiter.limit("60/minute")
+def console_webhook_dispatches(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    limit: int = 50,
+) -> list:
+    from sellable.repositories import WebhookRepository
+
+    return WebhookRepository().recent_dispatches(session.merchant_id, limit=limit)
+
+
+@app.get("/console/transactions/{order_id}/replay", tags=["console"])
+@app.get("/transactions/{order_id}/replay", tags=["console"])
+@limiter.limit("60/minute")
+def console_transaction_replay(
+    order_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """Reconstructed evidence chain for one transaction (§28.3): ordered
+    sections from ledger rows. Reads evidence; never re-executes money."""
+    from sellable.replay import build_replay
+
+    core = merchant_core(session)
+    try:
+        order = core.get_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return build_replay(order.trace_id, session.merchant_id, ledger=core.ledger)
+
+
+@app.get("/console/metrics/agents", tags=["console"])
+@limiter.limit("60/minute")
+def console_agent_metrics(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    days: int = 7,
+) -> dict:
+    from sellable.metrics import agent_metrics
+    from sellable.repositories import ObservabilityRepository
+
+    core = merchant_core(session)
+    return agent_metrics(
+        observability_repo=ObservabilityRepository(),
+        ledger=core.ledger,
+        merchant_id=session.merchant_id,
+        days=days,
+    )
+
+
+@app.get("/console/metrics/commerce", tags=["console"])
+@limiter.limit("60/minute")
+def console_commerce_metrics(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    days: int = 30,
+) -> dict:
+    from sellable.metrics import commerce_metrics
+    from sellable.repositories import AnalyticsRepository, PromotionRepository
+
+    core = merchant_core(session)
+    return commerce_metrics(
+        analytics_repo=AnalyticsRepository(),
+        promotion_repo=core.promotion_repo,
+        merchant_id=session.merchant_id,
+        days=days,
+    )
+
+
+@app.get("/ready", tags=["platform"])
+@limiter.exempt
+def readiness() -> dict:
+    """Readiness beyond liveness (§46): database, outbox drainability, and
+    payment configuration. Anything failing marks unready for orchestrators."""
+    from sellable.repositories import OutboxRepository
+
+    checks: dict[str, object] = {}
+    ready = True
+    try:
+        pending = OutboxRepository().pending_count()
+        dead = OutboxRepository().dead_letter_count()
+        checks["outbox"] = {"pending": pending, "dead_lettered": dead}
+    except Exception as error:  # noqa: BLE001 — readiness reports, never crashes
+        ready = False
+        checks["outbox"] = {"error": str(error)[:200]}
+    try:
+        checks["payments"] = {
+            "provider": getattr(settings, "payment_provider", "razorpay"),
+            "razorpay_configured": settings.razorpay_is_configured,
+            "stripe_configured": bool(settings.stripe_secret_key),
+        }
+    except Exception as error:  # noqa: BLE001
+        ready = False
+        checks["payments"] = {"error": str(error)[:200]}
+    try:
+        from sellable.repositories import MerchantRepository
+
+        checks["database"] = {
+            "merchants": len(MerchantRepository().list_all(limit=5))
+        }
+    except Exception as error:  # noqa: BLE001
+        ready = False
+        checks["database"] = {"error": str(error)[:200]}
+    status_code = 200 if ready else 503
+    return JSONResponse(status_code=status_code, content={"ready": ready, "checks": checks})
+
+
+# ---------------------------------------------------------------------------
+# Platform administration (target §48): fail-closed admin surface. Without
+# SELLABLE_ADMIN_API_KEY every route 404s — there is deliberately no
+# "disabled" banner to probe. Reads only; admin writes arrive with the
+# billing UI and stay ledger-audited when they do.
+# ---------------------------------------------------------------------------
+
+def require_admin(request: Request) -> None:
+    import hmac as _hmac
+
+    configured = settings.admin_api_key
+    provided = request.headers.get("X-Admin-Key")
+    if not configured or not provided or not _hmac.compare_digest(provided, configured):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+@app.get("/admin/overview", tags=["admin"])
+@limiter.limit("30/minute")
+def admin_overview(request: Request) -> dict:
+    require_admin(request)
+    from sellable.repositories import MerchantRepository, OutboxRepository
+
+    merchants = MerchantRepository().list_all(limit=500)
+    outbox = OutboxRepository()
+    return {
+        "merchants": len(merchants),
+        "outbox_pending": outbox.pending_count(),
+        "outbox_dead_lettered": outbox.dead_letter_count(),
+    }
+
+
+@app.get("/admin/merchants", tags=["admin"])
+@limiter.limit("30/minute")
+def admin_merchants(request: Request, limit: int = 100) -> list:
+    require_admin(request)
+    from sellable.platform_billing import resolve_plan, summarize_usage
+    from sellable.repositories import (
+        MerchantRepository,
+        ObservabilityRepository,
+        OrderRepository,
+    )
+
+    result = []
+    for merchant in MerchantRepository().list_all(limit=limit):
+        usage = summarize_usage(
+            order_repo=OrderRepository(),
+            observability_repo=ObservabilityRepository(),
+            ledger=LedgerRepository(),
+            merchant_id=merchant.merchant_id,
+            plan=resolve_plan(merchant.merchant_id),
+        )
+        result.append(
+            {
+                "merchant_id": merchant.merchant_id,
+                "name": merchant.name,
+                "created_at": merchant.created_at.isoformat()
+                if merchant.created_at
+                else None,
+                "billing": usage,
+            }
+        )
+    return result
+
+
+@app.get("/admin/incidents", tags=["admin"])
+@limiter.limit("30/minute")
+def admin_incidents(request: Request, limit: int = 50) -> dict:
+    require_admin(request)
+    from sellable.repositories import FraudRepository, OutboxRepository, RiskRepository
+
+    return {
+        "fraud": [
+            {
+                "kind": f.kind.value,
+                "merchant_id": f.merchant_id,
+                "subject_id": f.subject_id,
+                "created_at": f.created_at.isoformat(),
+            }
+            for f in FraudRepository().list_recent_all(limit=limit)
+        ],
+        "risk_blocks": [
+            {
+                "decision_id": r.decision_id,
+                "merchant_id": r.merchant_id,
+                "reasons": r.reasons,
+                "created_at": r.created_at.isoformat(),
+            }
+            for r in RiskRepository().recent_all(limit=limit)
+            if r.level.value == "BLOCK"
+        ],
+        "dead_letters": OutboxRepository().list_dead_letters(None, limit=limit),
+    }
+
+
+@app.post(
+    "/webhooks/stripe",
+    tags=["payments"],
+    summary="Verify and reconcile a Stripe test-mode webhook.",
+)
+@limiter.limit("120/minute")
+async def stripe_webhook(
+    request: Request,
+    stripe_signature: str | None = Header(default=None, alias="Stripe-Signature"),
+) -> dict:
+    """Second provider rail (§25): HMAC-verified Stripe events settle the
+    same deterministic order machine. Test mode only."""
+    from sellable.payments.stripe import (
+        InvalidStripeSignatureError,
+        StripeConfigurationError,
+    )
+
+    body = await request.body()
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Invalid JSON body") from error
+    from sellable.payments import build_provider
+
+    adapter = build_provider(settings, "stripe")
+    try:
+        adapter.verify_webhook(body, stripe_signature)
+    except InvalidStripeSignatureError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    except StripeConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    event_type = payload.get("type", "")
+    entity = payload.get("data", {}).get("object", {}) or {}
+    if event_type not in ("payment_intent.succeeded", "payment_intent.payment_failed"):
+        return {"status": "ignored", "event_type": event_type}
+    local_order_id = (entity.get("metadata") or {}).get("local_order_id")
+    if not local_order_id:
+        raise HTTPException(status_code=400, detail="Missing local_order_id metadata")
+    core = registry.get(_merchant_for_order(local_order_id))
+    try:
+        if event_type == "payment_intent.succeeded":
+            order = core.mark_paid(
+                local_order_id, provider_ref=str(entity.get("id", ""))
+            )
+        else:
+            order = core.mark_payment_failed(
+                local_order_id,
+                reason=str(entity.get("last_payment_error", {}).get("message") or "stripe declined"),
+                provider_ref=str(entity.get("id", "")),
+            )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    _drain_bus_best_effort()
+    return {"status": order.status.value, "order_id": order.order_id}
+
+
+def _merchant_for_order(order_id: str) -> str:
+    """Resolve the owning merchant for a provider-referenced order without
+    leaking cross-tenant existence (unknown ids fall through to the demo
+    resolution path, which 404s identically)."""
+    from sellable.repositories import OrderRepository
+
+    order = OrderRepository().get(order_id)
+    if order is not None:
+        return order.merchant_id
+    return DEMO_MERCHANT_ID
+
+
+@app.get("/console/connectors", tags=["console"])
+@limiter.limit("60/minute")
+def console_connectors(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> list:
+    core = merchant_core(session)
+    return core.connector_list()
+
+
+@app.post("/console/connectors", tags=["console"])
+@limiter.limit("30/minute")
+def console_connector_register(
+    request: Request,
+    body: dict,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    from sellable.connectors.base import ConnectorConfig
+
+    for field_name in ("connector_id", "provider"):
+        if not body.get(field_name):
+            raise HTTPException(status_code=400, detail=f"{field_name} is required")
+    if body.get("provider") != "custom_rest":
+        raise HTTPException(
+            status_code=400,
+            detail="Only the custom_rest provider is onboarded in this release",
+        )
+    core = merchant_core(session)
+    try:
+        config = ConnectorConfig(
+            connector_id=str(body["connector_id"]),
+            merchant_id=session.merchant_id,
+            kind=str(body.get("kind") or "commerce"),
+            provider="custom_rest",
+            base_url=str(body.get("base_url") or ""),
+            products_path=str(body.get("products_path") or "/products"),
+            field_map=dict(body.get("field_map") or {}),
+            timeout_seconds=int(body.get("timeout_seconds") or 15),
+            active=True,
+        )
+        return core.connector_register(
+            config, trace_id=resolve_trace_id(x_trace_id)
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.delete("/console/connectors/{connector_id}", tags=["console"])
+@limiter.limit("30/minute")
+def console_connector_delete(
+    connector_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    core = merchant_core(session)
+    try:
+        core.connector_remove(connector_id, trace_id=resolve_trace_id(x_trace_id))
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"connector_id": connector_id, "status": "DELETED"}
+
+
+@app.get("/console/connectors/{connector_id}/health", tags=["console"])
+@limiter.limit("30/minute")
+def console_connector_health(
+    connector_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    core = merchant_core(session)
+    try:
+        return core.connector_health(connector_id, trace_id=resolve_trace_id(x_trace_id))
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/console/connectors/{connector_id}/sync", tags=["console"])
+@limiter.limit("10/minute")
+def console_connector_sync(
+    connector_id: str,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    core = merchant_core(session)
+    try:
+        return core.connector_sync(connector_id, trace_id=resolve_trace_id(x_trace_id))
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:  # noqa: BLE001 — source failures are 502s
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.get("/console/billing", tags=["console"])
+@limiter.limit("60/minute")
+def console_billing(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+    days: int = 30,
+) -> dict:
+    from sellable.platform_billing import resolve_plan, summarize_usage
+    from sellable.repositories import ObservabilityRepository, OrderRepository
+
+    return summarize_usage(
+        order_repo=OrderRepository(),
+        observability_repo=ObservabilityRepository(),
+        ledger=LedgerRepository(),
+        merchant_id=session.merchant_id,
+        plan=resolve_plan(
+            session.merchant_id,
+            override=os.getenv("SELLABLE_DEFAULT_PLAN"),
+        ),
+        days=days,
+    )
+
+
 @app.get("/.well-known/agents.json", tags=["agent-gateway"])
 @limiter.exempt
 def agent_manifest(gateway: AgentGateway = Depends(get_agent_gateway)) -> dict[str, object]:
@@ -379,10 +2105,23 @@ def agent_quote_create(
     request: Request,
     body: SellerRequest,
     gateway: AgentGateway = Depends(get_agent_gateway),
+    commerce: CommerceCore = Depends(get_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
 ) -> SellerDecision:
-    return gateway.create_quote(body, trace_id=resolve_trace_id(x_trace_id))
+    trace_id = resolve_trace_id(x_trace_id)
+    # Quotes need an ALLOW delegation; holds must resolve before quoting.
+    _gate_delegation(
+        commerce,
+        delegation_id=x_delegation_id,
+        scope=OperationScope.CART_WRITE,
+        amount_paise=None,
+        trace_id=trace_id,
+        route="agent.quotes.create",
+        hold_status=403,
+    )
+    return gateway.create_quote(body, trace_id=trace_id)
 
 
 @app.post("/agent/quotes.negotiate", response_model=SellerDecision, tags=["agent-gateway"])
@@ -391,13 +2130,30 @@ def agent_quote_negotiate(
     request: Request,
     body: SellerRequest,
     gateway: AgentGateway = Depends(get_agent_gateway),
+    commerce: CommerceCore = Depends(get_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
 ) -> SellerDecision:
-    return gateway.create_quote(body, trace_id=resolve_trace_id(x_trace_id))
+    trace_id = resolve_trace_id(x_trace_id)
+    _gate_delegation(
+        commerce,
+        delegation_id=x_delegation_id,
+        scope=OperationScope.CART_WRITE,
+        amount_paise=None,
+        trace_id=trace_id,
+        route="agent.quotes.negotiate",
+        hold_status=403,
+    )
+    return gateway.create_quote(body, trace_id=trace_id)
 
 
-@app.post("/agent/buyer/run", response_model=BuyerResult, tags=["buyer-agent"])
+@app.post(
+    "/agent/buyer/run",
+    response_model=BuyerResult,
+    tags=["buyer-agent"],
+    deprecated=True,
+)
 @limiter.limit("10/minute")
 def buyer_run(
     request: Request,
@@ -419,7 +2175,22 @@ def agent_consents_request(
     body: ConsentRequest,
     commerce: CommerceCore = Depends(get_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
 ) -> dict:
+    trace_id = resolve_trace_id(x_trace_id)
+    try:
+        order = commerce.get_order(body.order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    _gate_delegation(
+        commerce,
+        delegation_id=x_delegation_id,
+        scope=OperationScope.CHECKOUT_WRITE,
+        amount_paise=order.amount_paise,
+        trace_id=trace_id,
+        route="agent.consents.request",
+    )
     try:
         consent = commerce.issue_consent(body.order_id)
     except ValueError as error:
@@ -445,6 +2216,7 @@ def agent_order_create(
     commerce: CommerceCore = Depends(get_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
 ) -> dict:
     from agents.seller.agent import SellerRequest
 
@@ -454,6 +2226,14 @@ def agent_order_create(
     # which raises IdempotencyReuseError instead of returning another
     # transaction's order.
     trace_id = resolve_trace_id(x_trace_id, body_trace_id=body.trace_id)
+    _gate_delegation(
+        commerce,
+        delegation_id=x_delegation_id,
+        scope=OperationScope.CHECKOUT_WRITE,
+        amount_paise=None,
+        trace_id=trace_id,
+        route="agent.orders.create",
+    )
     pre_existing = commerce.get_order_by_idempotency_key(body.idempotency_key)
     if pre_existing is not None and pre_existing.trace_id == trace_id:
         return {
@@ -492,6 +2272,7 @@ def agent_order_create(
             intent=body.intent,
             trace_id=trace_id,
             idempotency_key=body.idempotency_key,
+            delegation_id=x_delegation_id,
         )
     except IdempotencyReuseError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -632,7 +2413,7 @@ async def razorpay_webhook(
 ) -> PaymentAttempt:
     body = await request.body()
     try:
-        return payments.handle_webhook(body, x_razorpay_signature)
+        attempt = payments.handle_webhook(body, x_razorpay_signature)
     except InvalidWebhookSignatureError as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
     except RazorpayConfigurationError as error:
@@ -643,6 +2424,10 @@ async def razorpay_webhook(
         raise HTTPException(status_code=409, detail=str(error)) from error
     except (UnknownProviderOrderError, UnsupportedWebhookEventError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    # Verified settlement fans out asynchronously: analytics, merchant
+    # notifications, fulfillment, and trust update off the durable outbox.
+    _drain_bus_best_effort()
+    return attempt
 
 
 @app.post(
@@ -1812,7 +3597,12 @@ def console_onboarding(
     }
 
 
-@app.post("/console/agent/buyer/run", response_model=BuyerResult, tags=["console"])
+@app.post(
+    "/console/agent/buyer/run",
+    response_model=BuyerResult,
+    tags=["console"],
+    deprecated=True,
+)
 @limiter.limit("10/minute")
 def console_buyer_run(
     request: Request,
@@ -1821,6 +3611,11 @@ def console_buyer_run(
     x_trace_id: str | None = Header(default=None),
 ) -> BuyerResult:
     """Run the reference AI buyer against the authenticated merchant's own store.
+
+    .. deprecated::
+        Target architecture (``SELLABLE_ARCHITECTURE.md`` §7, §55) runs no
+        Buyer Agent as a core component. Retained for demo/eval continuity
+        during the revamp; frozen, no new features.
 
     The buyer agent operates on a gateway bound to the merchant's core, so
     discovery, quotes, and orders all resolve to the caller's catalog and
@@ -2083,6 +3878,26 @@ def console_seller_respond(
     trace_id = resolve_trace_id(x_trace_id)
     body = _negotiation_aware_request(core, body, trace_id)
     agent = SellerAgent(core, llm=_seller_llm)
+    return agent.respond(body, trace_id=trace_id)
+
+
+@app.post("/console/agent/service/respond", response_model=CSDecision, tags=["console"])
+@limiter.limit("30/minute")
+def console_service_respond(
+    request: Request,
+    body: CSRequest,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> CSDecision:
+    """Support chat against the merchant's own orders and policies.
+
+    Runs the Customer Service Agent on the caller's core: authenticated
+    order help, shipping status, returns, exchanges, bounded refund asks,
+    and human escalation — never direct refunds or policy overrides.
+    """
+    core = merchant_core(session)
+    trace_id = resolve_trace_id(x_trace_id)
+    agent = CustomerServiceAgent(core, llm=_seller_llm)
     return agent.respond(body, trace_id=trace_id)
 
 
