@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Play, FlaskConical, TrendingUp } from "lucide-react";
+import { Play } from "lucide-react";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -66,20 +66,30 @@ export default function EvalsPage() {
 
   if (loading && !suites) {
     return (
-      <div className="space-y-6 p-6">
-        <h1 className="text-xl font-semibold">Evaluations</h1>
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+        <div>
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Evaluations
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Evaluations
+          </h1>
+        </div>
         <TableSkeleton />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 p-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold">
-          <FlaskConical size={18} /> Evaluations
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="min-w-0">
+        <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+          Evaluations
+        </div>
+        <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+          Evaluations
         </h1>
-        <p className="text-sm text-muted">
+        <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
           Versioned suites run on isolated cores, never on merchant data.
           P0 failures block releases.
         </p>
@@ -88,8 +98,7 @@ export default function EvalsPage() {
       {error && <ErrorBanner message={error} onRetry={refresh} />}
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold">Suites</h2>
-        {!suites || suites.length === 0 ? (
+        <h2 className="mb-3 text-sm font-semibold">Suites</h2>        {!suites || suites.length === 0 ? (
           <EmptyState title="No suites" message="Seeded suites appear here." />
         ) : (
           <div className="space-y-2">
@@ -117,7 +126,7 @@ export default function EvalsPage() {
                 <button
                   onClick={() => void onRun(suite.suite_id)}
                   disabled={running !== null}
-                  className="inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-3 py-2 text-xs text-white disabled:opacity-50"
+                  className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-neutral-900 text-xs text-white disabled:opacity-50"
                 >
                   <Play size={12} /> {running === suite.suite_id ? "Running…" : "Run"}
                 </button>
@@ -128,7 +137,7 @@ export default function EvalsPage() {
       </section>
 
       {results && (
-        <section>
+        <section className="border-t border-hairline pt-6">
           <h2 className="mb-3 text-sm font-semibold">{resultsTitle}</h2>
           <div className="space-y-1.5">
             {results.map((result) => (
@@ -150,9 +159,9 @@ export default function EvalsPage() {
         </section>
       )}
 
-      <section>
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-          <TrendingUp size={14} /> Production drift (7d vs prior 7d)
+      <section className="border-t border-hairline pt-6">
+        <h2 className="mb-3 text-sm font-semibold">
+          Production drift (7d vs prior 7d)
         </h2>
         {!drift || drift.length === 0 ? (
           <EmptyState
