@@ -72,11 +72,9 @@ function AccountMenu({ store, fallback }: { store: StoreInfo | null; fallback: s
         align="start"
         sideOffset={12}
         collisionPadding={12}
-        // Solid surface: Base UI portals mount at document.body, outside the
-        // `.dashboard-app` scope where the shadcn --color-popover/--color-border
-        // aliases live, so the stock translucent tokens resolve to transparent
-        // here. Globally-scoped panel/ink/hairline tokens keep this opaque in
-        // both themes (see SOLID SURFACE rule in globals.css).
+        // Opaque by construction: panel/ink/hairline tokens resolve
+        // globally in both themes, and the portal-surface guard in
+        // globals.css pins every portaled menu to the same surface.
         className="w-[280px] bg-panel text-ink border border-hairline p-2 shadow-xl"
       >
         <div className="px-2.5 pt-2 pb-3">

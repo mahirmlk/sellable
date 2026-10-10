@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Bell, Webhook, Activity, AlertTriangle } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { formatPaise, formatTimestamp } from "@/lib/formatters";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
@@ -55,11 +55,15 @@ function StatCard({
       ? "border-red-600/20 bg-red-50 text-red-700"
       : tone === "amber"
         ? "border-amber-600/20 bg-amber-50 text-amber-800"
-        : "border-hairline bg-panel-2 text-foreground";
+        : "border-hairline bg-card text-ink";
   return (
-    <div className={`rounded-xl border px-4 py-3 ${toneClass}`}>
-      <div className="text-xs text-muted">{label}</div>
-      <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
+    <div className={`rounded-[18px] border shadow-card p-5 ${toneClass}`}>
+      <div className="text-[13px] font-medium text-muted mb-2 truncate">
+        {label}
+      </div>
+      <div className="font-semibold text-[28px] leading-none tracking-tight tabular-nums">
+        {value}
+      </div>
     </div>
   );
 }
@@ -121,7 +125,8 @@ export default function OperationsPage() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    const t = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(t);
   }, [refresh]);
 
   const onDrain = async () => {
@@ -185,36 +190,48 @@ export default function OperationsPage() {
 
   if (loading && !ops) {
     return (
-      <div className="space-y-6 p-6">
-        <h1 className="text-xl font-semibold">Operations</h1>
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+        <div>
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Operations
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Operations
+          </h1>
+        </div>
         <TableSkeleton />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Operations</h1>
-          <p className="text-sm text-muted">
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Operations
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Operations
+          </h1>
+          <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
             Event bus health, notifications, analytics, and webhook subscriptions.
           </p>
         </div>
-        <button
-          onClick={refresh}
-          className="inline-flex items-center gap-2 rounded-lg border border-hairline bg-panel-2 px-3 py-2 text-sm"
-        >
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={refresh}
+            className="inline-flex items-center gap-2 h-9 px-4 border border-hairline bg-panel text-[13px] text-ink hover:bg-panel-2 transition-all cursor-pointer font-medium rounded-full"
+          >
+            <RefreshCw size={12} /> Refresh
+          </button>
+        </div>
       </div>
 
       {error && <ErrorBanner message={error} onRetry={refresh} />}
 
       <section>
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-          <Activity size={14} /> Event bus
-        </h2>
+        <h2 className="mb-3 text-sm font-semibold">Event bus</h2>
         {ops ? (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <StatCard label="Pending events" value={ops.outbox.pending} />
@@ -243,16 +260,16 @@ export default function OperationsPage() {
         <button
           onClick={onDrain}
           disabled={draining}
-          className="mt-3 inline-flex items-center gap-2 rounded-lg border border-hairline bg-panel-2 px-3 py-2 text-sm disabled:opacity-50"
+          className="mt-3 inline-flex items-center gap-2 h-9 px-4 rounded-full border border-hairline bg-panel text-[13px] font-medium text-ink hover:bg-panel-2 transition-all cursor-pointer disabled:opacity-50"
         >
-          <RefreshCw size={14} /> {draining ? "Draining…" : "Drain event bus"}
+          <RefreshCw size={12} /> {draining ? "Draining…" : "Drain event bus"}
         </button>
       </section>
 
       {deadLetters && deadLetters.length > 0 && (
-        <section>
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-            <AlertTriangle size={14} /> Dead letters ({deadLetters.length})
+        <section className="border-t border-hairline pt-6">
+          <h2 className="mb-3 text-sm font-semibold">
+            Dead letters ({deadLetters.length})
           </h2>
           <div className="space-y-2">
             {deadLetters.map((d) => (
@@ -270,7 +287,7 @@ export default function OperationsPage() {
                 </div>
                 <button
                   onClick={() => onRetry(d.event_id)}
-                  className="rounded-lg border border-hairline bg-panel-2 px-3 py-1.5 text-xs"
+                  className="rounded-full border border-hairline bg-panel px-3 py-1.5 text-xs"
                 >
                   Retry
                 </button>
@@ -280,10 +297,8 @@ export default function OperationsPage() {
         </section>
       )}
 
-      <section>
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-          <Bell size={14} /> Notifications
-        </h2>
+      <section className="border-t border-hairline pt-6">
+        <h2 className="mb-3 text-sm font-semibold">Notifications</h2>
         {!notifications || notifications.length === 0 ? (
           <EmptyState
             title="No notifications"
@@ -307,7 +322,7 @@ export default function OperationsPage() {
                 </div>
                 <button
                   onClick={() => onMarkRead(n.notification_id)}
-                  className="rounded-lg border border-hairline bg-panel px-3 py-1.5 text-xs"
+                  className="rounded-full border border-hairline bg-panel px-3 py-1.5 text-xs"
                 >
                   Mark read
                 </button>
@@ -317,7 +332,7 @@ export default function OperationsPage() {
         )}
       </section>
 
-      <section>
+      <section className="border-t border-hairline pt-6">
         <h2 className="mb-3 text-sm font-semibold">Analytics (30 days)</h2>
         {analytics ? (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -350,10 +365,8 @@ export default function OperationsPage() {
         )}
       </section>
 
-      <section>
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-          <Webhook size={14} /> Webhook subscriptions
-        </h2>
+      <section className="border-t border-hairline pt-6">
+        <h2 className="mb-3 text-sm font-semibold">Webhook subscriptions</h2>
         {!subscriptions || subscriptions.length === 0 ? (
           <EmptyState
             title="No webhook subscriptions"
@@ -372,7 +385,7 @@ export default function OperationsPage() {
                 </div>
                 <button
                   onClick={() => onUnsubscribe(s.subscription_id)}
-                  className="rounded-lg border border-hairline bg-panel px-3 py-1.5 text-xs"
+                  className="rounded-full border border-hairline bg-panel px-3 py-1.5 text-xs"
                 >
                   Delete
                 </button>
@@ -408,14 +421,14 @@ export default function OperationsPage() {
           <button
             onClick={onSubscribe}
             disabled={!newUrl || newEvents.length === 0}
-            className="rounded-lg border border-hairline bg-panel px-3 py-2 text-sm disabled:opacity-50"
+            className="rounded-full bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-50"
           >
             Subscribe
           </button>
         </div>
       </section>
 
-      <section>
+      <section className="border-t border-hairline pt-6">
         <h2 className="mb-3 text-sm font-semibold">Recent deliveries</h2>
         {!dispatches || dispatches.length === 0 ? (
           <EmptyState
@@ -446,7 +459,7 @@ export default function OperationsPage() {
         )}
       </section>
 
-      <section>
+      <section className="border-t border-hairline pt-6">
         <h2 className="mb-3 text-sm font-semibold">Billing (30 days)</h2>        {!billing ? (
           <EmptyState
             title="No billing data"
@@ -481,7 +494,7 @@ export default function OperationsPage() {
         )}
       </section>
 
-      <section>
+      <section className="border-t border-hairline pt-6">
         <h2 className="mb-3 text-sm font-semibold">
           Merchant readiness{" "}
           {readiness && (
