@@ -23,7 +23,15 @@ class PolicyEngine:
         policy: MerchantPolicy,
         products: Mapping[str, Product],
         upsells_in_session: int = 0,
+        amount_override_paise: int | None = None,
     ) -> PolicyDecision:
+        """Evaluate a cart. ``amount_override_paise`` carrying the authorized
+        grand total (promotions/tax/shipping included) makes the budget,
+        merchant-limit, and approval-threshold checks bind the charged
+        amount rather than the merchandise subtotal (unified policy-on-grand;
+        used by the checkout path, None preserves the legacy mandate path).
+        Line-level rules (SKU/category/stock/floor/discount-cap) always use
+        cart state."""
         if intent.expires_at <= cart.created_at:
             return self._deny(
                 "MANDATE_EXPIRED",
@@ -93,16 +101,21 @@ class PolicyEngine:
                 )
             total_discount += (item.unit_price_paise - item.offered_price_paise) * item.quantity
 
-        if cart.total_paise > intent.budget_ceiling_paise:
+        # Amount rules bind the charged total: the authorized grand total
+        # when the caller supplies it, otherwise the merchandise total.
+        charged_paise = (
+            amount_override_paise if amount_override_paise is not None else cart.total_paise
+        )
+        if charged_paise > intent.budget_ceiling_paise:
             return self._deny(
                 "OVER_BUDGET",
-                "The cart total exceeds the buyer mandate's budget ceiling.",
+                "The charged total exceeds the buyer mandate's budget ceiling.",
                 "POLICY.buyer_budget",
             )
-        if cart.total_paise > policy.max_order_value_paise:
+        if charged_paise > policy.max_order_value_paise:
             return self._deny(
                 "MERCHANT_POLICY_LIMIT",
-                "The cart total exceeds the merchant's maximum order value.",
+                "The charged total exceeds the merchant's maximum order value.",
                 "POLICY.max_order_value",
             )
         if total_discount * 100 > cart.subtotal_paise * policy.max_discount_percent:
@@ -111,7 +124,7 @@ class PolicyEngine:
                 "The negotiated discount exceeds the merchant's configured discount cap.",
                 "POLICY.max_discount_percent",
             )
-        if cart.total_paise >= policy.human_approval_threshold_paise:
+        if charged_paise >= policy.human_approval_threshold_paise:
             return PolicyDecision(
                 verdict=PolicyVerdict.NEEDS_HUMAN_APPROVAL,
                 reason_code="ABOVE_APPROVAL_THRESHOLD",
