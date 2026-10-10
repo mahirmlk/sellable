@@ -1,8 +1,14 @@
-"""Bounded Seller Agent orchestration built on a small LangGraph state machine.
+"""Bounded Seller Agent orchestration built on a staged LangGraph state machine.
 
-This module intentionally has no model client. A future LLM may choose which
-grounded tool to call or phrase a response, but this agent's data and candidate
-cart always originate from deterministic catalog and policy tools.
+Stages (§7.2): UNDERSTAND_INTENT → SEARCH → RECOMMEND → BUILD_CART →
+PRICE → PROMOTION → CHECKOUT → RESPOND, with negotiation folded into the
+single-shot counter inside BUILD_CART (bounded by the merchant's round
+limit counted across the trace) and upsell evaluation before promotion.
+
+The model proposes phrasing only. Every SKU, price, promotion, and policy
+outcome originates from deterministic tools; pre/post guardrails (§9),
+version stamping (§8.3), model-gateway telemetry (§8.2), and run recording
+(§29.1) wrap every execution.
 """
 
 from __future__ import annotations
@@ -12,10 +18,23 @@ from enum import StrEnum
 from typing import NotRequired, TypedDict
 from uuid import uuid4
 
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from pydantic import Field
 
 from agents.llm.adapters.base import LLMAdapter, reply_amounts_known, reply_skus_known
+from agents.runtime import guardrails as guards
+from agents.runtime.guardrails import GuardrailContext, GuardrailRecorder
+from agents.runtime.model_gateway import ModelGateway
+from agents.runtime.recorder import AgentRunRecorder
+from agents.runtime.versions import (
+    SELLER_AGENT_ID,
+    AgentVersion,
+    VersionRegistry,
+    policy_bundle_version,
+    seed_registry,
+)
+from agents.seller.intent import TurnKind, classify_buyer_message
 from agents.seller.tools import SellerTools
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
@@ -26,12 +45,17 @@ from sellable.contracts import (
     PolicyDecision,
     PolicyVerdict,
     Product,
+    PromotionResult,
     StrictModel,
 )
 from sellable.core import CommerceCore
 
 
 logger = logging.getLogger("sellable.agents.seller")
+
+#: Hard cap on graph recursion: the graph is linear by construction, so any
+#: recursion here means a wiring bug — fail safe, never loop.
+GRAPH_RECURSION_LIMIT = 16
 
 
 class SellerAction(StrEnum):
@@ -41,6 +65,18 @@ class SellerAction(StrEnum):
     DENIED = "DENIED"
     NO_MATCH = "NO_MATCH"
     PRICE_QUERY = "PRICE_QUERY"
+
+
+class SellerStage(StrEnum):
+    UNDERSTAND_INTENT = "UNDERSTAND_INTENT"
+    SEARCH = "SEARCH"
+    RECOMMEND = "RECOMMEND"
+    BUILD_CART = "BUILD_CART"
+    PRICE = "PRICE"
+    NEGOTIATE = "NEGOTIATE"
+    PROMOTION = "PROMOTION"
+    CHECKOUT = "CHECKOUT"
+    RESPOND = "RESPOND"
 
 
 class SellerRequest(StrictModel):
@@ -55,6 +91,8 @@ class SellerRequest(StrictModel):
     # Explicit buyer acceptance of a suggested add-on; only this mutates the
     # cart with the upsell item (policy re-checked).
     accept_upsell: bool = False
+    # Optional promotion coupon evaluated deterministically at PROMOTION.
+    coupon_code: str | None = Field(default=None, max_length=64)
 
 
 class SellerDecision(StrictModel):
@@ -66,15 +104,27 @@ class SellerDecision(StrictModel):
     selected_product: Product | None = None
     upsell_product: Product | None = None
     tool_calls: list[str] = Field(default_factory=list)
+    stage: SellerStage = SellerStage.RESPOND
+    recommendations: list[Product] = Field(default_factory=list)
+    promotion: PromotionResult | None = None
+    persistent_cart_id: str | None = None
+    agent_id: str = ""
+    agent_version: str = ""
+    prompt_version: str = ""
+    guardrail_blocks: list[str] = Field(default_factory=list)
 
 
 class SellerGraphState(TypedDict):
     request: SellerRequest
     trace_id: str
+    turn_kind: NotRequired[str]
     search_results: NotRequired[list[Product]]
     selected_product: NotRequired[Product | None]
+    recommendations: NotRequired[list[Product]]
     candidate_cart: NotRequired[CartMandate | None]
     policy_decision: NotRequired[PolicyDecision | None]
+    promotion_result: NotRequired[PromotionResult | None]
+    persistent_cart_id: NotRequired[str | None]
     upsell_product: NotRequired[Product | None]
     countered: NotRequired[bool]
     best_price_paise: NotRequired[int | None]
@@ -87,30 +137,223 @@ class SellerAgent:
         self,
         commerce: CommerceCore,
         llm: "LLMAdapter | None" = None,
+        *,
+        versions: AgentVersion | None = None,
+        registry: VersionRegistry | None = None,
+        guardrails_enabled: bool = True,
+        recorder: AgentRunRecorder | None = None,
+        model_gateway: ModelGateway | None = None,
     ) -> None:
         self.commerce = commerce
         self.llm = llm
-        self.tools = SellerTools(commerce)
+        if versions is None:
+            registry = registry or seed_registry(
+                VersionRegistry(), commerce.policy
+            )
+            versions = registry.require(SELLER_AGENT_ID)
+        self.versions = versions
+        self.guardrails_enabled = guardrails_enabled
+        self.recorder = recorder or AgentRunRecorder(
+            merchant_id=commerce.merchant_scope, agent_id=versions.agent_id
+        )
+        self.recorder.merchant_id = commerce.merchant_scope
+        self.gateway = model_gateway
+        if self.gateway is None and llm is not None:
+            self.gateway = ModelGateway(llm, recorder=self.recorder.record_model)
+        self.tools = SellerTools(commerce, recorder=self.recorder)
+        self._checkpointer = MemorySaver()
         self._graph = self._build_graph()
 
+    # ------------------------------------------------------------------
+    # Entry point: guards → recorded run → post-checks.
+    # ------------------------------------------------------------------
+
     def respond(self, request: SellerRequest, *, trace_id: str | None = None) -> SellerDecision:
-        result = self._graph.invoke(
-            {"request": request, "trace_id": trace_id or f"trc_{uuid4().hex}"}
+        resolved_trace = trace_id or f"trc_{uuid4().hex}"
+        guard_recorder = GuardrailRecorder()
+        if self.guardrails_enabled:
+            blocked, results = guards.run_guards(
+                self._guard_context(request, resolved_trace)
+            )
+            guard_recorder.extend(results)
+            if blocked:
+                return self._denied_by_guardrail(
+                    request, resolved_trace, guard_recorder
+                )
+        run_trace = resolved_trace
+        self.recorder.open_run(
+            trace_id=run_trace,
+            versions=self.versions,
+            model_version=self.gateway.model if self.gateway else "",
         )
-        return result["result"]
+        try:
+            result = self._graph.invoke(
+                {"request": request, "trace_id": run_trace},
+                config={
+                    "recursion_limit": GRAPH_RECURSION_LIMIT,
+                    "configurable": {"thread_id": run_trace},
+                },
+            )["result"]
+        except Exception as error:  # noqa: BLE001 — agents degrade, never crash flows
+            logger.warning("seller run failed safely: %s", error)
+            result = SellerDecision(
+                trace_id=run_trace,
+                action=SellerAction.DENIED,
+                response_message="I could not complete that request safely, so no quote was created.",
+                tool_calls=[],
+                stage=SellerStage.RESPOND,
+                agent_id=self.versions.agent_id,
+                agent_version=self.versions.agent_version,
+                prompt_version=self.versions.prompt_version,
+                guardrail_blocks=["RUN_FAILED_SAFE"],
+            )
+            self.recorder.close_run(status="ERROR", outcome="DENIED", error=str(error)[:300])
+            return result
+        result = result.model_copy(
+            update={
+                "agent_id": self.versions.agent_id,
+                "agent_version": self.versions.agent_version,
+                "prompt_version": self.versions.prompt_version,
+                "guardrail_blocks": guard_recorder.blocks,
+            }
+        )
+        self.recorder.close_run(status="COMPLETED", outcome=result.action.value)
+        self._publish_run_completed(result)
+        return result
+
+    def _publish_run_completed(self, result: SellerDecision) -> None:
+        """Fan agent telemetry into the event bus (§29 + §34.2): the
+        analytics consumer normalizes run/completion facts. Best-effort —
+        the ledger run rows are already durable."""
+        try:
+            from sellable.events import new_event
+
+            cost_usd = self.gateway.total_cost_usd if self.gateway else 0.0
+            self.commerce.outbox_repo.publish(
+                new_event(
+                    event_type="agent.run.completed",
+                    tenant_id=self.commerce.merchant_scope,
+                    merchant_id=self.commerce.merchant_scope,
+                    aggregate_type="agent_run",
+                    aggregate_id=self.recorder.run_id,
+                    trace_id=result.trace_id,
+                    actor_type="agent",
+                    actor_id=self.versions.agent_id,
+                    data={
+                        "action": result.action.value,
+                        "agent_version": self.versions.agent_version,
+                        "model_cost_usd": cost_usd,
+                        "tool_calls": len(result.tool_calls),
+                    },
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — telemetry is additive
+            logger.warning("agent run publish failed: %s", exc)
+
+    def _guard_context(
+        self, request: SellerRequest, trace_id: str
+    ) -> GuardrailContext:
+        return GuardrailContext(
+            agent_id=self.versions.agent_id,
+            agent_type="SELLABLE_INTERNAL_AGENT",
+            merchant_id=self.commerce.merchant_scope,
+            session_id=trace_id,
+            trace_id=trace_id,
+            input_text=request.message,
+            allowed_tools=self._tool_allowlist(),
+        )
+
+    @staticmethod
+    def _tool_allowlist() -> tuple[str, ...]:
+        return (
+            "catalog.search",
+            "catalog.get",
+            "catalog.compare",
+            "catalog.availability",
+            "cart.create",
+            "cart.add_item",
+            "cart.get",
+            "cart.prepare",
+            "quotes.create",
+            "quotes.negotiate",
+            "quote.best_price",
+            "quote.refresh",
+            "upsell.suggest",
+            "recommendations.get",
+            "promotion.evaluate",
+            "promotion.explain",
+            "shipping.get_options",
+            "checkout.create",
+            "checkout.get",
+            "checkout.request_approval",
+            "customer.get_context",
+            "order.get",
+            "order.cancel_request",
+            "service.create_case",
+            "service.handoff",
+            "policy.evaluate",
+        )
+
+    def _denied_by_guardrail(
+        self,
+        request: SellerRequest,
+        trace_id: str,
+        guard_recorder: GuardrailRecorder,
+    ) -> SellerDecision:
+        self.tools._record(
+            trace_id=trace_id,
+            action="seller.guardrail_blocked",
+            inputs={"blocks": guard_recorder.blocks},
+            output={"action": SellerAction.DENIED},
+            explanation="Guardrail middleware blocked the seller run before tool use.",
+        )
+        self.recorder.open_run(trace_id=trace_id, versions=self.versions)
+        self.recorder.close_run(status="BLOCKED", outcome="DENIED")
+        return SellerDecision(
+            trace_id=trace_id,
+            action=SellerAction.DENIED,
+            response_message="That request cannot be handled safely, so no quote was created.",
+            tool_calls=[],
+            stage=SellerStage.UNDERSTAND_INTENT,
+            agent_id=self.versions.agent_id,
+            agent_version=self.versions.agent_version,
+            prompt_version=self.versions.prompt_version,
+            guardrail_blocks=guard_recorder.blocks,
+        )
+
+    # ------------------------------------------------------------------
+    # Staged graph (§7.2).
+    # ------------------------------------------------------------------
 
     def _build_graph(self):
         graph = StateGraph(SellerGraphState)
+        graph.add_node("understand_intent", self._understand_intent)
         graph.add_node("search_catalog", self._search_catalog)
-        graph.add_node("create_quote", self._create_quote)
+        graph.add_node("recommend", self._recommend)
+        graph.add_node("build_cart", self._build_cart)
+        graph.add_node("evaluate_price", self._evaluate_price)
         graph.add_node("consider_upsell", self._consider_upsell)
+        graph.add_node("promote", self._promote)
+        graph.add_node("checkout_assist", self._checkout_assist)
         graph.add_node("format_response", self._format_response)
-        graph.add_edge(START, "search_catalog")
-        graph.add_edge("search_catalog", "create_quote")
-        graph.add_edge("create_quote", "consider_upsell")
-        graph.add_edge("consider_upsell", "format_response")
+        graph.add_edge(START, "understand_intent")
+        graph.add_edge("understand_intent", "search_catalog")
+        graph.add_edge("search_catalog", "recommend")
+        graph.add_edge("recommend", "build_cart")
+        graph.add_edge("build_cart", "evaluate_price")
+        graph.add_edge("evaluate_price", "consider_upsell")
+        graph.add_edge("consider_upsell", "promote")
+        graph.add_edge("promote", "checkout_assist")
+        graph.add_edge("checkout_assist", "format_response")
         graph.add_edge("format_response", END)
-        return graph.compile()
+        return graph.compile(checkpointer=self._checkpointer)
+
+    def _understand_intent(self, state: SellerGraphState) -> dict[str, object]:
+        try:
+            turn_kind = classify_buyer_message(state["request"].message).kind.value
+        except Exception:  # noqa: BLE001 — classification never breaks runs
+            turn_kind = TurnKind.OTHER.value
+        return {"turn_kind": turn_kind}
 
     def _search_catalog(self, state: SellerGraphState) -> dict[str, object]:
         request = state["request"]
@@ -136,7 +379,29 @@ class SellerAgent:
             "tool_calls": tool_calls,
         }
 
-    def _create_quote(self, state: SellerGraphState) -> dict[str, object]:
+    def _recommend(self, state: SellerGraphState) -> dict[str, object]:
+        request = state["request"]
+        selected = state.get("selected_product")
+        # Recommendations serve first-touch discovery, never contested
+        # pricing: while negotiating, price-querying, or accepting an upsell,
+        # the run stays focused on the item at hand.
+        if (
+            selected is None
+            or request.requested_sku is not None
+            or request.buyer_offer_paise is not None
+            or request.price_query
+            or request.accept_upsell
+        ):
+            return {"recommendations": []}
+        recommendations = self.tools.recommend(
+            product=selected, trace_id=state["trace_id"]
+        )
+        return {
+            "recommendations": recommendations,
+            "tool_calls": [*state["tool_calls"], "recommendations.get"],
+        }
+
+    def _build_cart(self, state: SellerGraphState) -> dict[str, object]:
         product = state.get("selected_product")
         if product is None:
             return {"candidate_cart": None, "policy_decision": None}
@@ -172,18 +437,27 @@ class SellerAgent:
             trace_id=trace_id,
             negotiation_round=(prior_rounds + 1) if request.buyer_offer_paise is not None else None,
         )
-        decision = self.commerce.evaluate_quote(
-            cart=cart, intent=request.intent, trace_id=trace_id
-        )
         return {
             "candidate_cart": cart,
-            "policy_decision": decision,
             "countered": countered,
             "tool_calls": [
                 *state["tool_calls"],
                 "quotes.negotiate" if countered else "quotes.create",
-                "policy.evaluate",
             ],
+        }
+
+    def _evaluate_price(self, state: SellerGraphState) -> dict[str, object]:
+        cart = state.get("candidate_cart")
+        if cart is None:
+            return {"policy_decision": None}
+        request = state["request"]
+        decision = self.commerce.evaluate_quote(
+            cart=cart, intent=request.intent, trace_id=state["trace_id"]
+        )
+        self.tools._note_tool("policy.evaluate")
+        return {
+            "policy_decision": decision,
+            "tool_calls": [*state["tool_calls"], "policy.evaluate"],
         }
 
     def _consider_upsell(self, state: SellerGraphState) -> dict[str, object]:
@@ -216,6 +490,7 @@ class SellerAgent:
             trace_id=state["trace_id"],
             upsells_in_session=0,
         )
+        self.tools._note_tool("policy.evaluate")
         if enriched_decision.verdict is PolicyVerdict.ALLOW:
             if accept:
                 return {
@@ -242,18 +517,86 @@ class SellerAgent:
             "tool_calls": [*state["tool_calls"], "upsell.suggest", "policy.evaluate"],
         }
 
+    def _promote(self, state: SellerGraphState) -> dict[str, object]:
+        """PROMOTION stage: deterministic promotion opportunities on ALLOW
+        carts. The LLM later explains them; it can never invent one."""
+        cart = state.get("candidate_cart")
+        decision = state.get("policy_decision")
+        if (
+            cart is None
+            or decision is None
+            or decision.verdict is not PolicyVerdict.ALLOW
+        ):
+            return {"promotion_result": None}
+        result = self.tools.promotion_evaluate(
+            cart=cart,
+            trace_id=state["trace_id"],
+            channel="agent",
+            coupon_code=state["request"].coupon_code,
+        )
+        return {
+            "promotion_result": result,
+            "tool_calls": [*state["tool_calls"], "promotion.evaluate"],
+        }
+
+    def _checkout_assist(self, state: SellerGraphState) -> dict[str, object]:
+        """CHECKOUT stage: bridge the quote-era mandate into a persistent,
+        versioned cart the checkout flow can consume. Best-effort: a stock
+        race between quote and persist skips assistance, never breaks it."""
+        cart = state.get("candidate_cart")
+        decision = state.get("policy_decision")
+        if (
+            cart is None
+            or decision is None
+            or decision.verdict is not PolicyVerdict.ALLOW
+        ):
+            return {"persistent_cart_id": None}
+        trace_id = state["trace_id"]
+        try:
+            persistent = self.commerce.cart_service.create_cart(
+                self.commerce.merchant_scope, agent_session_id=trace_id
+            )
+            for item in cart.items:
+                persistent = self.commerce.cart_service.add_item(
+                    persistent.cart_id,
+                    self.commerce.merchant_scope,
+                    item.sku,
+                    item.quantity,
+                    expected_version=persistent.version,
+                )
+        except Exception as error:  # noqa: BLE001 — assistance is additive
+            logger.warning("checkout assist skipped: %s", error)
+            return {"persistent_cart_id": None}
+        self.tools._record(
+            trace_id=trace_id,
+            action="checkout.cart_prepared",
+            inputs={"mandate_id": cart.mandate_id},
+            output={
+                "persistent_cart_id": persistent.cart_id,
+                "grand_total_paise": persistent.grand_total_paise,
+            },
+            explanation="Bridged the quoted mandate into a persistent cart for checkout.",
+        )
+        return {
+            "persistent_cart_id": persistent.cart_id,
+            "tool_calls": [*state["tool_calls"], "cart.prepare"],
+        }
+
     def _format_response(self, state: SellerGraphState) -> dict[str, object]:
         product = state.get("selected_product")
         cart = state.get("candidate_cart")
         decision = state.get("policy_decision")
         buyer_offer_paise = state["request"].buyer_offer_paise
         best_price_paise = state.get("best_price_paise")
+        promotion = state.get("promotion_result")
         if product is None:
             result = SellerDecision(
                 trace_id=state["trace_id"],
                 action=SellerAction.NO_MATCH,
                 response_message="I could not find a matching catalog item, so no quote was created.",
                 tool_calls=state["tool_calls"],
+                stage=SellerStage.RESPOND,
+                recommendations=state.get("recommendations", []),
             )
         elif best_price_paise is not None:
             # Price query: policy-derived floor, no cart created.
@@ -268,6 +611,8 @@ class SellerAgent:
                 ),
                 selected_product=product,
                 tool_calls=state["tool_calls"],
+                stage=SellerStage.RESPOND,
+                recommendations=state.get("recommendations", []),
             )
         elif decision is None or cart is None:
             result = SellerDecision(
@@ -276,6 +621,8 @@ class SellerAgent:
                 response_message="The catalog item could not be converted into a valid candidate cart.",
                 selected_product=product,
                 tool_calls=state["tool_calls"],
+                stage=SellerStage.RESPOND,
+                recommendations=state.get("recommendations", []),
             )
         elif decision.verdict is PolicyVerdict.DENY:
             result = SellerDecision(
@@ -286,6 +633,8 @@ class SellerAgent:
                 policy_decision=decision,
                 selected_product=product,
                 tool_calls=state["tool_calls"],
+                stage=SellerStage.RESPOND,
+                recommendations=state.get("recommendations", []),
             )
         elif decision.verdict is PolicyVerdict.NEEDS_HUMAN_APPROVAL:
             result = SellerDecision(
@@ -299,21 +648,31 @@ class SellerAgent:
                 policy_decision=decision,
                 selected_product=product,
                 tool_calls=state["tool_calls"],
+                stage=SellerStage.RESPOND,
+                recommendations=state.get("recommendations", []),
             )
         else:
             was_countered = state.get("countered", False)
             action = SellerAction.COUNTERED if was_countered else SellerAction.QUOTE_READY
+            message = self._quote_message(cart, was_countered, buyer_offer_paise)
+            if promotion is not None and promotion.applied_promotion_ids:
+                message = (
+                    f"{message} Eligible promotions save "
+                    f"{self._inr(promotion.discount_total_paise)} on this cart."
+                )
             result = SellerDecision(
                 trace_id=state["trace_id"],
                 action=action,
-                response_message=self._quote_message(
-                    cart, was_countered, buyer_offer_paise
-                ),
+                response_message=message,
                 cart=cart,
                 policy_decision=decision,
                 selected_product=product,
                 upsell_product=state.get("upsell_product"),
                 tool_calls=state["tool_calls"],
+                stage=SellerStage.RESPOND,
+                recommendations=state.get("recommendations", []),
+                promotion=promotion,
+                persistent_cart_id=state.get("persistent_cart_id"),
             )
         self.tools._record(
             trace_id=result.trace_id,
@@ -378,34 +737,63 @@ class SellerAgent:
         deterministic fallback. Any failure falls back to the deterministic
         message so the commerce flow never breaks.
         """
-        if self.llm is None or result.cart is None:
+        if (self.gateway is None and self.llm is None) or result.cart is None:
             return result
         known_skus = {item.sku for item in result.cart.items}
+        if result.upsell_product:
+            known_skus.add(result.upsell_product.sku)
+        known_skus.update(p.sku for p in result.recommendations)
         allowed_paise = self._authoritative_paise(result, intent)
         summary = self._decision_summary(result, buyer_message, intent)
         try:
             # Phrasing is cosmetic: bound it well below the provider default
             # so a slow model delays — but never hangs — the quote path.
-            reply = self.llm.complete(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are SELLABLE's merchant seller assistant replying to an AI buyer. "
-                            "Use ONLY the facts in the structured payload. Never invent SKUs, prices, "
-                            "stock, discounts, or policy outcomes. Every money amount in your reply "
-                            "must be copied exactly from the payload — never convert, round, "
-                            "reformat, or compute amounts. Reply in 1-3 concise, friendly "
-                            "sentences, addressing what the buyer asked."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": summary,
-                    },
-                ],
-                timeout=10,
-            ).strip()
+            if self.gateway is not None:
+                reply, _record = self.gateway.complete(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are SELLABLE's merchant seller assistant replying to an AI buyer. "
+                                "Use ONLY the facts in the structured payload. Never invent SKUs, prices, "
+                                "stock, discounts, or policy outcomes. Every money amount in your reply "
+                                "must be copied exactly from the payload — never convert, round, "
+                                "reformat, or compute amounts. Reply in 1-3 concise, friendly "
+                                "sentences, addressing what the buyer asked."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": summary,
+                        },
+                    ],
+                    timeout=10,
+                    purpose="seller.response_phrased",
+                )
+                reply = reply.strip()
+                llm_model = self.gateway.model
+            else:
+                reply = self.llm.complete(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are SELLABLE's merchant seller assistant replying to an AI buyer. "
+                                "Use ONLY the facts in the structured payload. Never invent SKUs, prices, "
+                                "stock, discounts, or policy outcomes. Every money amount in your reply "
+                                "must be copied exactly from the payload — never convert, round, "
+                                "reformat, or compute amounts. Reply in 1-3 concise, friendly "
+                                "sentences, addressing what the buyer asked."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": summary,
+                        },
+                    ],
+                    timeout=10,
+                ).strip()
+                llm_model = getattr(self.llm, "model", "unknown")
             if (
                 reply
                 and len(reply) <= 1_000
@@ -416,7 +804,7 @@ class SellerAgent:
                     trace_id=trace_id,
                     action="seller.response_phrased",
                     inputs={"tool_calls": result.tool_calls},
-                    output={"llm_used": True, "model": getattr(self.llm, "model", "unknown")},
+                    output={"llm_used": True, "model": llm_model},
                     explanation="Rephrased the seller message with the LLM; SKUs and money amounts validated against the cart.",
                 )
                 return result.model_copy(update={"response_message": reply})
@@ -451,6 +839,8 @@ class SellerAgent:
             for item in cart.items:
                 amounts.update({item.unit_price_paise, item.offered_price_paise, item.line_total_paise})
             amounts.update({cart.subtotal_paise, cart.discount_paise, cart.total_paise})
+        if result.promotion:
+            amounts.add(result.promotion.discount_total_paise)
         return amounts
 
     def _decision_summary(
@@ -475,6 +865,11 @@ class SellerAgent:
             )
             if cart.upsell_rationale:
                 lines.append(f"Upsell rationale: {cart.upsell_rationale}")
+        if result.promotion and result.promotion.applied_promotion_ids:
+            lines.append(
+                f"Eligible promotions: {', '.join(result.promotion.applied_promotion_ids)} "
+                f"worth {self._inr(result.promotion.discount_total_paise)}"
+            )
         if result.policy_decision:
             lines.append(f"Policy verdict: {result.policy_decision.verdict}")
             if result.policy_decision.reason_code:
