@@ -24,7 +24,7 @@ const SURFACES: Surface[] = [
     nav: "OVERVIEW",
     title: "What is happening in your store, right now",
     description:
-      "Revenue, agent-driven share, and pending approvals — plus a live event feed streamed from the ledger over SSE. Every number is derived from real orders; nothing is cached or faked.",
+      "Revenue, agent-driven share, and pending approvals, plus a live event feed streamed from the ledger over SSE. Every number is derived from real orders. Nothing is cached or faked.",
     endpoints: ["GET /console/insights", "GET /activity/stream"],
     highlights: ["Live SSE feed", "Merchant-scoped metrics", "System health from the backend"],
   },
@@ -33,7 +33,7 @@ const SURFACES: Surface[] = [
     nav: "CHAT CHECKOUT",
     title: "Conversational checkout on your own catalog",
     description:
-      "Talk to the Seller Agent the same way an AI buyer would. It searches your catalog, quotes within policy, negotiates, and takes payment through Razorpay test mode — every step lands in the ledger.",
+      "Talk to the Seller Agent the same way a shopping agent would. It searches your catalog, quotes within policy, negotiates, and takes payment through Razorpay test mode. Each step lands in the ledger.",
     endpoints: ["POST /console/agent/seller/respond", "POST /console/orders", "POST /console/orders/{id}/payment"],
     highlights: ["Bounded negotiation", "Single-use consent", "Policy-gated checkout"],
   },
@@ -42,7 +42,7 @@ const SURFACES: Surface[] = [
     nav: "APPROVALS",
     title: "Human judgment where it matters",
     description:
-      "Orders above your human-approval threshold are held — payment is technically impossible until you decide. One click approves and issues consent; rejection aborts cleanly with a ledger event.",
+      "Orders above your human-approval threshold are held. Payment stays technically impossible until you decide. One click approves and issues consent. Rejection aborts cleanly with a ledger event.",
     endpoints: ["GET /console/approvals", "POST /console/approvals/{id}/approve"],
     highlights: ["HITL by construction", "No payment before consent", "Auditable decisions"],
   },
@@ -51,7 +51,7 @@ const SURFACES: Surface[] = [
     nav: "REPLAY",
     title: "Replay any transaction, line by line",
     description:
-      "Open any order and walk its full trace: actor, action, reasoning, and policy references for every step. Disputes stop being arguments — they become timelines.",
+      "Open any order and walk its full trace: actor, action, reasoning, and policy references for every step. Disputes stop being arguments and become timelines.",
     endpoints: ["GET /console/transactions/{id}", "GET /transactions/{id}/events"],
     highlights: ["Actor + reasoning per step", "Policy refs on every check", "Payment verified by webhook"],
   },
@@ -60,7 +60,7 @@ const SURFACES: Surface[] = [
     nav: "CATALOG",
     title: "Your catalog is the agent's reality",
     description:
-      "Products live in Postgres, persist across restarts, and are served machine-readable at /catalog.ai.json. The agent can only sell what is actually stocked — inventing SKUs is structurally impossible.",
+      "Products live in Postgres, persist across restarts, and are served machine-readable at /catalog.ai.json. The agent can only sell what is actually stocked. Inventing SKUs is structurally impossible.",
     endpoints: ["GET /console/catalog", "POST /catalog/products", "GET /catalog.ai.json"],
     highlights: ["DB-persisted per merchant", "Floor prices enforced", "Served machine-readable"],
   },
@@ -69,7 +69,7 @@ const SURFACES: Surface[] = [
     nav: "GROWTH",
     title: "Agentic revenue analytics",
     description:
-      "Upsell attach rate, negotiation outcomes, and saved-deal pricing insight — derived from ledger events, traceable to the transactions behind every number.",
+      "Upsell attach rate, negotiation outcomes, and saved-deal insight, derived from ledger events and traceable to the transactions behind each number.",
     endpoints: ["GET /console/insights", "GET /console/transactions"],
     highlights: ["Derived from the ledger", "Price-sensitivity signals", "Nothing self-reported"],
   },
@@ -83,14 +83,13 @@ export function ConsolePreview() {
     <section id="console" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
         <div className="max-w-[720px]">
-          <Eyebrow label="10 — MERCHANT CONSOLE" />
+          <Eyebrow label="Merchant console" />
           <h2 className="section-title mt-6 text-[var(--bb-white)]">
-            Mission control for your AI sales channel
+            Run the shop from one place
           </h2>
           <p className="body-copy mt-6">
-            Everything the backend does is observable and controllable from the
-            console — scoped to your store, authenticated with your session,
-            and honest about every failure.
+            Orders, approvals, catalog, and the ledger live here. Scoped to
+            your store, signed in with your session, plain about failures.
           </p>
         </div>
 
