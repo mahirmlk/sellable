@@ -14,9 +14,8 @@ const footerColumns: FooterColumn[] = [
   {
     heading: "Product",
     links: [
-      { label: "Case Study", href: "/case-study", hint: "The held fact — full build story (white editorial)" },
-      { label: "Features", href: "#platform", hint: "Trust & safety capabilities" },
-      { label: "How it works", href: "#how-it-works", hint: "Discovery → Pay lifecycle" },
+      { label: "How it works", href: "/#how-it-works", hint: "Discovery to support lifecycle" },
+      { label: "Platform", href: "/#platform", hint: "Commerce and trust planes" },
       { label: "Live Catalog", href: "/dashboard/catalog", hint: "Merchant catalog management" },
       { label: "Growth Insights", href: "/dashboard/growth", hint: "Revenue & agent analytics" },
     ],

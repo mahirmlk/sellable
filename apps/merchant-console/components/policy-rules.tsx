@@ -4,22 +4,17 @@ import { useEffect, useState } from "react";
 import { Eyebrow } from "./ui/eyebrow";
 import { useInView } from "@/lib/use-in-view";
 
-// The real rule references enforced by sellable/policy.py, evaluated in the
-// order the engine runs them. Three scenarios cycle so the page shows the
-// three possible verdicts: ALLOW, NEEDS_HUMAN_APPROVAL, DENY.
-//
-// Timing is a single interval driving a total tick counter — scenario,
-// revealed rules, and verdict are all derived arithmetically. No chained
-// timeouts, no nested setState, nothing that can stall.
-
+// Rule references enforced by sellable/policy.py, in evaluation order.
+// No sample carts, no amounts. The panel cycles through the three
+// verdicts the engine can return.
 const RULES = [
-  { ref: "POLICY.catalog_grounding", label: "Catalog grounding", note: "only SKUs the merchant actually stocks" },
-  { ref: "POLICY.buyer_allowed_categories", label: "Buyer categories", note: "cart fits the buyer's mandate" },
-  { ref: "POLICY.merchant_allowed_categories", label: "Merchant categories", note: "cart fits what the store sells" },
-  { ref: "POLICY.floor_price", label: "Floor price", note: "offers below the merchant floor are countered" },
-  { ref: "POLICY.buyer_budget", label: "Buyer budget", note: "cart fits the agent's spending mandate" },
-  { ref: "POLICY.max_order_value", label: "Max order value", note: "hard cap on every order" },
-  { ref: "POLICY.human_approval_threshold", label: "HITL threshold", note: "above the line, a human decides" },
+  { ref: "POLICY.catalog_grounding", label: "Catalog grounding", note: "the SKU has to exist in your catalog" },
+  { ref: "POLICY.buyer_allowed_categories", label: "Buyer categories", note: "the cart fits the buyer's permission" },
+  { ref: "POLICY.merchant_allowed_categories", label: "Merchant categories", note: "the cart fits what you sell" },
+  { ref: "POLICY.floor_price", label: "Floor price", note: "offers below your floor get countered" },
+  { ref: "POLICY.buyer_budget", label: "Buyer budget", note: "the total fits the buyer's ceiling" },
+  { ref: "POLICY.max_order_value", label: "Max order value", note: "a hard cap on every order" },
+  { ref: "POLICY.human_approval_threshold", label: "Approval line", note: "above it, a person decides" },
 ];
 
 interface Scenario {
@@ -32,35 +27,33 @@ interface Scenario {
 
 const SCENARIOS: Scenario[] = [
   {
-    name: "Standard mission",
-    setup: "1 × ₹1,948 cart — buyer budget ₹6,000",
+    name: "Inside every limit",
+    setup: "stocked SKU · inside budget and caps",
     verdict: "ALLOW",
-    verdictNote: "All seven rules pass. Consent can be issued.",
+    verdictNote: "Each check passes. Consent can be issued.",
   },
   {
-    name: "Aggressive offer",
-    setup: "Buyer offers ₹1,200 against a ₹1,899 floor",
+    name: "Below the floor",
+    setup: "offer under the merchant floor",
     verdict: "DENY",
-    verdictNote: "Floor price breached — the counter is blocked, no order is created.",
+    verdictNote: "The floor holds. No order is created.",
     failingRule: 3,
   },
   {
-    name: "High-value order",
-    setup: "Cart totals ₹2,499 — HITL threshold ₹2,000",
+    name: "Above the approval line",
+    setup: "valid cart, over the human threshold",
     verdict: "NEEDS_HUMAN_APPROVAL",
-    verdictNote: "Order held in AWAITING_CONSENT until the merchant approves it.",
+    verdictNote: "The order waits until the merchant approves it.",
     failingRule: 6,
   },
 ];
 
 const TICK_MS = 380;
 const HOLD_TICKS = 5;
-const CYCLE = RULES.length + HOLD_TICKS; // 7 reveal ticks + 5 verdict-hold ticks
+const CYCLE = RULES.length + HOLD_TICKS;
 
-// Longest verdict note — rendered invisibly while evaluating so the verdict
-// box keeps its full expanded size and never pushes the layout.
 const LONGEST_NOTE =
-  "Floor price breached — the counter is blocked, no order is created.";
+  "The order waits until the merchant approves it.";
 
 export function PolicyRules() {
   const { ref, isInView } = useInView();
@@ -84,19 +77,17 @@ export function PolicyRules() {
     <section id="policy" className="technical-section py-[clamp(64px,8vw,130px)]">
       <div className="page-frame relative" ref={ref}>
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] gap-[clamp(36px,5vw,80px)] items-center">
-          {/* Left: rule evaluation */}
           <div
             className="relative order-2 lg:order-1"
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
           >
             <div className="relative border border-[#30302E] bg-[var(--bb-panel)] overflow-hidden">
-              {/* header */}
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--bb-line)]">
                 <div className="flex items-center gap-2.5">
                   <span className="w-[5px] h-[5px] rounded-full bg-[var(--bb-orange)] live-dot" />
                   <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
-                    POLICY ENGINE · EVALUATING
+                    Policy engine · evaluating
                   </span>
                 </div>
                 <span className="font-[var(--font-mono)] text-[0.52rem] text-[var(--bb-grey-4)] hidden sm:block truncate max-w-[220px]">
@@ -104,7 +95,6 @@ export function PolicyRules() {
                 </span>
               </div>
 
-              {/* rules */}
               <div className="px-4 py-2">
                 {RULES.map((rule, i) => {
                   const checked = i < ruleStep;
@@ -139,7 +129,6 @@ export function PolicyRules() {
                 })}
               </div>
 
-              {/* verdict */}
               <div className="px-4 pb-4">
                 <div
                   className={`border px-4 py-2.5 transition-colors duration-300 ${
@@ -170,29 +159,27 @@ export function PolicyRules() {
                   )}
                 </div>
                 <div className="mt-2.5 font-[var(--font-mono)] text-[0.5rem] tracking-[0.06em] text-[var(--bb-grey-4)]">
-                  DETERMINISTIC · NO LLM IN THIS PATH — the same cart always gets the same verdict.
+                  DETERMINISTIC · NO MODEL IN THIS PATH, the same cart always gets the same verdict.
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Right: copy */}
           <div className="order-1 lg:order-2">
-            <Eyebrow label="10 — POLICY ENGINE" />
+            <Eyebrow label="Policy engine" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              The gauntlet between intent and money
+              The checkpoint before money
             </h2>
             <p className="body-copy mt-6">
-              Before any order exists, the candidate cart crosses the
-              deterministic policy engine — the same code path for every
-              buyer, every time. The AI never sees this layer; it cannot
-              argue, retry, or negotiate with it.
+              Each cart passes the same checks in the same order, for each
+              buyer. The agents cannot argue with this layer or work around
+              it.
             </p>
             <div className="mt-8 space-y-2.5">
               {[
-                ["Grounded", "a SKU that isn't in your catalog cannot be bought"],
-                ["Bounded", "floors, caps, and discounts are hard limits"],
-                ["Gated", "above your threshold, only a human can proceed"],
+                ["Grounded", "a SKU outside your catalog cannot be bought"],
+                ["Bounded", "floors, caps, and discounts hold firm"],
+                ["Gated", "past your line, only a person can proceed"],
               ].map(([k, v]) => (
                 <div key={k} className="flex items-baseline gap-3">
                   <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-orange)] w-[88px] shrink-0">

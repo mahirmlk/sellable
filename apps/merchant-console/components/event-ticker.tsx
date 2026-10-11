@@ -1,30 +1,25 @@
 "use client";
 
-// Thin seamless ledger-event marquee. One transform-only CSS loop over a
-// duplicated track — zero JS, zero repaints, pauses on hover.
-const ITEMS: Array<[string, string]> = [
-  ["catalog.search", "3 products indexed"],
-  ["quote.created", "₹1,948 · grounded"],
-  ["negotiation.countered", "floor protected"],
-  ["policy.checked", "ALLOW"],
-  ["consent.issued", "single-use"],
-  ["webhook.reconciled", "signature verified"],
-  ["order.paid", "settled"],
+// Ledger event path, no mock orders. Names only, in the order the
+// platform records them. Zero JS, transform-only marquee.
+const ITEMS = [
+  "catalog.search",
+  "quote.created",
+  "negotiation.countered",
+  "policy.checked",
+  "consent.issued",
+  "order.created",
+  "webhook.reconciled",
+  "order.paid",
 ];
 
 function Row({ hidden }: { hidden?: boolean }) {
   return (
-    <div
-      aria-hidden={hidden || undefined}
-      className="flex shrink-0 items-center"
-    >
-      {ITEMS.map(([action, detail]) => (
+    <div aria-hidden={hidden || undefined} className="flex shrink-0 items-center">
+      {ITEMS.map((action) => (
         <span key={action} className="flex items-center shrink-0">
           <span className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.06em] text-[var(--bb-grey-1)]">
             {action}
-          </span>
-          <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-4)] ml-2">
-            {detail}
           </span>
           <span className="w-[5px] h-[5px] bg-[var(--bb-orange)] mx-8 shrink-0" />
         </span>

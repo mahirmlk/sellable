@@ -9,8 +9,6 @@ import {
   Problem,
   TwoAgents,
   MerchantControl,
-  MerchantValue,
-  RealExample,
 } from "@/components/home-narrative";
 import { HowItWorks } from "@/components/how-it-works";
 import { TraceReplay } from "@/components/trace-replay";
@@ -24,14 +22,12 @@ import { OrangeCTA } from "@/components/orange-cta";
 import { Reveal } from "@/components/ui/reveal";
 import { AmbientVideoBg } from "@/components/ui/ambient-video-bg";
 
-// Landing page order follows the homepage spec:
-// hero → problem → agents → flow → value → safety → AI-native store →
-// explainability → example → technical depth → final CTA.
+// Landing order: hero → ledger path → guarantees → problem → agents →
+// control → flow → platform → policy → ledger shape → discovery →
+// console → security → developers → final CTA.
 //
-// Motion is deliberately simple: one-shot scroll reveals (opacity +
-// translate only) plus small ambient loops (marquee, float, drift, status
-// dots) and viewport-gated content timers. No scroll-linked JS, no blur /
-// blend / gradient animation — nothing that can glitch the page.
+// Copy is human-written, architecture-accurate (Seller + Service agents;
+// outside agents stay guests), and free of sample orders or amounts.
 export default function HomePage() {
   return (
     <>
@@ -45,12 +41,10 @@ export default function HomePage() {
         <Reveal><TwoAgents /></Reveal>
         <Reveal><MerchantControl /></Reveal>
         <Reveal><HowItWorks /></Reveal>
-        <Reveal><MerchantValue /></Reveal>
         <Reveal><Features /></Reveal>
-        <Reveal><Discovery /></Reveal>
-        <Reveal><TraceReplay /></Reveal>
-        <Reveal><RealExample /></Reveal>
         <Reveal><PolicyRules /></Reveal>
+        <Reveal><TraceReplay /></Reveal>
+        <Reveal><Discovery /></Reveal>
         <Reveal><ConsolePreview /></Reveal>
         <Reveal><Security /></Reveal>
         <Reveal><CodeSection /></Reveal>

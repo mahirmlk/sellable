@@ -73,14 +73,15 @@ export function Discovery() {
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] gap-[clamp(48px,7vw,112px)] items-center">
           {/* Copy */}
           <div>
-            <Eyebrow label="07 — AI-NATIVE STORE" />
+            <Eyebrow label="Built for agents" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              Your store, ready for the AI economy.
+              Your store, legible to software.
             </h2>
             <p className="body-copy mt-6">
-              Your store isn&apos;t only a website anymore. It becomes a place
-              that AI agents can understand, interact with, and transact
-              with — no SEO games, no rendered pixels required.
+              Agents do not browse like people. They read files. Your shop
+              publishes three: who you are, what you sell, and how to behave.
+              This panel fetches them live, exactly as a shopping agent
+              would.
             </p>
 
             <div className="mt-8 space-y-2">
@@ -140,7 +141,7 @@ export function Discovery() {
               <pre className="code-content px-5 py-4 min-h-[380px] max-h-[420px] overflow-auto font-[var(--font-mono)] text-[0.68rem] leading-[1.6] text-[var(--bb-grey-1)] whitespace-pre">
                 {state.status === "offline" ? (
                   <span className="text-[var(--bb-grey-3)]">
-                    {`// api.sellable.shop could not be reached from this browser.\n// The manifest is public — try again later or open the URL directly.`}
+                    {`// api.sellable.shop could not be reached from this browser.\n// The manifest is public. Try again later or open the URL directly.`}
                   </span>
                 ) : (
                   <>
@@ -154,7 +155,7 @@ export function Discovery() {
 
               {state.status === "live" && (
                 <div className="px-5 pb-4 font-[var(--font-mono)] text-[0.52rem] tracking-[0.04em] text-[var(--bb-grey-4)]">
-                  fetched from api.sellable.shop while you were reading — this is the merchant&apos;s real, current discovery document
+                  fetched from api.sellable.shop while you were reading. This is the merchant&apos;s real, current discovery document
                 </div>
               )}
             </div>

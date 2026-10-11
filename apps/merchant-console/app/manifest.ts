@@ -2,10 +2,10 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "SELLABLE — Agentic Commerce Infrastructure",
+    name: "SELLABLE — Agentic Commerce for Merchants",
     short_name: "SELLABLE",
     description:
-      "Infrastructure for agentic commerce. AI buyers discover, negotiate, and pay — every money action is bounded by deterministic policy and audit-logged.",
+      "Two agents for your shop: one sells from your catalog, one looks after orders. Policy checked, consent locked, ledger recorded.",
     start_url: "/",
     display: "standalone",
     background_color: "#080808",
