@@ -2,41 +2,42 @@
 
 import { useState } from "react";
 import { Eyebrow } from "./ui/eyebrow";
+import { IsoStack } from "./iso-stack";
 
 const capabilities = [
   {
-    title: "AGENT DISCOVERY",
+    title: "Agent discovery",
     description:
-      "Machine-readable manifest at /.well-known/agents.json makes your store findable by autonomous AI buyers.",
+      "A public manifest tells shopping agents who you are, what you sell, and how to talk to your store.",
   },
   {
-    title: "POLICY ENGINE",
+    title: "Policy engine",
     description:
-      "Deterministic guardrails enforce max order value, floor prices, discount limits, and human-in-the-loop thresholds.",
+      "One deterministic pass over the cart. Floors, caps, budgets, and approval limits, checked the same way every time.",
   },
   {
-    title: "CONSENT GATES",
+    title: "Consent gates",
     description:
-      "Single-use, time-bound, amount-bound consent tokens ensure no payment proceeds without explicit authorization.",
+      "Payments need a single-use token tied to the exact order. When it is spent or expired, it is done.",
   },
   {
-    title: "XAI LEDGER",
+    title: "Ledger",
     description:
-      "Every material action creates a structured audit event with actor, reasoning, policy references, and outcome.",
+      "Each material step records who acted, what happened, why, and which rule applied. Replay it line by line.",
   },
   {
-    title: "NEGOTIATION",
+    title: "Negotiation bounds",
     description:
-      "Bounded agent-to-agent negotiation within merchant policy — the LLM proposes, deterministic systems dispose.",
+      "The Seller Agent can counter inside your limits. It cannot change the floor, the cap, or the round limit.",
   },
 ];
 
 const apiSurface = [
-  { method: "GET", path: "/.well-known/agents.json", note: "agent discovery manifest" },
-  { method: "GET", path: "/catalog.ai.json", note: "machine-readable catalog" },
-  { method: "GET", path: "/llms.txt", note: "agent guidance" },
-  { method: "POST", path: "/agent/quotes.negotiate", note: "bounded negotiation" },
-  { method: "POST", path: "/agent/orders.create", note: "policy-gated ordering" },
+  { method: "GET", path: "/.well-known/agents.json", note: "who you are" },
+  { method: "GET", path: "/catalog.ai.json", note: "what you sell" },
+  { method: "GET", path: "/llms.txt", note: "how to behave" },
+  { method: "GET", path: "/health", note: "liveness probe" },
+  { method: "POST", path: "/console/orders", note: "gated ordering" },
   { method: "POST", path: "/webhooks/razorpay", note: "signed settlement" },
 ];
 
@@ -47,19 +48,16 @@ export function Features() {
     <section id="platform" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.82fr)] gap-[clamp(48px,8vw,128px)]">
-          {/* Left: Content */}
           <div>
-            <Eyebrow label="06 — TRUST & SAFETY" />
+            <Eyebrow label="The platform" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              Every money action is explainable, bounded, and gated
+              Quiet machinery behind every sale
             </h2>
             <p className="body-copy mt-6">
-              The core safety principle: agents propose, deterministic policy
-              disposes, consent authorizes, and the ledger explains every
-              material action.
+              Agents do the talking. Deterministic systems handle the parts
+              that touch money.
             </p>
 
-            {/* Capability rows */}
             <div className="mt-12">
               {capabilities.map((cap, i) => (
                 <div
@@ -84,29 +82,27 @@ export function Features() {
             </div>
           </div>
 
-          {/* Right: Real API surface panel */}
-          <div className="flex items-center">
+          <div className="flex flex-col gap-6 justify-center">
+            <IsoStack compact />
             <div className="w-full">
               <div className="border border-[#30302E] p-6 transition-all duration-500 hover:border-[#404040]">
                 <div className="flex items-center justify-between mb-5">
                   <div className="font-[var(--font-mono)] text-[0.65rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
-                    PUBLIC API SURFACE
+                    Public surface
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-[5px] h-[5px] bg-[var(--bb-orange)]" />
                     <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                      live
+                      documented
                     </span>
                   </div>
                 </div>
 
-                {/* Merchant store layer */}
-                <div className="border border-[#282826] p-5 transition-all duration-500 hover:border-[#383836]">
+                <div className="border border-[#282826] p-5">
                   <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] mb-4">
-                    MERCHANT STORE
+                    What agents may call
                   </div>
 
-                  {/* Endpoint rows — the real routes this app serves */}
                   <div className="divide-y divide-[var(--bb-line-soft)]">
                     {apiSurface.map((ep) => (
                       <div key={ep.path} className="py-2.5 flex items-center gap-3 first:pt-0 last:pb-0">
@@ -129,44 +125,29 @@ export function Features() {
                     ))}
                   </div>
 
-                  {/* Active status */}
                   <div className="status-highlight relative mt-5">
                     <div className="flex items-center justify-between relative">
                       <div>
                         <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)] mb-1 flex items-center gap-1.5">
-                          ARCHITECTURE STATUS
+                          Settlement rule
                           <span className="w-1 h-1 rounded-full bg-[var(--bb-orange)]" />
                         </div>
                         <div className="font-[var(--font-sans)] text-[1.1rem] font-medium text-[var(--bb-orange)]">
-                          AUDIT-READY
+                          Webhook only
                         </div>
                       </div>
                       <span className="w-2.5 h-2.5 bg-[var(--bb-orange)] rounded-full" aria-hidden="true" />
                     </div>
-                    <div className="mt-4 grid grid-cols-2 gap-4">
-                      <div title="Design target — measured p95 in local verification">
-                        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                          LATENCY <span className="text-[0.5rem] normal-case tracking-normal text-[var(--bb-grey-4)]">target p95</span>
-                        </div>
-                        <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
-                          &lt; 200ms
-                        </div>
-                      </div>
-                      <div title="Every money action creates a ledger event">
-                        <div className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.1em] uppercase text-[var(--bb-grey-3)]">
-                          AUDIT
-                        </div>
-                        <div className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-white)]">
-                          100%
-                        </div>
-                      </div>
-                    </div>
+                    <p className="mt-3 font-[var(--font-sans)] text-[0.85rem] leading-relaxed text-[var(--bb-grey-1)]">
+                      No screen, agent, or admin action can mark an order
+                      paid. Only a verified provider webhook can.
+                    </p>
                   </div>
                 </div>
 
                 <div className="mt-4 font-[var(--font-mono)] text-[0.55rem] tracking-[0.06em] text-[var(--bb-grey-4)] leading-relaxed">
-                  Every route above is served by the deployed backend at api.sellable.shop —
-                  discovery is public, transactions are HMAC-signed, settlement is webhook-verified.
+                  Discovery is public. Ordering is gated. Settlement is
+                  verified. That order never changes.
                 </div>
               </div>
             </div>
