@@ -5,11 +5,8 @@ import { Eyebrow } from "./ui/eyebrow";
 import { CornerBrackets } from "./ui/corner-brackets";
 import { useInView } from "@/lib/use-in-view";
 
-// Schema-accurate replay of one transaction through the real event names,
-// actors, and reasoning fields the XAI ledger records. Presented as a
-// stepped illustration on the marketing page — the console's replay view
-// renders the same schema from the live database.
-
+// The ledger schema, animated. No sample order, no amounts, no trace
+// ids. The console replays real orders in this shape.
 interface ReplayEvent {
   seq: string;
   actor: string;
@@ -18,14 +15,14 @@ interface ReplayEvent {
 }
 
 const EVENTS: ReplayEvent[] = [
-  { seq: "01", actor: "SELLER AGENT", action: "catalog.search", reason: "3 catalog matches for the buyer's mission." },
-  { seq: "02", actor: "SELLER AGENT", action: "quote.created", reason: "Grounded quote — 1 × coffee setup, ₹1,948, inside budget." },
-  { seq: "03", actor: "SELLER AGENT", action: "negotiation.countered", reason: "Buyer offered ₹1,700 — countered at the policy floor, ₹1,899." },
-  { seq: "04", actor: "POLICY ENGINE", action: "policy.checked", reason: "ALLOW — offer above floor, within order limits, category permitted." },
-  { seq: "05", actor: "CONSENT SERVICE", action: "consent.issued", reason: "Single-use token bound to amount, payee, and 10-minute window." },
-  { seq: "06", actor: "COMMERCE CORE", action: "order.created", reason: "Order created in AWAITING_CONSENT — payment still impossible." },
-  { seq: "07", actor: "RAZORPAY", action: "webhook.reconciled", reason: "payment.captured verified by HMAC signature — the only path to PAID." },
-  { seq: "08", actor: "COMMERCE CORE", action: "order.paid", reason: "Settled. Eight events on one trace — replayable line by line." },
+  { seq: "01", actor: "SELLER AGENT", action: "catalog.search", reason: "Search ran against the merchant catalog only." },
+  { seq: "02", actor: "SELLER AGENT", action: "quote.created", reason: "Quote built from a stocked SKU and current price." },
+  { seq: "03", actor: "SELLER AGENT", action: "negotiation.countered", reason: "Counter offered at the lowest price policy allows." },
+  { seq: "04", actor: "POLICY ENGINE", action: "policy.checked", reason: "Verdict recorded with the rules that applied." },
+  { seq: "05", actor: "CONSENT SERVICE", action: "consent.issued", reason: "Single-use token bound to the order." },
+  { seq: "06", actor: "COMMERCE CORE", action: "order.created", reason: "Order held until payment is verified." },
+  { seq: "07", actor: "RAZORPAY", action: "webhook.reconciled", reason: "Provider signature verified. Nothing else can settle." },
+  { seq: "08", actor: "COMMERCE CORE", action: "order.paid", reason: "Settled. The full path stays replayable." },
 ];
 
 const STEP_MS = 1100;
@@ -53,28 +50,23 @@ export function TraceReplay() {
   const complete = step >= EVENTS.length;
 
   return (
-    <section
-      className="technical-section py-[clamp(64px,8vw,130px)]"
-      id="ledger"
-    >
+    <section className="technical-section py-[clamp(64px,8vw,130px)]" id="ledger">
       <div className="page-frame relative" ref={ref}>
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-[clamp(36px,5vw,80px)] items-center">
-          {/* Left: copy */}
           <div>
-            <Eyebrow label="08 — EXPLAINABILITY" />
+            <Eyebrow label="Explainability" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              Every transaction has a story.
+              Each order keeps its story.
             </h2>
             <p className="body-copy mt-6">
-              Don&apos;t just see that a sale happened. See why it happened.
-              This is one trace, exactly as the ledger recorded it — actor,
-              action, and reasoning for each step.
+              Not just that a sale happened, but how. Actor, action, and
+              reason for each step, in the order the ledger wrote them.
             </p>
             <div className="mt-8 space-y-2.5">
               {[
-                ["Actor", "who acted — agent, engine, service, or human"],
-                ["Reasoning", "why the step was taken, in plain language"],
-                ["Policy refs", "which deterministic rules were consulted"],
+                ["Actor", "which system acted"],
+                ["Reasoning", "why, in plain language"],
+                ["Policy refs", "which rules were checked"],
               ].map(([k, v]) => (
                 <div key={k} className="flex items-baseline gap-3">
                   <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-white)] w-[92px] shrink-0">
@@ -88,7 +80,6 @@ export function TraceReplay() {
             </div>
           </div>
 
-          {/* Right: stepped replay panel */}
           <div
             className="relative"
             onMouseEnter={() => setPaused(true)}
@@ -96,21 +87,18 @@ export function TraceReplay() {
           >
             <div className="relative border border-[#30302E] bg-[var(--bb-panel)] overflow-hidden">
               <CornerBrackets />
-              {/* header */}
               <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--bb-line)]">
                 <div className="flex items-center gap-2.5">
                   <span className="w-[5px] h-[5px] rounded-full bg-[var(--bb-orange)] live-dot" />
                   <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
-                    SAMPLE TRACE REPLAY
+                    Ledger shape
                   </span>
                 </div>
                 <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] text-[var(--bb-grey-4)]">
-                  {paused ? "PAUSED" : complete ? "TRACE COMPLETE" : "REPLAYING"}
+                  {paused ? "PAUSED" : complete ? "COMPLETE" : "WALKTHROUGH"}
                 </span>
               </div>
 
-              {/* events — every row reserves its space up front, so the box
-                  sits at full expanded size and only the data inside runs. */}
               <div className="px-5 py-3">
                 {EVENTS.map((e, i) => {
                   const shown = i < visible;
@@ -134,7 +122,7 @@ export function TraceReplay() {
                         </span>
                         {complete && i === EVENTS.length - 1 && (
                           <span className="ml-auto font-[var(--font-mono)] text-[0.52rem] text-[var(--bb-white)] shrink-0">
-                            ✓ SETTLED
+                            SETTLED
                           </span>
                         )}
                       </div>
@@ -154,13 +142,12 @@ export function TraceReplay() {
                     </>
                   ) : (
                     <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] text-[var(--bb-grey-4)]">
-                      TRACE COMPLETE · RESTARTING
+                      SCHEMA PREVIEW · RESTARTING
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* progress */}
               <div className="px-5 pb-4">
                 <div className="h-[2px] bg-[var(--bb-line-soft)] overflow-hidden">
                   <div
@@ -169,16 +156,16 @@ export function TraceReplay() {
                   />
                 </div>
                 <div className="mt-2 flex items-center justify-between font-[var(--font-mono)] text-[0.5rem] text-[var(--bb-grey-4)] tabular-nums">
-                  <span>trc_9ede1020…</span>
+                  <span>event shape, not a sample order</span>
                   <span>
-                    {visible}/{EVENTS.length} EVENTS
+                    {visible}/{EVENTS.length} STEPS
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="mt-3 font-[var(--font-mono)] text-[0.52rem] tracking-[0.06em] text-[var(--bb-grey-4)]">
-              ANIMATED ILLUSTRATION · REAL EVENT SCHEMA — the console replays live traces from the database in this format.
+              OPEN ANY ORDER IN THE CONSOLE TO REPLAY ITS REAL TRACE.
             </div>
           </div>
         </div>
