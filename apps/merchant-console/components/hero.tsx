@@ -1,96 +1,93 @@
 "use client";
 
+import { ArrowUpRight } from "lucide-react";
 import { Eyebrow } from "./ui/eyebrow";
 import { Reveal } from "./ui/reveal";
-import { Blueprint } from "./blueprint";
-import { TraceTicker } from "./trace-ticker";
+import { IsoStack } from "./iso-stack";
+
+const GUARANTEES = [
+  ["Policy decides", "deterministic checks"],
+  ["Consent binds", "single use, expiring"],
+  ["Webhooks settle", "no UI can mark paid"],
+  ["Ledger explains", "replay any order"],
+];
 
 export function Hero() {
   return (
-    <section className="technical-section overflow-hidden">
-      {/* faint drifting grid — one seamless transform loop, masked */}
+    <section className="hero-premium technical-section overflow-hidden">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
         <div
-          className="drift-grid absolute -inset-[56px] opacity-60"
+          className="drift-grid absolute -inset-[56px] opacity-50"
           style={{
-            maskImage: "radial-gradient(75% 65% at 50% 40%, black 30%, transparent 100%)",
+            maskImage:
+              "radial-gradient(78% 68% at 50% 36%, black 28%, transparent 100%)",
           }}
         />
       </div>
 
       <div className="page-frame relative">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.03fr)_minmax(0,0.97fr)] items-center gap-[clamp(32px,5vw,96px)] py-[clamp(64px,9vw,132px)]">
-          {/* Left: Content */}
+        <div className="hero-grid">
           <div className="relative">
             <Reveal>
-              <Eyebrow label="AI SALES CHANNEL FOR MERCHANTS" />
-              <h1 className="hero-title mt-8 text-[var(--bb-white)]">
-                Make your store sellable to AI.
+              <Eyebrow label="Agentic commerce platform for merchants" />
+              <h1 className="hero-title mt-7 text-[var(--bb-white)]">
+                An AI sales floor
+                <br />
+                for your store.
               </h1>
-              <p className="body-copy mt-8">
-                SELLABLE gives your business an AI sales agent that can discover
-                products, negotiate within your rules, recommend relevant
-                add-ons, and help complete purchases safely.
+              <p className="body-copy mt-7 max-w-[46ch]">
+                Sellable staffs your shop with two agents. The Seller
+                quotes from your catalog. The Service Agent looks after
+                orders. Shopping agents from outside connect as guests,
+                and your rules decide which payments go through.
               </p>
             </Reveal>
 
             <Reveal delay={120}>
-              <div className="flex flex-wrap items-center gap-4 mt-10">
-                <a href="#how-it-works" className="btn-light">
-                  SEE HOW IT WORKS
+              <div className="flex flex-wrap items-center gap-3.5 mt-9">
+                <a
+                  href="/dashboard"
+                  className="group inline-flex items-center gap-2.5 min-h-[54px] px-7 bg-[var(--bb-orange)] text-[var(--bb-black)] font-[var(--font-mono)] text-[0.74rem] tracking-[0.12em] uppercase font-semibold hover:bg-[var(--bb-orange-bright)] transition-colors duration-200"
+                >
+                  Open the console
+                  <ArrowUpRight
+                    size={15}
+                    className="transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
+                  />
                 </a>
-                <a href="/dashboard/chat" className="btn-outline">
-                  TRY THE AI SELLER
+                <a href="#how-it-works" className="btn-outline">
+                  See how money moves
                 </a>
               </div>
             </Reveal>
 
-            {/* ledger trace ticker — monochrome, viewport-gated */}
             <Reveal delay={200}>
-              <div className="mt-8 max-w-[440px] border-l-2 border-[var(--bb-orange)] bg-[var(--bb-panel)]/70 px-4 py-2.5">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="w-[5px] h-[5px] rounded-full bg-[var(--bb-orange)] live-dot" />
-                  <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
-                    Live · ledger trace
-                  </span>
-                </div>
-                <TraceTicker />
-              </div>
-            </Reveal>
-
-            <Reveal delay={260}>
-              <p className="mt-6 font-[var(--font-mono)] text-[0.62rem] tracking-[0.08em] uppercase text-[var(--bb-grey-2)]">
-                Real catalog · Real transactions · Razorpay-powered checkout
-              </p>
-              <p className="mt-2 font-[var(--font-mono)] text-[0.6rem] leading-relaxed tracking-[0.02em] text-[var(--bb-grey-3)]">
-                Payments currently run through Razorpay Test Mode — no real money
-                is moved.
-              </p>
-
-              {/* micro-stats row — static chips, one live dot */}
-              <div className="mt-8 flex flex-wrap items-center gap-2.5">
-                <span className="inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
-                  <span className="w-[5px] h-[5px] bg-[var(--bb-white)]" />
-                  <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)]">Policy engine</span>
-                  <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.04em] text-[var(--bb-white)]">deterministic</span>
-                </span>
-                <span className="hidden sm:inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
-                  <span className="w-[5px] h-[5px] rounded-full bg-[var(--bb-orange)] live-dot" />
-                  <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)]">Ledger</span>
-                  <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.04em] text-[var(--bb-orange)]">recording</span>
-                </span>
-                <span className="hidden lg:inline-flex items-center gap-2 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1.5">
-                  <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)]">Rails</span>
-                  <span className="font-[var(--font-mono)] text-[0.58rem] tracking-[0.04em] text-[var(--bb-grey-1)]">razorpay · test</span>
-                </span>
-              </div>
+              <dl className="hero-guarantees">
+                {GUARANTEES.map(([term, note]) => (
+                  <div key={term} className="hero-guarantee">
+                    <dt>{term}</dt>
+                    <dd>{note}</dd>
+                  </div>
+                ))}
+              </dl>
             </Reveal>
           </div>
 
-          {/* Right: architecture diagram — card stays still, motion lives inside it */}
           <Reveal delay={150} y={24}>
-            <div className="relative">
-              <Blueprint />
+            <div className="hero-visual">
+              <div className="hero-visual-head">
+                <span className="hero-live">
+                  <span className="w-[6px] h-[6px] rounded-full bg-[var(--bb-orange)] live-dot" />
+                  Commerce stack
+                </span>
+                <span className="hero-head-note">five planes, one order path</span>
+              </div>
+              <IsoStack />
+              <div className="hero-visual-foot">
+                <span>External agents enter through the gateway</span>
+                <span className="hero-foot-sep" />
+                <span>Your catalog stays the source of truth</span>
+              </div>
             </div>
           </Reveal>
         </div>
