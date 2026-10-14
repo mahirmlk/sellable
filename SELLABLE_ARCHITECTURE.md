@@ -3717,6 +3717,12 @@ The architecture uses current protocol concepts as interoperability targets, not
 
 Current UCP specifications define machine-readable merchant capability discovery and negotiation and standardized commerce capabilities such as Cart, Checkout, Identity Linking and Order. UCP supports multiple transport/integration patterns including REST, MCP and A2A. citeturn525419search1turn525419search9
 
+SELLABLE pins its side of this: `/.well-known/ucp` advertises
+`ucp_version: "ucp-1"` (SELLABLE's adapter version) alongside
+`ucp_spec_reference` (the public spec snapshot the concepts were built
+against) and only the capabilities the live merchant actually supports.
+No certification is claimed.
+
 ### Identity Linking
 
 UCP's current identity-linking capability separates public or agent-authenticated access from user-authenticated access and uses OAuth 2.0 in the current specification. SELLABLE's identity/delegation architecture should preserve the same separation: capability availability is not identical to customer identity authority. citeturn525419search2
@@ -3728,6 +3734,16 @@ Google's current AP2 materials describe explicit authorization artifacts and gua
 ### Agentic commerce trust
 
 Current agentic-commerce guidance emphasizes discovery, fraud protection, checkout, and payment as distinct platform concerns, along with structured merchant information such as product data, fulfillment/return information and contact/trust signals. SELLABLE therefore models discovery, risk, checkout, payments, shipping and support as separate but connected domains. citeturn592286search2turn592286search6
+
+### OpenAI Agentic Commerce Protocol (ACP) — scaffold status
+
+The ACP integration is a disabled-by-default scaffold
+(`SELLABLE_ACP_ENABLED`, `protocols/acp.py`): an ACP-shaped read-only view
+of canonical AUTHORIZED checkouts (settled totals, auth binding,
+idempotency guidance) plus HMAC request verification. It creates no orders,
+moves no money, makes no conformance claim, and confers no partner
+onboarding, approval, or ChatGPT/Instant Checkout placement — those remain
+external partner-program dependencies.
 
 ---
 
