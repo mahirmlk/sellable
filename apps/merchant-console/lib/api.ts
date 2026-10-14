@@ -11,7 +11,12 @@ export function apiBaseUrl(): string {
 }
 // In demo mode (no Supabase configured) the console authenticates with the
 // public demo key. With Supabase configured, merchant auth uses the JWT.
-const isDemoMode = () => !process.env.NEXT_PUBLIC_SUPABASE_URL;
+import * as demoAdapter from "./demo/adapter";
+
+// In demo mode (no Supabase configured) the console NEVER calls production
+// APIs: every data function below delegates to the isolated demo adapter
+// (curated fixtures + localStorage overlay). See lib/demo/adapter.ts.
+export const isDemoMode = () => !process.env.NEXT_PUBLIC_SUPABASE_URL;
 const AGENT_KEY =
   process.env.NEXT_PUBLIC_AGENT_KEY || "sellable_demo_key_001";
 
@@ -131,6 +136,7 @@ export interface CheckoutSessionUpsert {
 export async function getCheckoutSession(
   buyerRef = "human_chat"
 ): Promise<CheckoutSession | null> {
+  if (isDemoMode()) return demoAdapter.getCheckoutSession(buyerRef);
   try {
     return await apiFetch<CheckoutSession>(
       `/console/checkout/session?buyer_ref=${encodeURIComponent(buyerRef)}`
@@ -145,6 +151,7 @@ export async function getCheckoutSession(
 export async function saveCheckoutSession(
   body: CheckoutSessionUpsert
 ): Promise<CheckoutSession> {
+  if (isDemoMode()) return demoAdapter.saveCheckoutSession(body);
   return apiFetch<CheckoutSession>("/console/checkout/session", {
     method: "POST",
     body: JSON.stringify(body),
@@ -154,6 +161,7 @@ export async function saveCheckoutSession(
 export async function closeCheckoutSession(
   sessionId: string
 ): Promise<CheckoutSession> {
+  if (isDemoMode()) return demoAdapter.closeCheckoutSession(sessionId);
   return apiFetch<CheckoutSession>(
     `/console/checkout/session/${encodeURIComponent(sessionId)}/close`,
     { method: "POST" }
@@ -231,6 +239,7 @@ export async function listCheckoutSessions(
   if (opts.offset !== undefined) params.set("offset", String(opts.offset));
   const query = params.toString();
   try {
+    if (isDemoMode()) return demoAdapter.listCheckoutSessions(opts);
     const rows = await apiFetch<CheckoutSessionListItem[]>(
       `/console/checkout/sessions${query ? `?${query}` : ""}`
     );
@@ -249,6 +258,7 @@ export async function listCheckoutSessions(
 export async function getCheckoutSessionById(
   sessionId: string
 ): Promise<CheckoutSession | null> {
+  if (isDemoMode()) return demoAdapter.getCheckoutSessionById(sessionId);
   try {
     const session = await apiFetch<CheckoutSession>(
       `/console/checkout/session/${encodeURIComponent(sessionId)}`
@@ -275,6 +285,7 @@ export async function patchCheckoutSession(
   sessionId: string,
   patch: CheckoutSessionPatch
 ): Promise<CheckoutSession | null> {
+  if (isDemoMode()) return demoAdapter.patchCheckoutSession(sessionId, patch);
   try {
     const session = await apiFetch<CheckoutSession>(
       `/console/checkout/session/${encodeURIComponent(sessionId)}`,
@@ -374,6 +385,8 @@ export interface ConsolePolicySettings {
   max_negotiation_rounds: number;
   max_upsells_per_session: number;
   human_approval_threshold_paise: number;
+  // True when no policy row exists yet and these are first-run defaults.
+  is_default?: boolean;
 }
 
 // --- Agents / system status ---
@@ -428,13 +441,16 @@ export class ApiError extends Error {
   readonly detail: string;
   readonly errorCode: string | null;
   readonly body: unknown;
+  /** Backend correlation id (X-Trace-Id response header) for support. */
+  readonly traceId: string | null;
 
   constructor(
     status: number,
     statusText: string,
     detail: string,
     body?: unknown,
-    errorCode?: string | null
+    errorCode?: string | null,
+    traceId?: string | null
   ) {
     super(`API error: ${status} ${statusText}${detail ? ` — ${detail}` : ""}`);
     this.name = "ApiError";
@@ -442,6 +458,7 @@ export class ApiError extends Error {
     this.detail = detail;
     this.errorCode = errorCode ?? null;
     this.body = body;
+    this.traceId = traceId ?? null;
   }
 
   get isAuthFailure(): boolean {
@@ -664,12 +681,12 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const { detail, code } = await extractErrorDetail(res);
-    throw new ApiError(res.status, res.statusText, detail, null, code);
+    throw new ApiError(res.status, res.statusText, detail, null, code, res.headers.get("x-trace-id"));
   }
   try {
     return (await res.json()) as T;
   } catch {
-    throw new ApiError(200, "OK", `Malformed JSON from ${path}`, null);
+    throw new ApiError(200, "OK", `Malformed JSON from ${path}`, null, null, res.headers.get("x-trace-id"));
   }
 }
 
@@ -707,6 +724,7 @@ async function extractErrorDetail(
 // --- Health ---
 
 export async function getHealth(): Promise<HealthResponse> {
+  if (isDemoMode()) return demoAdapter.getHealth();
   return apiFetch<HealthResponse>("/health");
 }
 
@@ -716,6 +734,7 @@ export async function searchCatalog(
   query = "",
   categories: string[] = []
 ): Promise<Product[]> {
+  if (isDemoMode()) return demoAdapter.searchCatalog(query, categories);
   return apiFetch<Product[]>("/agent/catalog.search", {
     method: "POST",
     body: JSON.stringify({ query, categories }),
@@ -723,6 +742,7 @@ export async function searchCatalog(
 }
 
 export async function getAgentManifest(): Promise<Record<string, unknown>> {
+  if (isDemoMode()) return demoAdapter.getAgentManifest();
   return apiFetch<Record<string, unknown>>("/.well-known/agents.json");
 }
 
@@ -731,6 +751,7 @@ export async function getAgentManifest(): Promise<Record<string, unknown>> {
 export async function getConsoleTransactions(
   opts: { limit?: number; offset?: number } = {}
 ): Promise<ConsoleTransaction[]> {
+  if (isDemoMode()) return demoAdapter.getConsoleTransactions(opts);
   const params = new URLSearchParams();
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts.offset !== undefined) params.set("offset", String(opts.offset));
@@ -741,6 +762,7 @@ export async function getConsoleTransactions(
 export async function getConsoleTransactionDetail(
   orderId: string
 ): Promise<ConsoleTransactionDetail> {
+  if (isDemoMode()) return demoAdapter.getConsoleTransactionDetail(orderId);
   return apiFetch<ConsoleTransactionDetail>(`/console/transactions/${orderId}`);
 }
 
@@ -750,6 +772,7 @@ export async function getConsoleEvents(
   limit = 200,
   offset = 0
 ): Promise<{ events: LedgerEvent[]; total: number; limit: number; offset: number }> {
+  if (isDemoMode()) return demoAdapter.getConsoleEvents(limit, offset);
   return apiFetch(`/console/events?limit=${limit}&offset=${offset}`);
 }
 
@@ -758,6 +781,7 @@ export async function getConsoleEvents(
 export async function getConsoleApprovals(
   opts: { limit?: number; offset?: number } = {}
 ): Promise<ConsoleApproval[]> {
+  if (isDemoMode()) return demoAdapter.getConsoleApprovals(opts);
   const params = new URLSearchParams();
   if (opts.limit !== undefined) params.set("limit", String(opts.limit));
   if (opts.offset !== undefined) params.set("offset", String(opts.offset));
@@ -768,30 +792,35 @@ export async function getConsoleApprovals(
 export async function approveConsoleOrder(
   orderId: string
 ): Promise<{ status: string; order_id: string; consent_id: string; mission_id: string | null }> {
+  if (isDemoMode()) return demoAdapter.approveConsoleOrder(orderId);
   return apiFetch(`/console/approvals/${orderId}/approve`, { method: "POST" });
 }
 
 export async function rejectConsoleOrder(
   orderId: string
 ): Promise<{ status: string; order_id: string }> {
+  if (isDemoMode()) return demoAdapter.rejectConsoleOrder(orderId);
   return apiFetch(`/console/approvals/${orderId}/reject`, { method: "POST" });
 }
 
 // --- Console: Insights ---
 
 export async function getConsoleInsights(): Promise<ConsoleGrowthMetrics> {
+  if (isDemoMode()) return demoAdapter.getConsoleInsights();
   return apiFetch<ConsoleGrowthMetrics>("/console/insights");
 }
 
 // --- Console: Policy ---
 
 export async function getConsolePolicy(): Promise<ConsolePolicySettings> {
+  if (isDemoMode()) return demoAdapter.getConsolePolicy();
   return apiFetch<ConsolePolicySettings>("/console/policy");
 }
 
 export async function updateConsolePolicy(
   updates: Partial<Omit<ConsolePolicySettings, "merchant_id" | "currency">>
 ): Promise<ConsolePolicySettings> {
+  if (isDemoMode()) return demoAdapter.updateConsolePolicy(updates);
   return apiFetch<ConsolePolicySettings>("/console/policy", {
     method: "PUT",
     body: JSON.stringify(updates),
@@ -801,6 +830,7 @@ export async function updateConsolePolicy(
 // --- Health (public, no key) ---
 
 export async function getHealthPublic(): Promise<HealthResponse> {
+  if (isDemoMode()) return demoAdapter.getHealthPublic();
   const res = await fetch(`${API_BASE}/health`);
   return res.json();
 }
@@ -816,6 +846,7 @@ let statusInflight: Promise<AgentsStatusResponse> | null = null;
 const STATUS_TTL_MS = 15_000;
 
 export async function getAgentsStatus(force = false): Promise<AgentsStatusResponse> {
+  if (isDemoMode()) return demoAdapter.getAgentsStatus();
   if (!force && statusCache && Date.now() - statusCache.at < STATUS_TTL_MS) {
     return statusCache.data;
   }
@@ -850,6 +881,7 @@ export function streamConsoleEvents(
   handlers: StreamHandlers,
   opts: StreamOptions = {}
 ): () => void {
+  if (isDemoMode()) return demoAdapter.streamConsoleEvents(handlers, opts);
   const maxReconnects = opts.maxReconnects ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? 2000;
   let stopped = false;
@@ -901,7 +933,7 @@ export function streamConsoleEvents(
         // Map to ApiError so callers get status classification
         // (auth short-circuit, onboarding redirect) instead of a bare Error.
         const { detail, code } = await extractErrorDetail(res);
-        throw new ApiError(res.status, res.statusText, detail, null, code);
+        throw new ApiError(res.status, res.statusText, detail, null, code, res.headers.get("x-trace-id"));
       }
       attempt = 0; // successful handshake resets the backoff
       const reader = res.body.getReader();
@@ -980,10 +1012,12 @@ export interface StoreInfo {
 }
 
 export async function getStore(): Promise<StoreInfo> {
+  if (isDemoMode()) return demoAdapter.getStore();
   return apiFetch<StoreInfo>("/console/store");
 }
 
 export async function onboardMerchant(storeName: string): Promise<StoreInfo> {
+  if (isDemoMode()) return demoAdapter.onboardMerchant();
   return apiFetch<StoreInfo>("/console/onboarding", {
     method: "POST",
     body: JSON.stringify({ store_name: storeName }),
@@ -993,12 +1027,14 @@ export async function onboardMerchant(storeName: string): Promise<StoreInfo> {
 // --- Console catalog (the merchant's own DB-persisted products) ---
 
 export async function getConsoleCatalog(query = ""): Promise<Product[]> {
+  if (isDemoMode()) return demoAdapter.getConsoleCatalog(query);
   return apiFetch<Product[]>(
     `/console/catalog${query ? `?query=${encodeURIComponent(query)}` : ""}`
   );
 }
 
 export async function getConsoleCatalogItem(sku: string): Promise<Product> {
+  if (isDemoMode()) return demoAdapter.getConsoleCatalogItem(sku);
   return apiFetch<Product>(`/console/catalog/${encodeURIComponent(sku)}`);
 }
 
@@ -1012,6 +1048,7 @@ export async function createConsoleProduct(body: {
   category: string;
   attributes: Record<string, unknown>;
 }): Promise<Product> {
+  if (isDemoMode()) return demoAdapter.createConsoleProduct(body);
   return apiFetch<Product>("/catalog/products", {
     method: "POST",
     body: JSON.stringify({ ...body, merchant_id: "IGNORED" }),
@@ -1036,6 +1073,7 @@ export async function refundOrder(
   reason = "merchant_initiated",
   options?: { amountPaise?: number; idempotencyKey?: string }
 ): Promise<RefundResult> {
+  if (isDemoMode()) return demoAdapter.refundOrder(orderId, reason);
   const params = new URLSearchParams({ reason });
   if (options?.amountPaise !== undefined) params.set("amount_paise", String(options.amountPaise));
   if (options?.idempotencyKey) params.set("idempotency_key", options.idempotencyKey);
@@ -1046,6 +1084,7 @@ export async function refundOrder(
 
 /** Mark a paid order FULFILLED (merchant confirmation of delivery). */
 export async function fulfillOrder(orderId: string): Promise<{ status: string; order_id: string }> {
+  if (isDemoMode()) return demoAdapter.fulfillOrder(orderId);
   return apiFetch<{ status: string; order_id: string }>(`/console/orders/${orderId}/fulfill`, {
     method: "POST",
   });
@@ -1054,12 +1093,14 @@ export async function fulfillOrder(orderId: string): Promise<{ status: string; o
 // --- Development-only webhook simulation (goes through the verified boundary) ---
 
 export async function simulatePaymentCapture(orderId: string): Promise<PaymentAttemptPayload> {
+  if (isDemoMode()) return demoAdapter.simulatePaymentCapture(orderId);
   return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-capture`, {
     method: "POST",
   });
 }
 
 export async function simulatePaymentFailure(orderId: string): Promise<PaymentAttemptPayload> {
+  if (isDemoMode()) return demoAdapter.simulatePaymentFailure(orderId);
   return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/simulate-failure`, {
     method: "POST",
   });
@@ -1068,6 +1109,10 @@ export async function simulatePaymentFailure(orderId: string): Promise<PaymentAt
 export async function consoleSellerRespond(
   body: SellerRequestPayload & { trace_id?: string }
 ): Promise<SellerDecisionPayload> {
+  if (isDemoMode()) {
+    const { trace_id, ...payload } = body;
+    return demoAdapter.consoleSellerRespond({ ...payload, trace_id });
+  }
   // The trace rides the X-Trace-Id header so every negotiation turn in one
   // session lands on the same replayable trace instead of forking a fresh
   // one per counteroffer. Malformed persisted ids are dropped — the backend
@@ -1094,6 +1139,7 @@ export async function consoleCreateOrder(body: {
   quantity?: number;
   buyer_offer_paise?: number | null;
 }): Promise<OrderCreateResult> {
+  if (isDemoMode()) return demoAdapter.consoleCreateOrder(body);
   // Drop malformed persisted trace ids (backend 422s them); the backend
   // mints a fresh trace when none is supplied.
   const cleanBody = body.trace_id && !TRACE_ID_PATTERN.test(body.trace_id)
@@ -1106,6 +1152,7 @@ export async function consoleCreateOrder(body: {
 }
 
 export async function consoleRequestConsent(orderId: string): Promise<ConsentInfo> {
+  if (isDemoMode()) return demoAdapter.consoleRequestConsent(orderId);
   return apiFetch<ConsentInfo>(`/console/orders/${orderId}/consent`, {
     method: "POST",
   });
@@ -1115,6 +1162,7 @@ export async function consoleStartPayment(
   orderId: string,
   consentId: string
 ): Promise<PaymentAttemptPayload> {
+  if (isDemoMode()) return demoAdapter.consoleStartPayment(orderId, consentId);
   return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/payment`, {
     method: "POST",
     body: JSON.stringify({ consent_id: consentId }),
@@ -1122,6 +1170,7 @@ export async function consoleStartPayment(
 }
 
 export async function consoleRetryPayment(orderId: string): Promise<PaymentAttemptPayload> {
+  if (isDemoMode()) return demoAdapter.consoleRetryPayment(orderId);
   return apiFetch<PaymentAttemptPayload>(`/console/orders/${orderId}/payment/retry`, {
     method: "POST",
   });
@@ -1146,6 +1195,7 @@ export interface AgentKeyCreated {
 }
 
 export async function listAgentKeys(): Promise<AgentApiKeyView[]> {
+  if (isDemoMode()) return demoAdapter.listAgentKeys();
   const data = await apiFetch<{ keys: AgentApiKeyView[] }>("/console/agent-keys");
   return data.keys ?? [];
 }
@@ -1154,6 +1204,7 @@ export async function createAgentKey(body: {
   label: string;
   buyer_agent_id: string;
 }): Promise<AgentKeyCreated> {
+  if (isDemoMode()) return demoAdapter.createAgentKey(body);
   return apiFetch<AgentKeyCreated>("/console/agent-keys", {
     method: "POST",
     body: JSON.stringify(body),
@@ -1161,6 +1212,7 @@ export async function createAgentKey(body: {
 }
 
 export async function rotateAgentKey(keyId: string): Promise<AgentKeyCreated> {
+  if (isDemoMode()) return demoAdapter.rotateAgentKey(keyId);
   return apiFetch<AgentKeyCreated>(
     `/console/agent-keys/${encodeURIComponent(keyId)}/rotate`,
     { method: "POST" }
@@ -1168,6 +1220,7 @@ export async function rotateAgentKey(keyId: string): Promise<AgentKeyCreated> {
 }
 
 export async function revokeAgentKey(keyId: string): Promise<AgentApiKeyView> {
+  if (isDemoMode()) return demoAdapter.revokeAgentKey(keyId);
   return apiFetch<AgentApiKeyView>(
     `/console/agent-keys/${encodeURIComponent(keyId)}`,
     { method: "DELETE" }
@@ -1187,6 +1240,7 @@ export async function consoleRunBuyerMission(body: {
   quantity?: number;
   buyer_offer_paise?: number | null;
 }): Promise<BuyerResultPayload> {
+  if (isDemoMode()) return demoAdapter.consoleRunBuyerMission(body);
   return apiFetch<BuyerResultPayload>("/console/agent/buyer/run", {
     method: "POST",
     body: JSON.stringify(body),
@@ -1197,6 +1251,7 @@ export async function consoleRunBuyerMission(body: {
 export async function getBuyerMission(
   missionId: string
 ): Promise<BuyerMissionPayload> {
+  if (isDemoMode()) return demoAdapter.getBuyerMission(missionId);
   return apiFetch<BuyerMissionPayload>(
     `/console/buyer-missions/${encodeURIComponent(missionId)}`
   );
@@ -1206,6 +1261,7 @@ export async function getBuyerMission(
 export async function listBuyerMissions(
   limit = 20
 ): Promise<BuyerMissionPayload[]> {
+  if (isDemoMode()) return demoAdapter.listBuyerMissions(limit);
   return apiFetch<BuyerMissionPayload[]>(
     `/console/buyer-missions?limit=${limit}`
   );
@@ -1219,6 +1275,7 @@ export async function listBuyerMissions(
 export async function continueBuyerMission(
   missionId: string
 ): Promise<BuyerMissionPayload> {
+  if (isDemoMode()) return demoAdapter.continueBuyerMission(missionId);
   return apiFetch<BuyerMissionPayload>(
     `/console/buyer-missions/${encodeURIComponent(missionId)}/continue`,
     { method: "POST" }
@@ -1307,10 +1364,12 @@ export interface WebhookSubscriptionView {
 }
 
 export async function getOpsOverview(): Promise<OpsOverview> {
+  if (isDemoMode()) return demoAdapter.getOpsOverview();
   return apiFetch<OpsOverview>("/console/ops/overview");
 }
 
 export async function drainEventBus(): Promise<Record<string, number>> {
+  if (isDemoMode()) return demoAdapter.drainEventBus();
   return apiFetch<Record<string, number>>("/console/ops/bus/drain", {
     method: "POST",
   });
@@ -1329,10 +1388,12 @@ export async function listDeadLetters(): Promise<
     occurred_at: string;
   }>
 > {
+  if (isDemoMode()) return demoAdapter.listDeadLetters();
   return apiFetch("/console/ops/dead-letters");
 }
 
 export async function retryDeadLetter(eventId: string): Promise<unknown> {
+  if (isDemoMode()) return demoAdapter.retryDeadLetter(eventId);
   return apiFetch(
     `/console/ops/dead-letters/${encodeURIComponent(eventId)}/retry`,
     { method: "POST" }
@@ -1342,6 +1403,7 @@ export async function retryDeadLetter(eventId: string): Promise<unknown> {
 export async function listNotifications(
   unreadOnly = false
 ): Promise<MerchantNotification[]> {
+  if (isDemoMode()) return demoAdapter.listNotifications(unreadOnly);
   return apiFetch<MerchantNotification[]>(
     `/console/notifications${unreadOnly ? "?unread_only=true" : ""}`
   );
@@ -1350,6 +1412,7 @@ export async function listNotifications(
 export async function markNotificationRead(
   notificationId: string
 ): Promise<unknown> {
+  if (isDemoMode()) return demoAdapter.markNotificationRead(notificationId);
   return apiFetch(
     `/console/notifications/${encodeURIComponent(notificationId)}/read`,
     { method: "POST" }
@@ -1359,6 +1422,7 @@ export async function markNotificationRead(
 export async function getAnalyticsOverview(
   days = 30
 ): Promise<AnalyticsOverview> {
+  if (isDemoMode()) return demoAdapter.getAnalyticsOverview();
   return apiFetch<AnalyticsOverview>(
     `/console/analytics/overview?days=${days}`
   );
@@ -1367,6 +1431,7 @@ export async function getAnalyticsOverview(
 export async function getAnalyticsTimeseries(
   days = 30
 ): Promise<AnalyticsDay[]> {
+  if (isDemoMode()) return demoAdapter.getAnalyticsTimeseries();
   return apiFetch<AnalyticsDay[]>(
     `/console/analytics/timeseries?days=${days}`
   );
@@ -1375,6 +1440,7 @@ export async function getAnalyticsTimeseries(
 export async function listWebhookSubscriptions(): Promise<
   WebhookSubscriptionView[]
 > {
+  if (isDemoMode()) return demoAdapter.listWebhookSubscriptions();
   return apiFetch<WebhookSubscriptionView[]>("/console/webhooks/subscriptions");
 }
 
@@ -1382,6 +1448,7 @@ export async function createWebhookSubscription(
   url: string,
   events: string[]
 ): Promise<WebhookSubscriptionView & { secret: string }> {
+  if (isDemoMode()) return demoAdapter.createWebhookSubscription(url, events);
   return apiFetch("/console/webhooks/subscriptions", {
     method: "POST",
     body: JSON.stringify({ url, events }),
@@ -1391,6 +1458,7 @@ export async function createWebhookSubscription(
 export async function deleteWebhookSubscription(
   subscriptionId: string
 ): Promise<unknown> {
+  if (isDemoMode()) return demoAdapter.deleteWebhookSubscription(subscriptionId);
   return apiFetch(
     `/console/webhooks/subscriptions/${encodeURIComponent(subscriptionId)}`,
     { method: "DELETE" }
@@ -1412,6 +1480,7 @@ export interface WebhookDispatchView {
 export async function listWebhookDispatches(
   limit = 50
 ): Promise<WebhookDispatchView[]> {
+  if (isDemoMode()) return demoAdapter.listWebhookDispatches();
   return apiFetch<WebhookDispatchView[]>(
     `/console/webhooks/dispatches?limit=${limit}`
   );
@@ -1445,6 +1514,7 @@ export async function consoleServiceRespond(body: {
   amount_paise?: number | null;
   reason?: string | null;
 }): Promise<CSResponse> {
+  if (isDemoMode()) return demoAdapter.consoleServiceRespond(body);
   return apiFetch<CSResponse>("/console/agent/service/respond", {
     method: "POST",
     body: JSON.stringify(body),
@@ -1489,10 +1559,12 @@ export interface EvalCaseResult {
 }
 
 export async function listEvalSuites(): Promise<EvalSuiteView[]> {
+  if (isDemoMode()) return demoAdapter.listEvalSuites();
   return apiFetch<EvalSuiteView[]>("/console/evals/suites");
 }
 
 export async function runEvalSuite(suiteId: string): Promise<EvalRunSummary> {
+  if (isDemoMode()) return demoAdapter.runEvalSuite(suiteId);
   return apiFetch<EvalRunSummary>(
     `/console/evals/suites/${encodeURIComponent(suiteId)}/run`,
     { method: "POST" }
@@ -1503,6 +1575,7 @@ export async function getEvalRun(runId: string): Promise<{
   run_id: string;
   results: EvalCaseResult[];
 }> {
+  if (isDemoMode()) return demoAdapter.getEvalRun(runId);
   return apiFetch(`/console/evals/runs/${encodeURIComponent(runId)}`);
 }
 
@@ -1523,6 +1596,7 @@ export async function getEvalDrift(
   current: Record<string, number>;
   metrics: DriftMetric[];
 }> {
+  if (isDemoMode()) return demoAdapter.getEvalDrift();
   return apiFetch(
     `/console/evals/drift?days=${days}&baseline_days=${baselineDays}`
   );
@@ -1541,6 +1615,7 @@ export interface ConnectorView {
 }
 
 export async function listConnectors(): Promise<ConnectorView[]> {
+  if (isDemoMode()) return demoAdapter.listConnectors();
   return apiFetch<ConnectorView[]>("/console/connectors");
 }
 
@@ -1553,6 +1628,7 @@ export async function registerConnector(body: {
   field_map?: Record<string, string>;
   timeout_seconds?: number;
 }): Promise<ConnectorView> {
+  if (isDemoMode()) return demoAdapter.registerConnector(body);
   return apiFetch<ConnectorView>("/console/connectors", {
     method: "POST",
     body: JSON.stringify(body),
@@ -1560,6 +1636,7 @@ export async function registerConnector(body: {
 }
 
 export async function deleteConnector(connectorId: string): Promise<unknown> {
+  if (isDemoMode()) return demoAdapter.deleteConnector(connectorId);
   return apiFetch(
     `/console/connectors/${encodeURIComponent(connectorId)}`,
     { method: "DELETE" }
@@ -1569,6 +1646,7 @@ export async function deleteConnector(connectorId: string): Promise<unknown> {
 export async function connectorHealth(
   connectorId: string
 ): Promise<{ connector_id: string; ok: boolean; detail: string }> {
+  if (isDemoMode()) return demoAdapter.connectorHealth(connectorId);
   return apiFetch(
     `/console/connectors/${encodeURIComponent(connectorId)}/health`
   );
@@ -1577,6 +1655,7 @@ export async function connectorHealth(
 export async function syncConnector(
   connectorId: string
 ): Promise<Record<string, unknown>> {
+  if (isDemoMode()) return demoAdapter.syncConnector(connectorId);
   return apiFetch(
     `/console/connectors/${encodeURIComponent(connectorId)}/sync`,
     { method: "POST" }
@@ -1599,6 +1678,7 @@ export interface BillingView {
 }
 
 export async function getBilling(days = 30): Promise<BillingView> {
+  if (isDemoMode()) return demoAdapter.getBilling();
   return apiFetch<BillingView>(`/console/billing?days=${days}`);
 }
 
@@ -1607,10 +1687,59 @@ export interface ReadinessView {
   stage: string;
   checks: Record<string, boolean>;
   activation_ready: boolean;
+  evidence?: {
+    provider: string;
+    payment_credentials_valid: boolean;
+    webhook_last_verified_at: string | null;
+  } | null;
+  live_blockers?: string[];
 }
 
 export async function getOnboardingReadiness(): Promise<ReadinessView> {
+  if (isDemoMode()) return demoAdapter.getOnboardingReadiness();
   return apiFetch<ReadinessView>("/console/onboarding/readiness");
+}
+
+// --- Console: Onboarding wizard progress (shared multi-page onboarding) ---
+
+export type OnboardingWizardStep =
+  | "welcome"
+  | "store"
+  | "catalog"
+  | "rules"
+  | "agents"
+  | "payments"
+  | "review";
+
+export interface OnboardingWizardProgress {
+  merchant_id: string;
+  current_step: OnboardingWizardStep;
+  completed_steps: OnboardingWizardStep[];
+  data: Record<string, unknown>;
+  updated_at?: string | null;
+}
+
+export async function getOnboardingProgress(): Promise<OnboardingWizardProgress> {
+  if (isDemoMode()) {
+    // Demo progress lives in session storage (lib/onboarding.ts) and never
+    // touches the backend. This client throws so callers fall back locally.
+    throw new ApiError(403, "Forbidden", "Demo onboarding uses local progress");
+  }
+  return apiFetch<OnboardingWizardProgress>("/console/onboarding/progress");
+}
+
+export async function saveOnboardingProgress(body: {
+  current_step?: OnboardingWizardStep;
+  completed_steps?: OnboardingWizardStep[];
+  data?: Record<string, unknown>;
+}): Promise<OnboardingWizardProgress> {
+  if (isDemoMode()) {
+    throw new ApiError(403, "Forbidden", "Demo onboarding uses local progress");
+  }
+  return apiFetch<OnboardingWizardProgress>("/console/onboarding/progress", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
 }
 
 // --- Console: Replay + metrics ---
@@ -1636,6 +1765,7 @@ export interface ReplayView {
 export async function getTransactionReplay(
   orderId: string
 ): Promise<ReplayView> {
+  if (isDemoMode()) return demoAdapter.getTransactionReplay(orderId);
   return apiFetch<ReplayView>(
     `/console/transactions/${encodeURIComponent(orderId)}/replay`
   );
@@ -1644,11 +1774,13 @@ export async function getTransactionReplay(
 export async function getAgentMetrics(
   days = 7
 ): Promise<Record<string, unknown>> {
+  if (isDemoMode()) return demoAdapter.getAgentMetrics();
   return apiFetch(`/console/metrics/agents?days=${days}`);
 }
 
 export async function getCommerceMetrics(
   days = 30
 ): Promise<Record<string, unknown>> {
+  if (isDemoMode()) return demoAdapter.getCommerceMetrics();
   return apiFetch(`/console/metrics/commerce?days=${days}`);
 }
