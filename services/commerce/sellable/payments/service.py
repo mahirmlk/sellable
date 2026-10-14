@@ -559,12 +559,13 @@ class PaymentService:
         provider_ref: str | None = None,
         flags: list[str] | None = None,
         core: CommerceCore | None = None,
+        actor: LedgerActor = LedgerActor.RAZORPAY,
     ) -> None:
         (core or self.commerce).ledger.append(
             LedgerEvent(
                 trace_id=trace_id,
                 merchant_id=(core or self.commerce).merchant_scope,
-                actor=LedgerActor.RAZORPAY,
+                actor=actor,
                 action=action,
                 inputs=inputs,
                 output=output,
@@ -573,3 +574,221 @@ class PaymentService:
                 flags=flags or [],
             )
         )
+
+    _SUPPORTED_STRIPE_EVENTS = frozenset(
+        {
+            "payment_intent.succeeded",
+            "payment_intent.payment_failed",
+        }
+    )
+
+    def handle_stripe_webhook(
+        self, body: bytes, signature: str | None, *, stripe_adapter: Any
+    ) -> PaymentAttempt | None:
+        """Verify and reconcile a Stripe test-mode webhook with the same
+        discipline as the Razorpay path: signature verification, tenant-aware
+        order resolution, persisted idempotent delivery claims, exact
+        amount matching, strict state-machine settlement, and auditable
+        ledger rows. Returns None for event types this rail ignores."""
+        from sellable.payments.stripe import (
+            InvalidStripeSignatureError,  # noqa: F401 — re-raised to the route
+            StripeConfigurationError,  # noqa: F401 — re-raised to the route
+        )
+
+        stripe_adapter.verify_webhook(body, signature)
+        try:
+            payload = json.loads(body)
+            event_type = payload.get("type", "")
+            entity = (payload.get("data", {}).get("object", {}) or {})
+        except (AttributeError, json.JSONDecodeError) as error:
+            raise UnsupportedWebhookEventError(
+                "Webhook payload is not a supported Stripe payment event"
+            ) from error
+        if not isinstance(event_type, str) or event_type not in self._SUPPORTED_STRIPE_EVENTS:
+            if isinstance(event_type, str) and event_type:
+                return None
+            raise UnsupportedWebhookEventError(
+                "Webhook payload is not a supported Stripe payment event"
+            )
+        local_order_id = (entity.get("metadata") or {}).get("local_order_id")
+        if not local_order_id:
+            raise UnsupportedWebhookEventError("Stripe event is missing local_order_id metadata")
+        provider_payment_id = str(entity.get("id") or "") or None
+
+        order_repo = self.commerce.order_repo
+        local_order = order_repo.get(str(local_order_id))
+        if local_order is None:
+            raise UnknownProviderOrderError("Stripe webhook references an unknown order")
+        core = self._core_by_order_id.get(local_order.order_id)
+        if core is None:
+            core = (
+                self._core_resolver(local_order.merchant_id)
+                if self._core_resolver
+                else self.commerce
+            )
+            self._core_by_order_id[local_order.order_id] = core
+
+        attempt = self._attempt_by_order_id.get(local_order.order_id)
+        if attempt is None:
+            attempt = self._rebuild_attempt(local_order)
+
+        try:
+            raw_amount = entity.get("amount_received", entity.get("amount"))
+            event_amount = None if raw_amount is None else int(raw_amount)
+        except (TypeError, ValueError):
+            event_amount = None
+        delivery_key = (
+            f"stripe:{event_type}:{provider_payment_id or local_order.order_id}"
+            f":{event_amount}"
+        )
+        if not core.ledger.claim_delivery(delivery_key):
+            if local_order.status is OrderStatus.PAID:
+                attempt = attempt.model_copy(
+                    update={
+                        "status": PaymentStatus.CAPTURED,
+                        "provider_payment_id": (
+                            attempt.provider_payment_id
+                            or core.ledger.last_provider_ref(local_order.trace_id)
+                        ),
+                    }
+                )
+                self._attempt_by_order_id[local_order.order_id] = attempt
+            elif local_order.status is OrderStatus.PAYMENT_FAILED:
+                attempt = attempt.model_copy(update={"status": PaymentStatus.FAILED})
+                self._attempt_by_order_id[local_order.order_id] = attempt
+            return attempt
+
+        if event_type == "payment_intent.succeeded":
+            if (
+                provider_payment_id is None
+                or event_amount is None
+                or event_amount != local_order.amount_paise
+            ):
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.amount_mismatch",
+                    inputs={"event": event_type, "provider_payment_id": provider_payment_id},
+                    output={
+                        "provider_amount_paise": entity.get("amount_received", entity.get("amount")),
+                        "order_amount_paise": local_order.amount_paise,
+                    },
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        "The Stripe captured amount does not match the local order "
+                        "amount (or is missing); the order was not settled."
+                    ),
+                    actor=LedgerActor.STRIPE,
+                )
+                return attempt
+            if local_order.status is OrderStatus.PAID:
+                if (
+                    provider_payment_id
+                    and attempt.provider_payment_id
+                    and attempt.provider_payment_id != provider_payment_id
+                ):
+                    self._record(
+                        core=core,
+                        trace_id=local_order.trace_id,
+                        action="webhook.duplicate_capture",
+                        inputs={
+                            "event": event_type,
+                            "order_id": local_order.order_id,
+                            "first_payment_id": attempt.provider_payment_id,
+                            "second_payment_id": provider_payment_id,
+                        },
+                        output={"order_status": "PAID"},
+                        provider_ref=provider_payment_id,
+                        explanation=(
+                            "A second distinct Stripe capture arrived for an "
+                            "already-settled order. The order stays PAID; the extra "
+                            "payment needs a refund or manual reconciliation."
+                        ),
+                        actor=LedgerActor.STRIPE,
+                    )
+                return attempt
+            try:
+                core.mark_paid(local_order.order_id, provider_ref=provider_payment_id)
+            except InvalidOrderTransitionError as error:
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.unexpected_state",
+                    inputs={
+                        "event": event_type,
+                        "order_id": local_order.order_id,
+                        "order_status": local_order.status,
+                    },
+                    output={"settled": False},
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        f"A verified {event_type} webhook arrived for an order in "
+                        f"{local_order.status}; the strict state machine refused "
+                        "settlement. Manual reconciliation required."
+                    ),
+                    actor=LedgerActor.STRIPE,
+                )
+                raise UnexpectedOrderStateError(
+                    f"Order {local_order.order_id} in {local_order.status} cannot settle {event_type}"
+                ) from error
+            updated_attempt = attempt.model_copy(
+                update={
+                    "provider_payment_id": provider_payment_id,
+                    "status": PaymentStatus.CAPTURED,
+                }
+            )
+            explanation = "Verified Stripe payment webhook and settled the local order."
+        else:  # payment_intent.payment_failed
+            reason = (
+                str((entity.get("last_payment_error") or {}).get("message") or "")
+                or "Stripe reported a failed payment"
+            )
+            if local_order.status is OrderStatus.PAYMENT_FAILED:
+                return attempt  # already failed — idempotent
+            try:
+                core.mark_payment_failed(
+                    local_order.order_id, reason=reason, provider_ref=provider_payment_id
+                )
+            except InvalidOrderTransitionError as error:
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.unexpected_state",
+                    inputs={
+                        "event": event_type,
+                        "order_id": local_order.order_id,
+                        "order_status": local_order.status,
+                    },
+                    output={"recorded": False},
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        f"A verified {event_type} webhook arrived for an order in "
+                        f"{local_order.status}; the strict state machine refused the failure "
+                        "transition. Manual reconciliation required."
+                    ),
+                    actor=LedgerActor.STRIPE,
+                )
+                raise UnexpectedOrderStateError(
+                    f"Order {local_order.order_id} in {local_order.status} cannot record {event_type}"
+                ) from error
+            updated_attempt = attempt.model_copy(
+                update={
+                    "provider_payment_id": provider_payment_id,
+                    "status": PaymentStatus.FAILED,
+                    "failure_reason": reason,
+                }
+            )
+            explanation = "Verified Stripe payment failure webhook and recorded the explicit failure state."
+
+        self._attempt_by_order_id[local_order.order_id] = updated_attempt
+        self._record(
+            core=core,
+            trace_id=local_order.trace_id,
+            action="webhook.reconciled",
+            inputs={"event": event_type, "provider_order_id": attempt.provider_order_id},
+            output={"order_id": local_order.order_id, "status": updated_attempt.status},
+            provider_ref=provider_payment_id,
+            explanation=explanation,
+            actor=LedgerActor.STRIPE,
+        )
+        return updated_attempt
