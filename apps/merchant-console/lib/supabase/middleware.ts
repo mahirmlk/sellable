@@ -2,33 +2,40 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Refreshes the Supabase session and protects the merchant dashboard routes.
+ * Refreshes the Supabase session and routes by session state
+ * (UPDATE.md Milestone A — Open Console never bypasses auth).
  *
- * When Supabase is not configured the middleware still protects /dashboard:
- * it requires a demo session cookie (`sellable_demo_auth=1`) that is set
- * only after the user goes through /login or /signup. Direct navigation to
- * /dashboard without that cookie (or without a real Supabase session) now
- * redirects to /login instead of rendering the dashboard openly.
+ * Supabase configured: /dashboard requires a user, auth pages redirect
+ * away when already signed in.
+ *
+ * Supabase NOT configured (demo mode): /dashboard requires the demo
+ * session cookie set only by visiting /demo. Direct navigation to
+ * /dashboard without it redirects to /sign-in, where Demo Mode is offered.
  */
-const DEMO_COOKIE = "sellable_demo_auth";
+export const DEMO_COOKIE = "sellable_demo_auth";
+
+const SIGN_IN = "/sign-in";
+const SIGN_UP = "/sign-up";
+const AUTH_PAGES = new Set([SIGN_IN, SIGN_UP]);
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const { pathname } = request.nextUrl;
+
   if (!url || !anonKey) {
-    const { pathname } = request.nextUrl;
     const hasDemoSession = request.cookies.get(DEMO_COOKIE)?.value === "1";
 
     if (pathname.startsWith("/dashboard") && !hasDemoSession) {
       const redirectUrl = request.nextUrl.clone();
-      redirectUrl.pathname = "/login";
+      redirectUrl.pathname = SIGN_IN;
       redirectUrl.searchParams.set("next", pathname);
       return NextResponse.redirect(redirectUrl);
     }
 
-    if (hasDemoSession && (pathname === "/login" || pathname === "/signup")) {
+    if (hasDemoSession && AUTH_PAGES.has(pathname)) {
       const redirectUrl = request.nextUrl.clone();
       redirectUrl.pathname = "/dashboard";
       return NextResponse.redirect(redirectUrl);
@@ -57,15 +64,14 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl;
-
   if (pathname.startsWith("/dashboard") && !user) {
     const redirectUrl = request.nextUrl.clone();
-    redirectUrl.pathname = "/login";
+    redirectUrl.pathname = SIGN_IN;
+    redirectUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && (pathname === "/login" || pathname === "/signup")) {
+  if (user && AUTH_PAGES.has(pathname)) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/dashboard";
     return NextResponse.redirect(redirectUrl);
