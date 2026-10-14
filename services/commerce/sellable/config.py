@@ -140,6 +140,11 @@ class Settings:
     # with 404s, never an open console).
     admin_api_key: str | None = None
 
+    # ACP scaffold (UPDATE.md §9.4): disabled by default. Enabling only
+    # exposes the ACP-shaped checkout-session view; it confers no partner
+    # onboarding, approval, or placement.
+    acp_enabled: bool = False
+
     @property
     def is_dev_environment(self) -> bool:
         """Allowlist for demo conveniences (demo key, webhook simulation,
@@ -195,6 +200,8 @@ class Settings:
             agent_api_key_hashes=key_hashes,
             agent_hmac_secret=os.getenv("BUYER_AGENT_HMAC_SECRET"),
             admin_api_key=os.getenv("SELLABLE_ADMIN_API_KEY"),
+            acp_enabled=os.getenv("SELLABLE_ACP_ENABLED", "").lower()
+            in ("1", "true", "yes"),
             cors_origins=_parse_cors_origins(os.getenv("CORS_ORIGINS"))
             or (
                 "https://sellable.shop",
