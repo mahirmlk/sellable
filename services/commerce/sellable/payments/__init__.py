@@ -38,3 +38,18 @@ def build_provider(config, name: str | None = None):
     from sellable.payments.razorpay import RazorpayAdapter
 
     return RazorpayAdapter(config)
+
+
+def provider_is_valid(config) -> bool:
+    """Local credential validation for the active provider (no network).
+
+    Stronger than secret-presence: rejects placeholder values, wrong-mode
+    keys (live keys on a test-only rail), and missing secrets. Used by the
+    readiness gate so ``payment_health`` reflects validated credentials,
+    not merely configured strings.
+    """
+    try:
+        build_provider(config).validate_configuration()
+    except Exception:  # noqa: BLE001 — any validation failure is unhealthy
+        return False
+    return True
