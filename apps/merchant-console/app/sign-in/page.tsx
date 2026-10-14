@@ -7,22 +7,26 @@ import { Loader2 } from "lucide-react";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { clearDemoCookie } from "@/lib/api";
 
-const INPUT =
-  "w-full h-11 rounded-[12px] bg-white border border-black/[0.12] text-[15px] text-neutral-900 px-3.5 placeholder:text-neutral-400 focus:outline-none focus:border-hairline focus:ring-[3px] focus:ring-ink/20 transition-shadow";
-const PRIMARY =
-  "w-full h-11 inline-flex items-center justify-center gap-2 rounded-full bg-ink text-white text-[15px] font-semibold hover:bg-ink-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.99]";
-const LABEL = "text-[13px] text-neutral-500";
+export const INPUT_DARK =
+  "w-full h-12 bg-[var(--bb-black)] border border-[var(--bb-line)] px-4 text-[15px] text-[var(--bb-white)] placeholder:text-[var(--bb-grey-3)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors";
+export const LABEL_DARK =
+  "font-[var(--font-mono)] text-[0.64rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)]";
+export const PRIMARY_ORANGE =
+  "btn-orange-primary w-full !min-h-[52px] !text-[0.74rem] disabled:opacity-50 disabled:cursor-not-allowed";
+export const INLINE_LINK =
+  "font-medium text-[var(--bb-orange)] hover:underline focus-visible:outline-2 focus-visible:outline-accent";
 
 function friendlyError(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes("invalid login credentials"))
-    return "Incorrect email or password. Try again or reset your password below.";
+    return "That email and password did not match. Try again, or reset your password below.";
   if (lower.includes("email not confirmed") || lower.includes("not confirmed"))
-    return "Please verify your email first — check your inbox for the confirmation link.";
+    return "Confirm your email first. The confirmation link is in your inbox.";
   if (lower.includes("too many") || lower.includes("rate limit"))
-    return "Too many attempts. Wait a minute and try again.";
-  return message || "Sign-in failed. Please try again.";
+    return "Too many attempts. Wait a minute, then try again.";
+  return message || "Sign-in failed. Try again.";
 }
 
 function SignInForm() {
@@ -34,20 +38,16 @@ function SignInForm() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(
-    authError ? "Your session expired or the link was invalid. Sign in again." : null
+    authError ? "That link expired or was already used. Sign in again." : null
   );
 
   if (!isSupabaseConfigured()) {
     return (
       <div className="space-y-4">
-        <ErrorBanner message="Sign-in is unavailable: merchant login is not configured on this deployment." />
-        <p className="text-[14px] leading-relaxed text-neutral-500">
-          You can still explore the full console with realistic sample data —
-          no account needed.
+        <ErrorBanner message="Merchant login is not switched on for this deployment." />
+        <p className="text-[0.9rem] leading-relaxed text-[var(--bb-grey-1)]">
+          The demo below works regardless. It is the fastest way to see the console.
         </p>
-        <Link href="/demo" className={PRIMARY}>
-          Explore Demo Mode
-        </Link>
       </div>
     );
   }
@@ -66,6 +66,8 @@ function SignInForm() {
         setError(friendlyError(signInError.message));
         return;
       }
+      // A real session always wins: drop any demo flag before entering.
+      clearDemoCookie();
       router.push(next.startsWith("/") ? next : "/dashboard");
       router.refresh();
     } catch {
@@ -76,35 +78,35 @@ function SignInForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5">
       {error && <ErrorBanner message={error} />}
-      <div className="space-y-1.5">
-        <label htmlFor="email" className={LABEL}>Email</label>
+      <div className="space-y-2">
+        <label htmlFor="email" className={LABEL_DARK}>Email</label>
         <input
           id="email" type="email" required autoComplete="email" autoFocus
           value={email} onChange={(e) => setEmail(e.target.value)}
-          placeholder="you@company.com" className={INPUT}
+          placeholder="you@company.com" className={INPUT_DARK}
         />
       </div>
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <label htmlFor="password" className={LABEL}>Password</label>
-          <Link href="/forgot-password" className="text-[13px] font-medium text-accent-strong hover:underline">
+          <label htmlFor="password" className={LABEL_DARK}>Password</label>
+          <Link href="/forgot-password" className={`text-[13px] ${INLINE_LINK}`}>
             Forgot password?
           </Link>
         </div>
         <input
           id="password" type="password" required autoComplete="current-password"
           value={password} onChange={(e) => setPassword(e.target.value)}
-          placeholder="••••••••" className={INPUT}
+          placeholder="Your password" className={INPUT_DARK}
         />
       </div>
-      <button type="submit" disabled={loading} className={PRIMARY}>
-        {loading ? (<><Loader2 size={16} className="animate-spin" /> Signing in…</>) : "Sign in"}
+      <button type="submit" disabled={loading} className={PRIMARY_ORANGE}>
+        {loading ? (<><Loader2 size={16} className="animate-spin" /> Signing in</>) : "Sign in"}
       </button>
-      <p className="text-center text-[14px] text-neutral-500">
+      <p className="text-center text-[0.88rem] text-[var(--bb-grey-1)]">
         New to SELLABLE?{" "}
-        <Link href="/sign-up" className="font-medium text-accent-strong hover:underline">
+        <Link href="/sign-up" className={INLINE_LINK}>
           Create an account
         </Link>
       </p>
@@ -115,8 +117,9 @@ function SignInForm() {
 export default function SignInPage() {
   return (
     <AuthShell
-      title="Sign in to SELLABLE"
-      subtitle="Access your merchant console — catalog, selling rules, orders, and agent activity."
+      eyebrow="Merchant login"
+      title="Sign in to your console"
+      subtitle="Your catalog, orders, and agent activity are inside."
     >
       <Suspense>
         <SignInForm />

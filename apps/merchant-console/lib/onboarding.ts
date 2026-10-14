@@ -22,6 +22,12 @@ import { isSupabaseConfigured } from "@/lib/supabase/client";
 export type OnboardingMode = "production" | "demo";
 
 export function resolveOnboardingMode(): OnboardingMode {
+  if (typeof document !== "undefined") {
+    const hasDemo = document.cookie
+      .split(";")
+      .some((part) => part.trim().startsWith("sellable_demo_auth="));
+    if (hasDemo) return "demo";
+  }
   return isSupabaseConfigured() ? "production" : "demo";
 }
 

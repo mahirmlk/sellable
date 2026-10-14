@@ -6,7 +6,11 @@ import { NextResponse, type NextRequest } from "next/server";
  * (UPDATE.md Milestone A — Open Console never bypasses auth).
  *
  * Supabase configured: /dashboard requires a user, auth pages redirect
- * away when already signed in.
+ * away when already signed in. A demo-cookie visitor with no Supabase
+ * session may still enter /dashboard: the isolated demo adapter serves
+ * fixtures locally and never touches production APIs. A signed-in
+ * merchant never keeps the demo cookie (it is cleared below), so a real
+ * session always wins over demo state.
  *
  * Supabase NOT configured (demo mode): /dashboard requires the demo
  * session cookie set only by visiting /demo. Direct navigation to
@@ -64,7 +68,15 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (pathname.startsWith("/dashboard") && !user) {
+  const hasDemoSession = request.cookies.get(DEMO_COOKIE)?.value === "1";
+
+  if (user && hasDemoSession) {
+    // A real session always wins: drop the demo flag so demo state can
+    // never shadow production data for a signed-in merchant.
+    supabaseResponse.cookies.delete(DEMO_COOKIE);
+  }
+
+  if (pathname.startsWith("/dashboard") && !user && !hasDemoSession) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = SIGN_IN;
     redirectUrl.searchParams.set("next", pathname);

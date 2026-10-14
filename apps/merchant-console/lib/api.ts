@@ -13,10 +13,28 @@ export function apiBaseUrl(): string {
 // public demo key. With Supabase configured, merchant auth uses the JWT.
 import * as demoAdapter from "./demo/adapter";
 
-// In demo mode (no Supabase configured) the console NEVER calls production
-// APIs: every data function below delegates to the isolated demo adapter
-// (curated fixtures + localStorage overlay). See lib/demo/adapter.ts.
-export const isDemoMode = () => !process.env.NEXT_PUBLIC_SUPABASE_URL;
+export const DEMO_COOKIE = "sellable_demo_auth";
+
+/** Demo routing cookie (set by /demo, cleared on sign-in/sign-out and by
+ * middleware whenever a real Supabase session exists). Client-only read. */
+export function hasDemoCookie(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.cookie
+    .split(";")
+    .some((part) => part.trim().startsWith(`${DEMO_COOKIE}=`));
+}
+
+export function clearDemoCookie(): void {
+  if (typeof document === "undefined") return;
+  document.cookie = `${DEMO_COOKIE}=; Path=/; Max-Age=0`;
+}
+
+// Demo data applies when Supabase is unconfigured, or when the visitor
+// entered through /demo. A signed-in merchant never keeps the cookie
+// (cleared on sign-in and by middleware), so a real session always wins
+// over demo state — demo functions here never call production APIs.
+export const isDemoMode = () =>
+  !process.env.NEXT_PUBLIC_SUPABASE_URL || hasDemoCookie();
 const AGENT_KEY =
   process.env.NEXT_PUBLIC_AGENT_KEY || "sellable_demo_key_001";
 
