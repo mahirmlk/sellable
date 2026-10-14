@@ -63,7 +63,7 @@ Returns service health status. The console branches on `status` only
 ```
 
 **Production** (default when `SELLABLE_ENVIRONMENT` is unset —
-`services/commerce/sellable/main.py:309-312`): minimal liveness shape only.
+`services/commerce/sellable/main.py:407-419`): minimal liveness shape only.
 ```json
 {
   "status": "ok",
@@ -399,6 +399,24 @@ delivery claims; unexpected-but-real transitions answer 409 with a
 
 **Response:** `PaymentAttempt`
 
+### `POST /webhooks/stripe`
+
+Receives Stripe test-mode webhooks through the same orchestrated boundary
+as Razorpay (`PaymentService.handle_stripe_webhook`, `stripe`-actor ledger
+rows): `Stripe-Signature` HMAC verification (401 on missing/invalid, 503
+when unconfigured), tenant-aware order resolution via
+`metadata.local_order_id`, persisted idempotent delivery claims, exact
+`amount_received` matching (`webhook.amount_mismatch` never settles and
+never burns the delivery key), strict state-machine settlement
+(`webhook.unexpected_state` → 409), duplicate-capture flagging. Handled
+events: `payment_intent.succeeded`, `payment_intent.payment_failed`;
+anything else returns `{"status": "ignored"}`. Unknown orders → 404 (never
+a settlement attempt).
+
+**Headers:** `Stripe-Signature: t=<timestamp>,v1=<signature>`
+
+**Response:** `{status, order_id}` (`CAPTURED` / `FAILED` attempt status)
+
 ### `POST /orders/{order_id}/refund`
 
 Issue a **real provider refund** for a `PAID` (or `FULFILLED`) order. Requires
@@ -434,8 +452,8 @@ All console endpoints require a merchant session (Supabase JWT, or the demo
 `X-Agent-Key` in local demo mode).
 
 List endpoints accept `limit`/`offset` and clamp to a 500-row window
-(`main.py:929-942` transactions, `main.py:1181-1193` approvals,
-`main.py:1136-1144` events): `limit` defaults to 500 (events: 200), values
+(`main.py:2837-2846` transactions, `main.py:3080-3091` approvals,
+`main.py:3042-3049` events): `limit` defaults to 500 (events: 200), values
 are clamped to max 500 (`max(1, min(limit, 500))`), `offset` is floored at 0.
 The Orders page shows a truncation notice when the 500-row cap is hit
 (`app/dashboard/transactions/page.tsx:84-96,281-283`).
@@ -447,14 +465,16 @@ The Orders page shows a truncation notice when the 500-row cap is hit
 | `/transactions/{id}/events` | GET | Ledger events for a transaction |
 | `/console/events` · `/activity` | GET | XAI Ledger events (`limit` clamped to 500) |
 | `/activity/stream` | GET | SSE live ledger stream |
-| `/console/approvals` · `/approvals` | GET | Orders held for human approval — rows always carry `status: "PENDING"` (`contracts.py:488`, `main.py:1209-1217`); post-action state is derived from the order (consent/payment), not the list rows |
-| `/console/approvals/{id}/approve` · `/approvals/{id}/approve` | POST | Pre-validated approve + issue consent (unknown order → 404) → top-level `{"status": "approved", ...}` (`main.py:1276-1283`) |
-| `/console/approvals/{id}/reject` · `/approvals/{id}/reject` | POST | Reject (aborts; cancels a live payment link first when PAYMENT_PENDING) → top-level `{"status": "rejected", ...}` (`main.py:1316-1318`) |
+| `/console/approvals` · `/approvals` | GET | Orders held for human approval — rows always carry `status: "PENDING"` (`main.py:3122`); post-action state is derived from the order (consent/payment), not the list rows |
+| `/console/approvals/{id}/approve` · `/approvals/{id}/approve` | POST | Pre-validated approve + issue consent (unknown order → 404) → top-level `{"status": "approved", ...}` (`main.py:3131-3183`) |
+| `/console/approvals/{id}/reject` · `/approvals/{id}/reject` | POST | Reject (aborts; cancels a live payment link first when PAYMENT_PENDING) → top-level `{"status": "rejected", ...}` (`main.py:3197-3224`) |
 | `/console/orders/{id}/fulfill` · `/orders/{id}/fulfill` | POST | Mark a paid order FULFILLED |
-| `/console/orders/{id}/simulate-capture` · `/simulate-failure` | POST | Dev-only verified-webhook simulation (disabled unless dev/test env — 403 in production via `main.py:716-717` — flagged `simulated` in the ledger). A 200 does NOT imply settlement: on amount mismatch the attempt stays PENDING and the order stays PAYMENT_PENDING (`payments/service.py:402-423`); only `attempt.status` of `CAPTURED`/`FAILED` counts |
+| `/console/orders/{id}/simulate-capture` · `/simulate-failure` | POST | Dev-only verified-webhook simulation (disabled unless dev/test env — 403 in production via `main.py:2622-2623` — flagged `simulated` in the ledger). A 200 does NOT imply settlement: on amount mismatch the attempt stays PENDING and the order stays PAYMENT_PENDING (`payments/service.py:402-423`); only `attempt.status` of `CAPTURED`/`FAILED` counts |
 | `/console/insights` · `/growth` | GET | Growth metrics (revenue counts PAID orders) |
-| `/console/policy` | GET/PUT | Read merchant policy / owner-only update (re-validates) |
-| `/catalog/products` | POST | Add a catalog product. SKU contract: `^[A-Z0-9-]+$`, max 64 chars (`contracts.py:72`); the catalog form validates client-side before POST (`app/dashboard/catalog/page.tsx:168-173`) |
+| `/console/policy` | GET/PUT | Read merchant policy / owner-only update (re-validates). GET reports `is_default: true` when no policy row exists yet (first-run defaults — review and save, not an error) |
+| `/console/onboarding/progress` | GET/PUT | Shared-wizard pointer: `{current_step, completed_steps[], data{}}`. GET returns the default first-step pointer (never 404); PUT validates step ids (unknown → 409) and merges per-step payloads. Tenant-scoped; demo mode never calls it (localStorage instead) |
+| `/console/onboarding/readiness` | GET | Readiness checks + `evidence` (`provider`, `payment_credentials_valid`, `webhook_last_verified_at`) + `live_blockers` (failing required checks gating live transactions). `payment_health` reflects validated credentials, not mere presence |
+| `/catalog/products` | POST | Add a catalog product. SKU contract: `^[A-Z0-9-]+$`, max 64 chars (`contracts.py:93`); the catalog form validates client-side before POST (`app/dashboard/catalog/page.tsx:167-169`) |
 | `/agents/status` | GET | Agent + payment-rail health |
 | `/console/store` | GET | The authenticated merchant's own store record |
 | `/console/onboarding` | POST | Create the verified user's own merchant store |
@@ -466,16 +486,16 @@ The Orders page shows a truncation notice when the 500-row cap is hit
 | `/console/orders/{id}/payment/retry` | POST | One bounded retry after a verified failure |
 | `/console/checkout/session` | GET/POST | Restore/persist the durable checkout session |
 | `/console/checkout/sessions` | GET | Lightweight chat-history list |
-| `/console/checkout/session/{id}` | GET/PATCH/DELETE | Open, rename/archive a chat session — PATCH partially updates `title` (blank clears to NULL) and/or `archived` (`main.py:2437-2464`); DELETE soft-archives only (row kept; commerce rows never touched — `main.py:2467-2483`); closing a session sets `ABANDONED` (`repositories.py:616-624`) |
+| `/console/checkout/session/{id}` | GET/PATCH/DELETE | Open, rename/archive a chat session — PATCH (`main.py:4387`) partially updates `title` (blank clears to NULL) and/or `archived`; DELETE (`main.py:4417`) soft-archives only (row kept; commerce rows never touched); closing a session sets `ABANDONED` (`main.py:4271`) |
 | `/console/catalog` · `/console/catalog/{sku}` | GET | The merchant's own catalog / one product |
 
 Chat checkout (`POST /console/agent/seller/respond` +
 `/console/orders` → `/consent` → `/payment`): the chat client refreshes the
 authoritative order before pay; on a 409 single-use race it re-issues consent
-once and retries (`app/dashboard/chat/page.tsx:1292-1333`). Restored snapshot
+once and retries (`app/dashboard/chat/page.tsx:1195-1217`). Restored snapshot
 quotes are provisional until a fresh seller turn
-(`app/dashboard/chat/page.tsx:759-767`). Chat offers MARK FULFILLED
-(`PAID` → `FULFILLED`, `main.py:1323-1338`) alongside refund.
+(`app/dashboard/chat/page.tsx:639-647`). Chat offers MARK FULFILLED
+(`PAID` → `FULFILLED`, `main.py:3232-3238`) alongside refund.
 
 ### Agent API Keys (Merchant Console)
 
@@ -494,12 +514,22 @@ Issued keys authenticate `X-Agent-Key` gateway requests scoped to the issuing
 merchant (buyer agent id defaults to the key's `buyer_agent_id`) and are also
 accepted on the HMAC-signed path.
 
+### ACP Scaffold (disabled by default)
+
+`SELLABLE_ACP_ENABLED=1` exposes an ACP-shaped read-only view of canonical
+AUTHORIZED checkouts. No conformance claim; no partner placement.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/acp/status` | GET | Scaffold status: `{enabled, version, spec_reference, note}` (always visible, unauthenticated discovery) |
+| `/acp/checkout/sessions` | POST | `{checkout_id}` → ACP session state (settled totals, auth binding, idempotency guidance). Disabled → 501 `acp_disabled`; unknown checkout → 404; non-AUTHORIZED checkout → 409. Creates nothing, moves no money |
+
 ---
 
 ## Error Responses
 
 FastAPI errors may return either a plain string or a structured object
-(`apps/merchant-console/lib/api.ts:676-704` maps both via
+(`apps/merchant-console/lib/api.ts:693-722` maps both via
 `ApiError.errorCode`):
 
 ```json
@@ -517,17 +547,20 @@ Machine-readable codes (`detail.code`):
 
 - `onboarding_required` (403, `services/commerce/sellable/merchant_auth.py:256-262`) —
   authenticated user has no linked merchant; complete merchant onboarding.
-- `auth_not_configured` (401, `services/commerce/sellable/merchant_auth.py:266-289`,
+- `auth_not_configured` (401, `services/commerce/sellable/merchant_auth.py:281-321`,
   constant `AUTH_NOT_CONFIGURED_CODE`) — frontend/backend auth modes disagree
   (demo console against a production backend, or vice versa). See
   Authentication above; the console surfaces deployment guidance, not a
-  generic "unauthorized".
+  generic "unauthorized". Also returned when a development backend points at
+  a remote database (demo-key sessions require a local database).
+- `acp_disabled` (501) — the ACP scaffold is disabled; set
+  `SELLABLE_ACP_ENABLED=1` to expose it.
 - `409 Consent is not available for use` (`services/commerce/sellable/consent.py:64`) —
   stale or already-consumed single-use consent. Refresh the authoritative
   order and re-issue consent once, then retry payment (chat checkout does
-  this automatically — `app/dashboard/chat/page.tsx:1292-1333`).
+  this automatically — `app/dashboard/chat/page.tsx:1195-1217`).
 - `422 X-Trace-Id must match ^trc_[0-9a-f]{32}$`
-  (`services/commerce/sellable/main.py:244-267`) — malformed `X-Trace-Id`
+  (`services/commerce/sellable/main.py:310-328`) — malformed `X-Trace-Id`
   header or body `trace_id` (`contracts.py:225,288`). Drop stale persisted
   ids and let the server mint a fresh `trc_…` id.
 
@@ -539,5 +572,12 @@ Machine-readable codes (`detail.code`):
 | 404 | Resource not found (e.g., unknown SKU or order) |
 | 409 | Idempotency conflict, blocked state transition, or consent reuse |
 | 422 | Malformed `X-Trace-Id` / body `trace_id` (must match `^trc_[0-9a-f]{32}$`) |
+| 501 | Disabled optional scaffold (ACP) |
 | 502 | Razorpay request failed |
 | 503 | Razorpay not configured |
+
+Every response (success and error) carries an `X-Trace-Id` correlation id —
+echoed when the caller supplies a valid one, minted otherwise
+(`services/commerce/sellable/tracing.py:78-90`). The console captures it as
+`ApiError.traceId` and shows it as `Reference: trc_…` on Settings/Selling
+rules errors for support.
