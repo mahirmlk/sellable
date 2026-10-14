@@ -385,7 +385,6 @@ sellable/
 │   ├── llm/                      #   Provider adapters (OpenAI, Anthropic, mock)
 │   └── runtime/                  #   Guardrails, model gateway, versioning, recorder
 ├── apps/
-<<<<<<< HEAD
 │   └── merchant-console/         # Next.js 16 merchant console
 │       ├── app/                  #   App router pages (landing, console, auth)
 │       │   ├── (sign-in|sign-up|forgot-password|reset-password|auth|demo|sign-out)/  # access experience
