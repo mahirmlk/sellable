@@ -262,6 +262,36 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str, str | None]:
     )
 
 
+def _is_local_database(url: str | None) -> bool:
+    """True only for non-network databases (SQLite files/memory, local hosts).
+
+    Demo-key sessions must never run against a shared/remote database: a
+    development backend pointed at production Postgres would let the
+    well-known demo key write the demo merchant's rows in production data.
+    """
+    lowered = (url or "").lower()
+    if lowered.startswith("sqlite"):
+        return True
+    return any(
+        marker in lowered
+        for marker in ("@localhost", "@127.0.0.1", "@::1", "localhost:", "127.0.0.1:")
+    )
+
+
+def _reject_remote_demo() -> None:
+    raise HTTPException(
+        status_code=401,
+        detail={
+            "code": AUTH_NOT_CONFIGURED_CODE,
+            "message": (
+                "Demo access is disabled: this development backend points at a "
+                "remote database. Point DATABASE_URL at a local database for "
+                "demo use, or configure Supabase on both console and backend."
+            ),
+        },
+    )
+
+
 def _dev_session(x_agent_key: str | None) -> MerchantSession:
     if not settings.is_dev_environment:
         raise HTTPException(
@@ -275,6 +305,8 @@ def _dev_session(x_agent_key: str | None) -> MerchantSession:
                 ),
             },
         )
+    if not _is_local_database(settings.database_url):
+        _reject_remote_demo()
     if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH}:
         return MerchantSession(merchant_id=_DEMO_MERCHANT_ID, auth_user_id=None, role="owner")
     raise HTTPException(
@@ -304,9 +336,19 @@ def get_authenticated_user(
     Used by onboarding: a verified Supabase user may create their own merchant.
     """
     if not settings.supabase_is_configured:
-        # Dev-only: the demo key identifies the local developer.
-        if x_agent_key and _sha256(x_agent_key) in {_DEMO_KEY_HASH} and settings.is_dev_environment:
+        # Dev-only: the demo key identifies the local developer — and only
+        # against a local database (never shared/production data).
+        if (
+            x_agent_key
+            and _sha256(x_agent_key) in {_DEMO_KEY_HASH}
+            and settings.is_dev_environment
+            and _is_local_database(settings.database_url)
+        ):
             return AuthenticatedUser(auth_user_id="dev_local_user")
+        if settings.is_dev_environment and not _is_local_database(
+            settings.database_url
+        ):
+            _reject_remote_demo()
         raise HTTPException(status_code=401, detail="Authentication is not configured")
 
     bearer = _extract_bearer(authorization)

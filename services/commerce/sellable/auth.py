@@ -87,10 +87,22 @@ def _configured_hashes() -> set[str]:
     # The built-in demo key is only valid in known dev environments (see
     # Settings.is_dev_environment) so a deployed environment — including one
     # with a typo'd SELLABLE_ENVIRONMENT — cannot be accessed with the
-    # well-known test key.
-    if settings.is_dev_environment:
+    # well-known test key. It is additionally disabled when the backend
+    # points at a remote database, so a development backend can never use
+    # the demo key against shared/production data.
+    if settings.is_dev_environment and _database_is_local():
         hashes.add(_DEMO_KEY_HASH)
     return hashes
+
+
+def _database_is_local() -> bool:
+    lowered = (settings.database_url or "").lower()
+    if lowered.startswith("sqlite"):
+        return True
+    return any(
+        marker in lowered
+        for marker in ("@localhost", "@127.0.0.1", "@::1", "localhost:", "127.0.0.1:")
+    )
 
 
 _issued_key_repo: object | None = None
