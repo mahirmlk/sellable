@@ -3,10 +3,17 @@
 Next.js 16 dashboard for SELLABLE merchants: monitor agent-driven sales,
 approve held orders, manage catalog/policy, and run conversational checkout.
 
-## Routes (`app/dashboard/`)
+## Routes
 
 | Route | Page |
 |---|---|
+| `/` | Marketing site |
+| `/sign-in` · `/sign-up` | Merchant auth (email/password, verification, recovery links) |
+| `/forgot-password` · `/reset-password` | Password recovery flow |
+| `/auth/callback` | Supabase email-link landing (code → session → `next`) |
+| `/demo` | Demo Mode entry (sets the demo routing cookie, no account) |
+| `/sign-out` | Clears Supabase + demo sessions |
+| `/login` · `/signup` | Legacy aliases → `/sign-in` · `/sign-up` |
 | `/dashboard` | Overview (status, recent activity) |
 | `/dashboard/chat` | AI Sales — conversational checkout |
 | `/dashboard/activity` | Live ledger event feed |
@@ -23,15 +30,18 @@ approve held orders, manage catalog/policy, and run conversational checkout.
 | `/dashboard/settings` | Merchant settings |
 | `/dashboard/developers` | Agent API keys (issue / rotate / revoke) |
 | `/dashboard/storefront` | Storefront + agent-key management |
-| `/dashboard/onboarding` | Create your store (403 `onboarding_required` lands here) |
+| `/dashboard/onboarding` | Shared 7-step setup wizard (production + demo modes, resumable) |
 
 ## API client (`lib/api.ts`)
 
 Typed `fetch` wrapper around the FastAPI backend. Auth is automatic:
 
-- **Demo mode** (no `NEXT_PUBLIC_SUPABASE_URL`): sends `X-Agent-Key`
-  (`NEXT_PUBLIC_AGENT_KEY`, default `sellable_demo_key_001`). Dev backend only —
-  a production backend 401s it with `auth_not_configured`.
+- **Demo mode** (no `NEXT_PUBLIC_SUPABASE_URL`): every data function
+  delegates to the isolated demo adapter (`lib/demo/` — curated fixtures +
+  localStorage overlay, zero network calls). No production API receives
+  demo traffic, and the topbar shows a DEMO badge with Reset demo data.
+  The legacy `X-Agent-Key` header path only survives for direct backend
+  calls outside this client.
 - **Supabase mode**: sends `Authorization: Bearer <merchant JWT>` (with
   proactive session refresh). Backend resolves `sub` → merchant; every route is
   merchant-scoped and foreign ids are 404s.

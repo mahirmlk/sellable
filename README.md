@@ -155,7 +155,7 @@ npm run dev
 The console runs at `http://localhost:3000` and connects to the backend at
 `http://localhost:8000`. In local demo mode (no `NEXT_PUBLIC_SUPABASE_URL`), the
 console authenticates with the public demo key automatically; with Supabase
-configured, sign in at `/login` and the dashboard routes are protected.
+configured, sign in at `/sign-in` and the dashboard routes are protected.
 
 ### 5. Verify
 
@@ -243,7 +243,9 @@ capabilities) and `X-Delegation-Id` (bounded customer delegation);
 | `/orders/{id}/payment` | POST | Initiate provider payment (`PAYMENT_PROVIDER`: razorpay/stripe test) |
 | `/orders/{id}/payment/retry` | POST | One bounded, idempotent retry after a verified failure |
 | `/webhooks/razorpay` | POST | Receive signed Razorpay webhook (drains the event bus) |
-| `/webhooks/stripe` | POST | Receive signed Stripe webhook (drains the event bus) |
+| `/webhooks/stripe` | POST | Receive signed Stripe webhook through the same orchestrated boundary (idempotent claims, amount match, strict transitions; 400/404/409 mapping) |
+| `/acp/status` | GET | ACP scaffold status (always visible; no placement claims) |
+| `/acp/checkout/sessions` | POST | ACP-shaped view of an AUTHORIZED checkout (disabled → 501; read-only) |
 | `/webhooks/shipping/{carrier}` | POST | Carrier tracking update (shared-secret authed) |
 | `/orders/{id}/refund` | POST | Process refund (merchant auth) |
 
@@ -267,7 +269,9 @@ capabilities) and `X-Delegation-Id` (bounded customer delegation);
 | `/console/approvals/{id}/approve` | POST | Approve pending action (merchant auth) |
 | `/console/approvals/{id}/reject` | POST | Reject pending action (merchant auth) |
 | `/console/insights` | GET | Growth metrics (scoped) |
-| `/console/policy` | GET/PUT | Read/update the merchant's own policy |
+| `/console/policy` | GET/PUT | Read/update the merchant's own policy (`is_default` flags first-run defaults) |
+| `/console/onboarding/progress` | GET/PUT | Shared-wizard pointer: resumable `{current_step, completed_steps[], data{}}` (unknown steps → 409) |
+| `/console/onboarding/readiness` | GET | Readiness checks + evidence + `live_blockers` |
 | `/catalog/products` | POST | Add a product to the merchant's own catalog |
 | `/console/agent/seller/respond` | POST | Conversational checkout (merchant JWT) |
 | `/console/agent/buyer/run` | POST | Run the reference buyer against your own store (merchant JWT) |
@@ -357,8 +361,13 @@ sellable/
 ├── apps/
 │   └── merchant-console/       # Next.js 16 dashboard
 │       ├── app/                #   App router pages
+│       │   ├── (sign-in|sign-up|forgot-password|reset-password|auth|demo|sign-out)/  # access experience
+│       │   └── dashboard/      #   Guarded console (incl. 7-step onboarding wizard)
 │       ├── components/         #   React components
 │       ├── lib/                #   API client, types, utils
+│       │   ├── demo/           #   Isolated Demo Mode adapter (fixtures + overlay, no network)
+│       │   └── onboarding.ts   #   Shared wizard model (prod/demo adapters)
+│       ├── middleware.ts       #   Session gate: dashboard by auth state, demo cookie routing
 │       └── public/             #   Static assets (logo, favicon)
 ├── data/                       # SQLite dev database
 ├── docs/                       # Comprehensive documentation
@@ -383,6 +392,9 @@ sellable/
 │   ├── consent.py              #   Single-use consent service
 │   ├── gateway.py              #   Agent Gateway
 │   ├── auth.py                 #   HMAC signed-key auth
+│   ├── merchant_auth.py        #   Supabase merchant sessions (demo-key requires local DB)
+│   ├── onboarding.py           #   Lifecycle stages + wizard step registry
+│   ├── protocols/              #   REST/MCP/A2A/UCP adapters (+ disabled-by-default ACP scaffold)
 │   ├── ledger/                 #   XAI Ledger
 │   └── payments/               #   Razorpay adapter
 └── tests/                      # Test suite
