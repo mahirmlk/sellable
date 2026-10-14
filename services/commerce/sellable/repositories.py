@@ -1339,6 +1339,98 @@ class MerchantOnboardingRepository:
             )
 
 
+class OnboardingWizardRepository:
+    """Wizard progress pointer persistence (UPDATE.md §5).
+
+    One row per merchant: current step, completed steps, per-step payloads.
+    Demo mode never reaches this repository — demo progress stays in
+    session storage and is covered by frontend isolation tests (Phase 3).
+    """
+
+    def __init__(self, engine: object | None = None) -> None:
+        from sellable.ledger.database import OnboardingWizardRecord
+
+        self._record_cls = OnboardingWizardRecord
+        self._engine = engine or make_engine()
+
+    def get(self, merchant_id: str) -> dict[str, Any]:
+        from sellable.contracts import utc_now
+        from sellable.onboarding import WIZARD_STEPS
+
+        with Session(self._engine) as session:
+            record = session.get(self._record_cls, merchant_id)
+            if not record:
+                return {
+                    "merchant_id": merchant_id,
+                    "current_step": WIZARD_STEPS[0],
+                    "completed_steps": [],
+                    "data": {},
+                }
+            completed = [s for s in list(record.completed_steps_json) if s in WIZARD_STEPS]
+            current = (
+                record.current_step
+                if record.current_step in WIZARD_STEPS
+                else WIZARD_STEPS[0]
+            )
+            return {
+                "merchant_id": record.merchant_id,
+                "current_step": current,
+                "completed_steps": completed,
+                "data": dict(record.data_json),
+                "updated_at": _as_aware_utc(record.updated_at).isoformat()
+                if record.updated_at is not None
+                else utc_now().isoformat(),
+            }
+
+    def save(
+        self,
+        merchant_id: str,
+        *,
+        current_step: str | None = None,
+        completed_steps: list[str] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        from sellable.contracts import utc_now
+        from sellable.onboarding import WIZARD_STEPS, validate_wizard_step
+
+        if current_step is not None:
+            validate_wizard_step(current_step)
+        clean_completed = None
+        if completed_steps is not None:
+            seen: list[str] = []
+            for step in completed_steps:
+                validate_wizard_step(step)
+                if step not in seen:
+                    seen.append(step)
+            clean_completed = seen
+
+        with Session(self._engine) as session:
+            existing = session.get(self._record_cls, merchant_id)
+            merged_data = dict(existing.data_json) if existing else {}
+            if data is not None:
+                merged_data.update(data)
+            now = utc_now()
+            if existing:
+                if current_step is not None:
+                    existing.current_step = current_step
+                if clean_completed is not None:
+                    existing.completed_steps_json = clean_completed
+                existing.data_json = merged_data
+                existing.updated_at = now
+            else:
+                session.add(
+                    self._record_cls(
+                        merchant_id=merchant_id,
+                        current_step=current_step or WIZARD_STEPS[0],
+                        completed_steps_json=clean_completed or [],
+                        data_json=merged_data,
+                        updated_at=now,
+                    )
+                )
+            session.commit()
+        return self.get(merchant_id)
+
+
 class OutboxRepository:
     """Transactional-outbox queue for the future Event Bus (target §27)."""
 
