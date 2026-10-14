@@ -39,7 +39,7 @@ export function Hero() {
                 <a href="#how-it-works" className="btn-light">
                   SEE HOW IT WORKS
                 </a>
-                <a href="/dashboard/chat" className="btn-outline">
+                <a href="/demo" className="btn-outline">
                   TRY THE AI SELLER
                 </a>
               </div>

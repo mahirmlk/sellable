@@ -20,11 +20,11 @@ export function OrangeCTA() {
           seller handle the conversation.
         </p>
         <div className="flex flex-wrap items-center gap-4 mt-10">
-          <a href="/dashboard" className="btn-orange-primary">
+          <a href="/sign-up" className="btn-orange-primary">
             START SELLING WITH AI
           </a>
-          <a href="/case-study" className="btn-orange-secondary">
-            EXPLORE AI COMMERCE
+          <a href="/demo" className="btn-orange-secondary">
+            EXPLORE THE DEMO
           </a>
         </div>
         {/* trust row — static */}
