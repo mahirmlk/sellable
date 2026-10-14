@@ -232,10 +232,11 @@ via `ApiError.isAuthNotConfigured` and shows deployment guidance
 
 Auth matrix:
 
-- Frontend demo mode = no `NEXT_PUBLIC_SUPABASE_URL` (`lib/api.ts:19`) — the
-  console serves curated fixtures through the isolated demo adapter and sends
-  no production traffic. Unauthenticated `/dashboard` visits redirect to
-  `/sign-in` (root `middleware.ts`); `/demo` sets the demo routing cookie.
+- Frontend demo mode = `/demo` entry (no account) or no
+  `NEXT_PUBLIC_SUPABASE_URL` (`lib/api.ts:19`) — the console serves curated
+  fixtures through the isolated demo adapter and sends no production
+  traffic. Unauthenticated `/dashboard` visits redirect to `/sign-in`
+  (root `middleware.ts`); `/demo` sets the demo routing cookie.
 - Backend dev mode = `SELLABLE_ENVIRONMENT` in `development`/`test`, default
   `production` (`config.py:149-157,180`).
 - Demo-key sessions additionally require a **local** database: a development

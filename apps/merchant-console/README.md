@@ -36,12 +36,13 @@ approve held orders, manage catalog/policy, and run conversational checkout.
 
 Typed `fetch` wrapper around the FastAPI backend. Auth is automatic:
 
-- **Demo mode** (no `NEXT_PUBLIC_SUPABASE_URL`): every data function
+- **Demo mode** (`/demo` entry, no account): every data function
   delegates to the isolated demo adapter (`lib/demo/` — curated fixtures +
-  localStorage overlay, zero network calls). No production API receives
-  demo traffic, and the topbar shows a DEMO badge with Reset demo data.
-  The legacy `X-Agent-Key` header path only survives for direct backend
-  calls outside this client.
+  localStorage overlay, zero network calls). Works with or without Supabase
+  configured; a signed-in merchant never keeps the demo flag (cleared on
+  sign-in and by middleware), so a real session always wins. The legacy
+  `X-Agent-Key` header path only survives for direct backend calls outside
+  this client.
 - **Supabase mode**: sends `Authorization: Bearer <merchant JWT>` (with
   proactive session refresh). Backend resolves `sub` → merchant; every route is
   merchant-scoped and foreign ids are 404s.
