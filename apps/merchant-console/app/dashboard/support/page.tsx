@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Send, LifeBuoy } from "lucide-react";
+import { Send } from "lucide-react";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import {
@@ -76,12 +76,15 @@ export default function SupportPage() {
   }, [input, busy, customerId, orderId]);
 
   return (
-    <div className="mx-auto max-w-[720px] space-y-6 p-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold">
-          <LifeBuoy size={18} /> Support
+    <div className="mx-auto max-w-[720px] px-6 lg:px-8 py-6 space-y-6">
+      <div className="min-w-0">
+        <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+          Support
+        </div>
+        <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+          Support
         </h1>
-        <p className="text-sm text-muted">
+        <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
           Order help, shipping, returns, exchanges, and refund requests.
           It can&apos;t issue refunds or override policy.
         </p>
@@ -177,12 +180,12 @@ export default function SupportPage() {
             }
           }}
           placeholder="Where is my order?"
-          className="flex-1 rounded-xl border border-hairline bg-panel px-4 py-2.5 text-sm"
+          className="flex-1 h-9 rounded-full border border-hairline bg-panel px-4 text-sm"
         />
         <button
           onClick={() => void send()}
           disabled={busy || !input.trim()}
-          className="inline-flex items-center gap-2 rounded-xl bg-neutral-900 px-4 py-2.5 text-sm text-white disabled:opacity-50"
+          className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-neutral-900 text-sm text-white disabled:opacity-50"
         >
           <Send size={14} /> {busy ? "…" : "Send"}
         </button>

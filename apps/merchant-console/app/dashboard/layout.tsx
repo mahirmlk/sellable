@@ -4,7 +4,9 @@ import { DashboardTopBar } from "@/components/dashboard/dashboard-topbar";
 import { DashboardGuard } from "@/components/dashboard/dashboard-guard";
 
 export const metadata: Metadata = {
-  title: "SELLABLE — Merchant Dashboard",
+  title: "Merchant Console",
+  description:
+    "Orders, approvals, catalog, and the ledger for your store. Each number traces back to a real transaction.",
 };
 
 export const viewport: Viewport = {

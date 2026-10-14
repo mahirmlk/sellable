@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plug, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
@@ -38,7 +38,8 @@ export default function ConnectorsPage() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    const t = window.setTimeout(() => void refresh(), 0);
+    return () => window.clearTimeout(t);
   }, [refresh]);
 
   const onRegister = async () => {
@@ -101,20 +102,30 @@ export default function ConnectorsPage() {
 
   if (loading && !connectors) {
     return (
-      <div className="space-y-6 p-6">
-        <h1 className="text-xl font-semibold">Connectors</h1>
+      <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+        <div>
+          <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+            Connectors
+          </div>
+          <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+            Connectors
+          </h1>
+        </div>
         <TableSkeleton />
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 p-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold">
-          <Plug size={18} /> Connectors
+    <div className="px-6 lg:px-8 py-6 space-y-6 max-w-[1200px]">
+      <div className="min-w-0">
+        <div className="font-[var(--font-mono)] text-[11px] tracking-[0.12em] uppercase text-faint">
+          Connectors
+        </div>
+        <h1 className="mt-1.5 text-[24px] font-semibold tracking-[-0.01em] text-ink">
+          Connectors
         </h1>
-        <p className="text-sm text-muted">
+        <p className="mt-1 max-w-[46rem] text-[13px] leading-relaxed text-muted">
           Source systems sync into the canonical catalog. Syncs are atomic:
           failures leave the catalog untouched.
         </p>
@@ -149,21 +160,21 @@ export default function ConnectorsPage() {
                   <button
                     onClick={() => void onHealth(connector.connector_id)}
                     disabled={busy !== null}
-                    className="rounded-lg border border-hairline bg-panel px-3 py-1.5 text-xs disabled:opacity-50"
+                    className="rounded-full border border-hairline bg-panel px-3 py-1.5 text-xs disabled:opacity-50"
                   >
                     Health
                   </button>
                   <button
                     onClick={() => void onSync(connector.connector_id)}
                     disabled={busy !== null}
-                    className="rounded-lg bg-neutral-900 px-3 py-1.5 text-xs text-white disabled:opacity-50"
+                    className="rounded-full bg-neutral-900 px-3 py-1.5 text-xs text-white disabled:opacity-50"
                   >
                     {busy === connector.connector_id ? "…" : "Sync"}
                   </button>
                   <button
                     onClick={() => void onDelete(connector.connector_id)}
                     disabled={busy !== null}
-                    className="rounded-lg border border-hairline bg-panel px-3 py-1.5 text-xs disabled:opacity-50"
+                    className="rounded-full border border-hairline bg-panel px-3 py-1.5 text-xs disabled:opacity-50"
                   >
                     Delete
                   </button>
@@ -173,13 +184,32 @@ export default function ConnectorsPage() {
           </div>
         )}
         {lastSync && (
-          <pre className="mt-3 overflow-auto rounded-xl border border-hairline bg-panel p-3 font-mono text-xs">
-            {JSON.stringify(lastSync, null, 2)}
-          </pre>
+          <div className="mt-3 rounded-xl border border-hairline bg-panel px-4 py-3 text-sm">
+            {"sync" in lastSync && typeof lastSync.sync === "object" && lastSync.sync !== null ? (
+              <span>
+                Sync complete —{" "}
+                {(lastSync.sync as { inserted?: number }).inserted ?? 0} inserted,{" "}
+                {(lastSync.sync as { updated?: number }).updated ?? 0} updated
+              </span>
+            ) : "health" in lastSync &&
+              typeof lastSync.health === "object" &&
+              lastSync.health !== null ? (
+              <span>
+                Source {(lastSync.health as { ok?: boolean }).ok ? "reachable" : "unreachable"}
+                {(lastSync.health as { detail?: string }).detail
+                  ? ` — ${(lastSync.health as { detail?: string }).detail}`
+                  : ""}
+              </span>
+            ) : (
+              <span className="font-mono text-xs">
+                {JSON.stringify(lastSync)}
+              </span>
+            )}
+          </div>
         )}
       </section>
 
-      <section>
+      <section className="border-t border-hairline pt-6">
         <h2 className="mb-3 text-sm font-semibold">Register a custom REST source</h2>
         <div className="grid grid-cols-1 gap-3 rounded-xl border border-hairline bg-panel-2 p-4 md:grid-cols-3">
           <label className="text-sm">
@@ -213,9 +243,9 @@ export default function ConnectorsPage() {
         <button
           onClick={() => void onRegister()}
           disabled={busy !== null || !connectorId.trim()}
-          className="mt-3 inline-flex items-center gap-2 rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+          className="mt-3 inline-flex items-center gap-2 h-9 px-4 rounded-full bg-neutral-900 text-sm text-white disabled:opacity-50"
         >
-          <RefreshCw size={14} /> Register
+          <RefreshCw size={12} /> Register
         </button>
       </section>
     </div>

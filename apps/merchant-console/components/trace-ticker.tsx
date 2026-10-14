@@ -6,12 +6,12 @@ import { useEffect, useRef, useState } from "react";
 // Presentation loop over the documented event schema — monochrome and
 // viewport-gated, so it renders nothing and runs no timers off-screen.
 const TRACE_LINES = [
-  { action: "catalog.search", detail: "3 products indexed" },
-  { action: "quote.created", detail: "₹1,948 · catalog-grounded" },
+  { action: "catalog.search", detail: "merchant catalog only" },
+  { action: "quote.created", detail: "catalog-grounded" },
   { action: "negotiation.countered", detail: "floor protected" },
-  { action: "policy.checked", detail: "ALLOW" },
-  { action: "consent.issued", detail: "single-use · amount-bound" },
-  { action: "payment.attempted", detail: "razorpay order created" },
+  { action: "policy.checked", detail: "verdict recorded" },
+  { action: "consent.issued", detail: "single-use" },
+  { action: "payment.attempted", detail: "provider order created" },
   { action: "webhook.reconciled", detail: "signature verified" },
   { action: "order.paid", detail: "settled by webhook only" },
 ];

@@ -10,7 +10,7 @@ const CONTROLS = [
     threat: "Forged sessions",
     mechanism: "ES256 + JWKS",
     detail:
-      "Supabase issues asymmetric access tokens. The backend verifies signatures locally against the project's JWKS — kid-matched, cached, rotation-aware — with strict issuer and audience checks.",
+      "Supabase issues asymmetric access tokens. The backend verifies signatures locally against the project's JWKS (kid-matched, cached, rotation-aware) with strict issuer and audience checks.",
     refs: ["sellable/supabase_jwt.py", "merchant_users lookup"],
   },
   {
@@ -24,7 +24,7 @@ const CONTROLS = [
     threat: "Public database abuse",
     mechanism: "RLS + zero anon grants",
     detail:
-      "The anon key ships in browser bundles — so application tables carry row-level security and zero grants for anon/authenticated. Only the backend's service role touches data.",
+      "The anon key ships in browser bundles, so application tables carry row-level security and zero grants for anon/authenticated. Only the backend's service role touches data.",
     refs: ["supabase/migrations", "REVOKE + ENABLE RLS"],
   },
   {
@@ -38,7 +38,7 @@ const CONTROLS = [
     threat: "Forged payment success",
     mechanism: "Webhook-only settlement",
     detail:
-      "No browser, agent, or admin endpoint can mark an order PAID. Only a signature-verified Razorpay webhook settles it — and duplicate deliveries are idempotent.",
+      "No browser, agent, or admin endpoint can mark an order PAID. Only a signature-verified Razorpay webhook settles it, and duplicate deliveries are idempotent.",
     refs: ["POST /webhooks/razorpay", "HMAC verification"],
   },
   {
@@ -55,14 +55,13 @@ export function Security() {
     <section id="security" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
         <div className="max-w-[720px]">
-          <Eyebrow label="10 — SECURITY MODEL" />
+          <Eyebrow label="Security model" />
           <h2 className="section-title mt-6 text-[var(--bb-white)]">
-            The security model is the product
+            Built for agents spending money
           </h2>
           <p className="body-copy mt-6">
-            Autonomous agents spending real money is a threat model before it is
-            a feature list. Each control below is implemented in this
-            codebase — with the file or mechanism named, not vibes.
+            Autonomous buying is a threat model first. Each control below
+            runs in this codebase, with the file or mechanism named.
           </p>
         </div>
 
@@ -107,7 +106,7 @@ export function Security() {
         </div>
 
         <div className="mt-4 font-[var(--font-mono)] text-[0.55rem] tracking-[0.04em] text-[var(--bb-grey-4)]">
-          FULL AUDIT TRAIL: EVERY CONTROL ABOVE IS COVERED BY TESTS IN tests/ AND EXERCISED IN THE CASE STUDY.
+          EACH CONTROL ABOVE IS COVERED BY TESTS IN tests/.
         </div>
       </div>
     </section>

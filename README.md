@@ -4,9 +4,9 @@
 
 <br/>
 
-### Agentic Commerce Infrastructure
+### Agentic Commerce Platform for Merchants
 
-**Infrastructure that lets AI buyers discover, negotiate with, and safely purchase from merchants -- with deterministic policy enforcement and full audit trails.**
+**Your shop gets two agents: a Seller Agent that quotes from your catalog and a Service Agent that looks after orders. Outside shopping agents connect as guests. Policy checks each cart, consent locks each payment, and the ledger records each step.**
 
 <br/>
 
@@ -36,13 +36,27 @@
 
 ## What Is SELLABLE?
 
-**SELLABLE** is a commerce layer built for AI buyers.
+**SELLABLE** is an agentic commerce platform for merchants.
 
-It gives agents a machine-readable way to discover products, request and negotiate quotes, get transaction-bound consent, complete payments, and track what happened along the way.
+Shopping agents already buy on behalf of customers. SELLABLE gives your shop a way to serve them: a Seller Agent that sells from your catalog, a Customer Service Agent that supports your orders, and a gateway where outside shopping agents connect as guests. Underneath sits a deterministic commerce core that owns prices, carts, consent, payments, and the record of what happened.
 
-The important part is what stays outside the LLM: pricing rules, spend limits, consent, order state, payment verification, and audit logging are handled deterministically. The model can propose an action, but it doesn't get to decide whether that action is allowed.
+The model layer proposes. The platform decides. Pricing rules, spend limits, consent, order state, payment verification, and audit logging live outside LLM context, so an agent can hold a conversation without ever holding the till.
 
-> **The LLM proposes, the policy engine disposes -- and every action leaves an explanation.**
+> **Agents propose and orchestrate; deterministic services authorize and execute. Every consequential action is observable and auditable.**
+
+---
+
+## How a Sale Moves
+
+One path from first ask to settled order:
+
+```
+discovery → search → quote → negotiation → policy check
+    → approval (when over your line) → consent → payment
+    → webhook settlement → order → support
+```
+
+Each step carries a `trace_id`. Each material step emits a ledger event with the actor, the action, the reason, and the policy rules that applied. Open any order in the console to replay its trace line by line.
 
 ---
 
@@ -50,32 +64,32 @@ The important part is what stays outside the LLM: pricing rules, spend limits, c
 
 | Requirement | Implementation |
 |---|---|
-| **Explainable transactions** | XAI Ledger records every agent action with trace_id, policy refs, and reasoning summaries |
-| **Real rails, not mocks** | Razorpay test-mode payments, HMAC webhook verification, real refund flow |
-| **Consent & guardrails** | Per-transaction single-use consent, spend caps, floor prices, human-in-the-loop thresholds |
+| **Explainable transactions** | Ledger records every agent action with trace_id, policy refs, and reasoning summaries |
+| **Real rails, not mocks** | Razorpay and Stripe test-mode payments, HMAC webhook verification, real refund flow |
+| **Consent & guardrails** | Per-transaction single-use consent, spend caps, floor prices, human approval thresholds |
 | **End-to-end demo** | Discovery -> negotiation -> consent -> payment -> receipt -> refund, all live |
 
 ---
 
 ## Features
 
-- **Commerce Core** -- Persistent carts, quotes, deterministic pricing/promotions, checkout FSM, orders, GST tax, shipping, returns -- all deterministic
-- **Agent Gateway + Protocols** -- Machine-facing discovery (`/.well-known/ucp`, `agents.json`, `llms.txt`, `catalog.ai.json`) and one canonical `/commerce/*` API over REST/MCP/A2A/UCP with HMAC signed-key auth, capability negotiation, and delegation
-- **Seller Agent** -- Staged LangGraph machine (search -> recommend -> quote -> promote -> checkout-assist), bounded by policy, guardrailed, versioned, observed
-- **Customer Service Agent** -- Authenticated support: order help, shipping, returns, exchanges, bounded refund asks, human escalation
-- **Buyer Agent** -- Reference external-client implementation (deprecated in-core; external agents are gateway clients)
-- **Policy / Risk / Trust** -- Independent deterministic layers: merchant policy, risk/fraud decisions, agent/customer/merchant trust tiers
-- **Event Bus + Ledger** -- Async fan-out (analytics, notifications, fulfillment, trust) with retries/DLQ; append-only audit trail for every material action
-- **Merchant Console** -- Next.js dashboard: activity, approvals, catalog, growth, operations (bus/notifications/analytics/webhooks), developers, settings
-- **Payments** -- Provider protocol: Razorpay + Stripe (test modes) with webhook reconciliation and refund support
-- **Evaluation + Sandbox** -- 5 versioned suites (35 cases incl. 12 adversarial), release gates, drift monitors, stage-gated sandbox with simulated money
-- **Connectors** -- Source-system adapters (custom REST live; Shopify/Woo presets documented), carrier adapters, Fail-closed admin surface, usage-metered billing
+- **Seller Agent** -- Sells from your catalog: search, recommend, quote, negotiate inside your floor and round limits, suggest linked add-ons, walk buyers to checkout. Bounded by policy, guardrailed, versioned, observed
+- **Customer Service Agent** -- Authenticated post-purchase support: order help, shipping status, returns, exchanges, bounded refund asks, human escalation with full context
+- **Agent Gateway + Protocols** -- The single machine-facing entry layer. Public discovery (`/.well-known/agents.json`, `/.well-known/ucp`, `llms.txt`, `catalog.ai.json`) and one canonical `/commerce/*` API over REST, MCP, A2A, and UCP, with HMAC signed-key auth, capability negotiation, sessions, delegation, and identity linking
+- **Commerce Core** -- Persistent carts, quotes, deterministic pricing and promotions, checkout state machine, orders, GST tax, shipping, returns. All deterministic, all merchant-scoped
+- **Policy / Risk / Trust** -- Independent deterministic layers: merchant policy checks, risk and fraud decisions, agent and customer trust signals. The LLM never sees raw risk internals
+- **Consent + Payments** -- Single-use, amount-bound, expiring consent tokens. Provider adapters for Razorpay and Stripe (test modes). Only a verified provider webhook can mark an order paid
+- **Event Bus + Ledger** -- Async fan-out (analytics, notifications, fulfillment, trust) with retries and dead-letter queue, kept separate from the append-only audit ledger
+- **Merchant Console** -- Next.js dashboard: chat checkout, activity ledger, approvals, catalog, buyers, growth, inventory, operations (bus, notifications, analytics, webhooks), evals, connectors, developers, support, settings
+- **Reference Shopping Agent** -- A built-in buyer implementation used to exercise your own store end to end and to test gateway behavior. External shopping agents stay outside the platform and connect as gateway clients
+- **Evaluation + Sandbox** -- Scenario runner with policy, safety, and regression suites, release gates (P0 suites must hold at 100%), drift monitors, and a stage-gated sandbox with simulated money
+- **Connectors + Billing** -- Source-system adapters (custom REST live, Shopify/Woo presets documented), carrier adapters, fail-closed admin surface, usage-metered billing
 
 ---
 
 ## Architecture
 
-### High-Level System Architecture
+The platform separates into five planes. Agents talk at the top; money moves at the bottom, after policy and consent.
 
 ![High-Level System Architecture](docs/images/01-high-level-system-architecture.png)
 
@@ -94,6 +108,8 @@ The important part is what stays outside the LLM: pricing rules, spend limits, c
 ### Merchant Console Dashboard
 
 ![Merchant Console Dashboard](docs/images/05-merchant-console-dashboard.png)
+
+The authoritative reference is [SELLABLE_ARCHITECTURE.md](SELLABLE_ARCHITECTURE.md).
 
 ---
 
@@ -138,6 +154,8 @@ RAZORPAY_KEY_SECRET=...
 RAZORPAY_WEBHOOK_SECRET=...
 ```
 
+Production defaults are fail-closed. Never copy development overrides to a production host. See [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ### 3. Run the Backend
 
 ```bash
@@ -174,11 +192,13 @@ open http://localhost:3000
 
 ## API Reference
 
+The full reference with request shapes lives in [docs/API.md](docs/API.md). The tables below cover the stable surface.
+
 ### Discovery
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/.well-known/agents.json` | GET | Agent manifest for AI buyer discovery |
+| `/.well-known/agents.json` | GET | Agent manifest: who you are and what shopping agents may do |
 | `/.well-known/ucp` | GET | Full merchant declaration (identity, capabilities, protocols, auth, payments) |
 | `/agent/profile` | GET | Platform agents and versions |
 | `/agent/capabilities` | GET | Negotiable capability profile |
@@ -191,7 +211,9 @@ open http://localhost:3000
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/agent/seller/respond` | POST | Seller agent processes buyer requests |
+| `/agent/seller/respond` | POST | Seller Agent handles a buyer request (never creates orders or consent here) |
+| `/agent/service/respond` | POST | Customer Service Agent: order help, shipping, returns, refunds |
+| `/agent/buyer/run` | POST | Run the reference shopping agent end to end (signed-only in production) |
 | `/agent/catalog.search` | POST | Search products by query/category |
 | `/agent/catalog.get` | POST | Fetch a product by SKU |
 | `/agent/quotes.create` | POST | Create a price quote |
@@ -200,8 +222,6 @@ open http://localhost:3000
 | `/agent/orders.create` | POST | Create an order (idempotent) |
 | `/agent/orders.status` | POST | Query authoritative order state |
 | `/agent/refunds.create` | POST | Issue a refund for a paid order |
-| `/agent/buyer/run` | POST | Run the reference buyer agent end-to-end |
-| `/agent/service/respond` | POST | Customer Service Agent (order help, shipping, returns, refunds) |
 
 ### Canonical Commerce (`/commerce/*`, all protocols)
 
@@ -255,14 +275,16 @@ capabilities) and `X-Delegation-Id` (bounded customer delegation);
 |---|---|---|
 | `/console/store` | GET | The authenticated merchant's own store record |
 | `/console/onboarding` | POST | Create the verified user's own merchant store |
+| `/console/onboarding/readiness` | GET | Activation checklist for the store |
 | `/console/agent-keys` | GET/POST | List agent API keys / issue a new one (plaintext shown once) |
 | `/console/agent-keys/{key_id}/rotate` | POST | Revoke a key and issue a replacement |
 | `/console/agent-keys/{key_id}` | DELETE | Revoke an agent API key |
 | `/console/transactions` | GET | Transaction list (scoped to the caller's merchant) |
 | `/console/transactions/{order_id}` | GET | Transaction detail + full ledger trace |
+| `/console/transactions/{order_id}/replay` | GET | Sectioned replay view for an order |
 | `/console/catalog` | GET | The merchant's own DB-persisted catalog |
 | `/console/catalog/{sku}` | GET | One catalog product by SKU |
-| `/console/events` | GET | XAI Ledger events (scoped) |
+| `/console/events` | GET | Ledger events (scoped) |
 | `/activity/stream` | GET | SSE live ledger stream (scoped) |
 | `/agents/status` | GET | Agent + payment-rail health (summary scoped) |
 | `/console/approvals` | GET | Pending approval queue (scoped) |
@@ -275,12 +297,12 @@ capabilities) and `X-Delegation-Id` (bounded customer delegation);
 | `/catalog/products` | POST | Add a product to the merchant's own catalog |
 | `/console/agent/seller/respond` | POST | Conversational checkout (merchant JWT) |
 | `/console/agent/buyer/run` | POST | Run the reference buyer against your own store (merchant JWT) |
-| `/console/buyer-missions` | GET | Recent resumable buyer missions, newest first (alias: `/buyer-missions`) |
+| `/console/buyer-missions` | GET | Recent resumable buyer missions, newest first |
 | `/console/buyer-missions/{id}` | GET | One mission's authoritative, re-derived state |
 | `/console/buyer-missions/{id}/continue` | POST | Idempotent server-side mission continuation |
 | `/console/orders` | POST | Create order via chat checkout (merchant JWT) |
 | `/console/orders/{id}/consent` | POST | Issue single-use consent (merchant JWT) |
-| `/console/orders/{id}/payment` | POST | Start Razorpay test-mode payment (merchant JWT) |
+| `/console/orders/{id}/payment` | POST | Start test-mode payment (merchant JWT) |
 | `/console/orders/{id}/payment/retry` | POST | One bounded retry after a verified failure (merchant JWT) |
 | `/console/orders/{id}/fulfill` | POST | Mark a paid order fulfilled (merchant auth) |
 | `/console/checkout/session` | GET/POST | Restore/persist the durable checkout session |
@@ -293,6 +315,8 @@ capabilities) and `X-Delegation-Id` (bounded customer delegation);
 | `/console/notifications/{id}/read` | POST | Mark a notification read |
 | `/console/analytics/overview` | GET | GMV, conversion, AOV, agent-assisted, promos, refunds |
 | `/console/analytics/timeseries` | GET | Daily GMV + order counts |
+| `/console/metrics/agents` | GET | Agent run metrics |
+| `/console/metrics/commerce` | GET | Commerce metrics |
 | `/console/ops/overview` | GET | Bus health, risk/fraud, runs, webhook health |
 | `/console/ops/bus/drain` | POST | Drain the merchant's event queue |
 | `/console/ops/dead-letters` | GET | Dead-letter queue |
@@ -323,10 +347,10 @@ mock fallbacks in production:
   verification, the token's `sub` is resolved to the caller's merchant via
   the real `merchant_users` and `merchants` tables. A user with no mapping
   receives an explicit `onboarding_required` (403) state and creates their
-  own store through `POST /console/onboarding` — the system never auto-links
-  an authenticated user to the demo store. Every console endpoint is scoped
+  own store through `POST /console/onboarding`. The system never auto-links
+  an authenticated user to another store. Every console endpoint is scoped
   to the resolved merchant; foreign order ids are 404s.
-- **Buyer agents** -- API key + HMAC request signing. Agent calls authenticate
+- **Shopping agents** -- API key + HMAC request signing. Agent calls authenticate
   with `X-Agent-Key` or an HMAC-SHA256 signature over
   `timestamp.nonce.agent_id.method.path` with `X-Timestamp`, `X-Nonce`, and
   `X-Signature` headers, including server-side replay protection. Two key
@@ -334,7 +358,7 @@ mock fallbacks in production:
   Storefront → Agent API Keys; only a SHA-256 hash is stored, scoped to the
   issuing merchant) and platform-configured hashes
   (`BUYER_AGENT_API_KEY_HASH`). The well-known demo key is accepted only
-  outside production; env-hash keys serve the demo merchant's records.
+  outside production. Env-hash keys serve the demo merchant's records.
 - **Database** — application tables (`merchant_users`, `merchants`,
   `catalog_products`, `orders`, `consents`, `ledger_events`, `policy`) have
   RLS enabled and no `anon`/`authenticated` grants; only the backend
@@ -354,53 +378,44 @@ payments, the ledger, or the console.
 
 ```
 sellable/
-├── agents/                     # LangGraph agent implementations
-│   ├── buyer/                  #   Buyer agent (reference implementation)
-│   ├── llm/                    #   LLM adapter layer (OpenAI, Anthropic, mock)
-│   └── seller/                 #   Seller agent (bounded by policy)
+├── agents/                       # Agent implementations (single canonical tree)
+│   ├── seller/                   #   Seller Agent (bounded by policy)
+│   ├── customer_service/         #   Customer Service Agent (bounded support)
+│   ├── buyer/                    #   Reference shopping agent (tests, console missions)
+│   ├── llm/                      #   Provider adapters (OpenAI, Anthropic, mock)
+│   └── runtime/                  #   Guardrails, model gateway, versioning, recorder
 ├── apps/
-│   └── merchant-console/       # Next.js 16 dashboard
-│       ├── app/                #   App router pages
+<<<<<<< HEAD
+│   └── merchant-console/         # Next.js 16 merchant console
+│       ├── app/                  #   App router pages (landing, console, auth)
 │       │   ├── (sign-in|sign-up|forgot-password|reset-password|auth|demo|sign-out)/  # access experience
 │       │   └── dashboard/      #   Guarded console (incl. 7-step onboarding wizard)
-│       ├── components/         #   React components
-│       ├── lib/                #   API client, types, utils
+│       ├── components/           #   React components
+│       ├── lib/                  #   API client, types, utils
 │       │   ├── demo/           #   Isolated Demo Mode adapter (fixtures + overlay, no network)
 │       │   └── onboarding.ts   #   Shared wizard model (prod/demo adapters)
 │       ├── middleware.ts       #   Session gate: dashboard by auth state, demo cookie routing
-│       └── public/             #   Static assets (logo, favicon)
+│       └── public/               #   Static assets (logo, favicon)
 ├── data/                       # SQLite dev database
-├── docs/                       # Comprehensive documentation
-│   ├── API.md                  #   Full API reference
-│   ├── ARCHITECTURE_GUIDE.md   #   Architecture deep-dive
-│   ├── DATABASE.md             #   Database schema
-│   ├── DEMO.md                 #   5-minute demo script
-│   └── DEPLOYMENT.md           #   Deployment guide
-├── evals/                      # Deterministic evaluation scenarios
-│   ├── runner/                 #   Scenario runner
-│   └── scenarios/              #   7 test scenarios
-├── infra/                      # Infrastructure configs
-│   ├── docker/                 #   Dockerfile
-│   ├── seed/                   #   Catalog + policy fixtures
-│   └── webhook/                #   zrok tunnel launcher
-├── services/commerce/sellable/ # Python backend
-│   ├── main.py                 #   FastAPI application
-│   ├── core.py                 #   CommerceCore orchestrator
-│   ├── contracts.py            #   Pydantic models & enums
-│   ├── policy.py               #   Deterministic policy engine
-│   ├── orders.py               #   Order state machine
-│   ├── consent.py              #   Single-use consent service
-│   ├── gateway.py              #   Agent Gateway
-│   ├── auth.py                 #   HMAC signed-key auth
+├── docs/                         # Documentation (see table below)
+├── services/commerce/sellable/   # Python backend
+│   ├── main.py                   #   FastAPI application (gateway + console + canonical API)
+│   ├── core.py                   #   CommerceCore orchestrator
+│   ├── contracts.py              #   Pydantic models & enums
+│   ├── policy.py                 #   Deterministic policy engine
+│   ├── consent.py                #   Single-use consent service
+│   ├── gateway.py                #   Delegation enforcement at the boundary
+│   ├── auth.py                   #   HMAC signed-key auth
 │   ├── merchant_auth.py        #   Supabase merchant sessions (demo-key requires local DB)
 │   ├── onboarding.py           #   Lifecycle stages + wizard step registry
-│   ├── protocols/              #   REST/MCP/A2A/UCP adapters (+ disabled-by-default ACP scaffold)
-│   ├── ledger/                 #   XAI Ledger
-│   └── payments/               #   Razorpay adapter
-└── tests/                      # Test suite
-    ├── unit/                   #   Unit tests
-    ├── integration/            #   Integration tests
-    └── e2e/                    #   End-to-end tests
+│   ├── agents/                   #   Seller, service, and reference buyer orchestration
+│   ├── protocols/                #   REST canonical + UCP/MCP/A2A, sessions, identity (+ disabled-by-default ACP scaffold)
+│   ├── ledger/                   #   Append-only audit ledger
+│   ├── payments/                 #   Razorpay, Stripe, simulated adapters
+│   ├── support.py                #   Cases, returns, refunds, exchanges
+│   ├── tax.py / shipping.py      #   GST tax, serviceability + estimates
+│   ├── event_bus.py              #   Async fan-out with retries + DLQ
+│   └── trust.py / risk.py        #   Trust signals, risk/fraud decisions
 ```
 
 ---
@@ -416,30 +431,28 @@ These are **non-negotiable**. Every component enforces them:
 | `trace_id` everywhere | Every API call and ledger event carries a trace ID |
 | Ledger audit trail | Every material action emits a `LedgerEvent` with reasoning |
 | Policy independence | Policy engine, consent, orders, payments are isolated from LLM code |
-| Webhook authority | Only Razorpay webhooks can mark orders as PAID |
+| Webhook authority | Only verified provider webhooks can mark orders as PAID |
 | Single-use consent | Consent tokens are consumed on use, never reusable; races are retried once via re-issue |
-| HMAC verification | All Razorpay webhooks are SHA-256 signature verified |
+| HMAC verification | All provider webhooks are signature verified |
 | Deterministic state machine | Invalid order transitions are rejected at the core level |
 
 ---
 
-## Evaluation Scenarios
+## Evaluation
 
-The `evals/` directory contains 7 deterministic scenarios:
+The `evals/` harness exercises the platform before any agent or model version ships:
 
-| Scenario | What It Tests |
-|---|---|
-| `valid_purchase` | Happy path: search -> quote -> consent -> payment -> fulfilled |
-| `below_floor` | Denies quotes below merchant floor price |
-| `over_budget` | Denies orders exceeding buyer budget |
-| `hitl` | Routes high-value orders to human approval |
-| `payment_failure` | Handles Razorpay payment failures gracefully |
-| `duplicate_webhook` | Idempotent webhook processing |
-| `duplicate_consent` | Single-use consent enforcement |
+- **Commerce scenarios** (`evals/scenarios/`) -- happy-path purchase, floor and budget denials, human-approval routing, duplicate consent and webhook idempotency, payment failure, refunds, and hallucinated-SKU grounding
+- **Safety battery** (`evals/safety/`) -- adversarial cases: prompt injection, malicious tool arguments, expired delegation, replayed webhooks, cross-tenant access
+- **Regression gates** (`evals/regression/`) -- P0 safety and commerce suites must hold at 100%; quality, cost-per-run, and latency gates carry tunable thresholds
+- **Drift monitor** (`evals/drift.py`) -- production-vs-baseline comparison over live metrics
 
 ```bash
-# Run all evaluation scenarios
+# Run the scenario suite
 python -m evals.runner.scenario_runner
+
+# Backend test suite
+python -m pytest
 ```
 
 ---
@@ -458,7 +471,7 @@ python -m evals.runner.scenario_runner
 | [DATA_MODEL.md](docs/DATA_MODEL.md) | Domain model reference |
 | [DEMO.md](docs/DEMO.md) | 5-minute demo walkthrough |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
-| [LEDGER.md](docs/LEDGER.md) | XAI Ledger documentation |
+| [LEDGER.md](docs/LEDGER.md) | Ledger documentation |
 | [POLICY_ENGINE.md](docs/POLICY_ENGINE.md) | Policy engine deep-dive |
 | [TESTING.md](docs/TESTING.md) | Testing strategy & conventions |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common issues & fixes |
@@ -523,6 +536,6 @@ MIT License -- see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**2026 SELLABLE. Agentic Commerce Infrastructure.**
+**2026 SELLABLE. Agentic commerce platform for merchants.**
 
 </div>

@@ -4,23 +4,24 @@ import CaseStudyClient from "./client";
 export const metadata: Metadata = {
   title: "Case Study — The Held Fact | SELLABLE",
   description:
-    "The full SELLABLE build story in the white editorial language of the 'held fact' — discovery, bounded negotiation, deterministic policy, consent, Razorpay rails, and a ledger that explains every rupee. Agentic commerce infrastructure.",
+    "How Sellable was built: a Seller Agent and a Service Agent for the merchant, a gateway for outside shopping agents, and a policy engine plus ledger that explain each payment.",
   keywords: [
     "sellable",
     "agentic commerce",
     "case study",
     "held fact",
-    "AI buyers",
-    "Razorpay",
+    "seller agent",
+    "customer service agent",
     "policy engine",
-    "XAI ledger",
-    "agent-to-agent",
-    "commerce architecture",
+    "consent",
+    "audit ledger",
+    "Razorpay",
+    "agent gateway",
   ],
   openGraph: {
     title: "Case Study — The Held Fact | SELLABLE",
     description:
-      "How we made a merchant sellable to AI buyers — context, workflow, tech stack, and architecture as a white editorial story with live animations.",
+      "A Seller Agent quotes, a Service Agent supports, and the gateway, policy engine, and ledger keep each payment inside the rules.",
     type: "article",
   },
 };

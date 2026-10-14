@@ -1,46 +1,58 @@
 "use client";
 
+import Link from "next/link";
 import { Reveal } from "./ui/reveal";
 
 export function OrangeCTA() {
   return (
-    <section className="orange-cta relative">
+    <section className="orange-cta relative overflow-hidden">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-[0.14]"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(0,0,0,0.35) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.35) 1px, transparent 1px)",
+          backgroundSize: "44px 44px",
+          maskImage: "radial-gradient(70% 80% at 50% 40%, black 40%, transparent 100%)",
+        }}
+      />
       <div className="page-frame relative">
         <Reveal>
-        <div className="inline-flex items-center gap-2 border border-black/10 bg-black/[0.06] px-3 py-1.5">
-          <span className="w-[5px] h-[5px] bg-black" />
-          <span className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.14em] uppercase text-black/70">Live on Razorpay test mode</span>
-          <span className="font-[var(--font-mono)] text-[0.58rem] text-black/45">— webhooks verified</span>
-        </div>
-        <h2 className="mt-6">
-          Ready to make your store sellable to AI?
-        </h2>
-        <p className="mt-6 font-[var(--font-sans)] text-[1.2rem] leading-relaxed text-[#080808] opacity-80 max-w-[600px]">
-          Connect your products, define your selling rules, and let your AI
-          seller handle the conversation.
-        </p>
-        <div className="flex flex-wrap items-center gap-4 mt-10">
-          <a href="/sign-up" className="btn-orange-primary">
-            START SELLING WITH AI
-          </a>
-          <a href="/demo" className="btn-orange-secondary">
-            EXPLORE THE DEMO
-          </a>
-        </div>
-        {/* trust row — static */}
-        <div className="mt-10 flex flex-wrap items-center gap-3 font-[var(--font-mono)] text-[0.62rem] tracking-[0.08em] uppercase text-black/55">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="w-[5px] h-[5px] bg-black/70" /> Consent-gated
-          </span>
-          <span className="w-px h-3 bg-black/15" />
-          <span className="inline-flex items-center gap-1.5">
-            <span className="w-[5px] h-[5px] bg-black/70" /> Policy-bounded
-          </span>
-          <span className="w-px h-3 bg-black/15" />
-          <span className="inline-flex items-center gap-1.5">
-            <span className="w-[5px] h-[5px] bg-black/70" /> Ledger-audited
-          </span>
-        </div>
+          <div className="inline-flex items-center gap-2 border border-black/15 bg-black/[0.07] px-3 py-1.5 rounded-full">
+            <span className="w-[6px] h-[6px] rounded-full bg-black live-dot" />
+            <span className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.14em] uppercase text-black/70">
+              Live on test rails
+            </span>
+            <span className="font-[var(--font-mono)] text-[0.58rem] text-black/45">
+              settlement stays webhook-verified
+            </span>
+          </div>
+          <h2 className="mt-6">Give your store an AI sales floor.</h2>
+          <p className="mt-6 font-[var(--font-sans)] text-[1.15rem] leading-relaxed text-[#080808] opacity-80 max-w-[620px]">
+            Put your catalog where agents already shop. You keep the pricing,
+            the approvals, and the final word. The agents do the talking.
+          </p>
+          <div className="flex flex-wrap items-center gap-4 mt-10">
+            <Link href="/dashboard" className="btn-orange-primary">
+              Open the console
+            </Link>
+            <Link href="/demo" className="btn-orange-secondary">
+              Explore the demo
+            </Link>
+          </div>
+          <div className="mt-10 flex flex-wrap items-center gap-3 font-[var(--font-mono)] text-[0.62rem] tracking-[0.08em] uppercase text-black/55">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-[5px] h-[5px] bg-black/70" /> Consent-gated
+            </span>
+            <span className="w-px h-3 bg-black/15" />
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-[5px] h-[5px] bg-black/70" /> Policy-bounded
+            </span>
+            <span className="w-px h-3 bg-black/15" />
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-[5px] h-[5px] bg-black/70" /> Ledger-audited
+            </span>
+          </div>
         </Reveal>
       </div>
     </section>
