@@ -30,7 +30,7 @@ SELLABLE handles financial transactions via Razorpay test-mode. Security-relevan
 
 - This is a hackathon prototype, not production software
 - Razorpay integration uses test-mode credentials only
-- A built-in demo API key (`sellable_demo_key_001`) remains usable in test mode; production deployments should rely on `BUYER_AGENT_API_KEY_HASH` entries and `BUYER_AGENT_HMAC_SECRET`
+- A built-in demo API key (`sellable_demo_key_001`) remains usable in test mode; production deployments should rely on `BUYER_AGENT_API_KEY_HASH` entries and `BUYER_AGENT_HMAC_SECRET`. Demo-key sessions are additionally refused against remote databases, even in development (`auth_not_configured`).
 - Agent endpoints support HMAC-SHA256 request signing with timestamp freshness and nonce replay protection
 
 ## Dependency Security

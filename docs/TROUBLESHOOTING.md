@@ -226,27 +226,47 @@ Each scenario creates an in-memory database and seeds the catalog. This takes ~2
 ### `401 auth_not_configured` — demo console vs production backend (or vice versa)
 
 The error body is `{"detail": {"code": "auth_not_configured", "message": ...}}`
-(`services/commerce/sellable/merchant_auth.py:266-289`). The console maps it
+(`services/commerce/sellable/merchant_auth.py:281-321`). The console maps it
 via `ApiError.isAuthNotConfigured` and shows deployment guidance
-(`apps/merchant-console/lib/api.ts:466-473`).
+(`apps/merchant-console/lib/api.ts:483-493`).
 
 Auth matrix:
 
-- Frontend demo mode = no `NEXT_PUBLIC_SUPABASE_URL` (`lib/api.ts:14`) — the
-  console sends the public demo `X-Agent-Key`.
+- Frontend demo mode = no `NEXT_PUBLIC_SUPABASE_URL` (`lib/api.ts:19`) — the
+  console serves curated fixtures through the isolated demo adapter and sends
+  no production traffic. Unauthenticated `/dashboard` visits redirect to
+  `/sign-in` (root `middleware.ts`); `/demo` sets the demo routing cookie.
 - Backend dev mode = `SELLABLE_ENVIRONMENT` in `development`/`test`, default
-  `production` (`config.py:130-138,161`).
+  `production` (`config.py:149-157,180`).
+- Demo-key sessions additionally require a **local** database: a development
+  backend pointed at a remote database 401s even with the correct demo key
+  (`merchant_auth._is_local_database`, `auth._database_is_local`).
 
 A demo console pointed at a production backend (or a Supabase console pointed
 at a backend without Supabase) always 401s. Fix: point the demo console at a
 dev backend, or configure Supabase on both sides.
+
+### Settings shows "Backend unreachable — policy could not be loaded"
+
+The banner now classifies the real cause — check which one you see:
+
+| Banner | Meaning | Fix |
+|---|---|---|
+| Backend unreachable | Network/CORS failure (`TypeError` on fetch) | Check `NEXT_PUBLIC_API_URL`, backend running, `CORS_ORIGINS` |
+| Authentication problem | 401/403 (expired session, bad Supabase config) | Sign in again; verify Supabase on both sides |
+| Wrong endpoint | 404 on the policy route | Backend version skew — redeploy |
+| No store yet (blue) | 403 `onboarding_required` | Finish `/dashboard/onboarding` — not an error |
+| First-run defaults (amber) | `is_default: true` | Review and Save — not an error |
+
+Every banner carries `Reference: trc_…` (the `X-Trace-Id` response header,
+captured as `ApiError.traceId`) — include it in bug reports.
 
 ### Stat strip / footer health shows offline in production
 
 Fixed — the console now branches on `status` only
 (`apps/merchant-console/components/stat-strip.tsx:56-60`). Production
 `/health` returns the minimal `{"status": "ok", "database": "connected"}`
-shape (`services/commerce/sellable/main.py:309-312`) with no
+shape (`services/commerce/sellable/main.py:403-421`) with no
 `razorpay_configured`/`cors_origins` fields. If you still see offline, check
 network errors / 5xx — a reachable backend reporting `"status": "ok"` is live.
 
@@ -261,12 +281,12 @@ Single-use consents return 409 on reuse
 stale — refresh the authoritative order (`GET /console/transactions/{id}`,
 check `consent_status`) and re-issue consent once before paying. Chat
 checkout does this automatically: refresh-before-pay plus one re-issue +
-retry on a 409 race (`apps/merchant-console/app/dashboard/chat/page.tsx:1292-1333`).
+retry on a 409 race (`apps/merchant-console/app/dashboard/chat/page.tsx:1195-1217`).
 
 ### `422` on `X-Trace-Id` / body `trace_id`
 
 Trace ids must match `^trc_[0-9a-f]{32}$`
-(`services/commerce/sellable/main.py:244-267`, `contracts.py:225,288`).
+(`services/commerce/sellable/main.py:310-328`, `contracts.py:225,288`).
 A 422 means a malformed header (or stale persisted body id) forked the flow.
 Fix: drop the stale persisted id and retry without it so the server mints a
 fresh `trc_…` id. Precedence is header > body > fresh server id.
@@ -278,7 +298,7 @@ captured amount differs from the order, the webhook records
 `webhook.amount_mismatch`, the attempt stays PENDING and the order stays
 `PAYMENT_PENDING` (`services/commerce/sellable/payments/service.py:402-423`).
 Check `attempt.status`: only `CAPTURED`/`FAILED` counts as settled. Note
-simulate endpoints are dev-only (403 in production, `main.py:716-717`).
+simulate endpoints are dev-only (403 in production, `main.py:2622-2623`).
 
 ---
 
@@ -287,11 +307,11 @@ simulate endpoints are dev-only (403 in production, `main.py:716-717`).
 ### Approvals list shows only `PENDING`
 
 Expected. List rows always carry `status: "PENDING"`
-(`contracts.py:488`, `main.py:1209-1217`) — they are the operational queue,
+(`main.py:3122`) — they are the operational queue,
 not the outcome record. Post-action state is derived from the order
 (consent/payment): approve returns top-level `{"status": "approved"}`
-(`main.py:1276-1283`), reject returns `{"status": "rejected"}`
-(`main.py:1316-1318`). Re-read the transaction detail for truth.
+(`main.py:3131-3183`), reject returns `{"status": "rejected"}`
+(`main.py:3197-3224`). Re-read the transaction detail for truth.
 
 ---
 
