@@ -16,7 +16,13 @@ from sellable.protocols.dispatch import ProtocolContext
 
 
 UCP_WELL_KNOWN_PATH = "/.well-known/ucp"
+#: SELLABLE's own adapter version (pinned implementation version).
 UCP_VERSION = "ucp-1"
+#: Public UCP specification snapshot this adapter's concepts were built
+#: against. A reference date, not a conformance claim — capability
+#: discovery advertises only live functions and the adapter makes no
+#: certification claims.
+UCP_SPEC_REFERENCE = "https://ucp.dev/2026-01-11/specification/overview/"
 
 
 def discovery_document(core, *, base_url: str = "") -> dict[str, object]:
@@ -30,6 +36,7 @@ def discovery_document(core, *, base_url: str = "") -> dict[str, object]:
     return {
         "merchant": {"id": merchant_id, "name": name},
         "ucp_version": UCP_VERSION,
+        "ucp_spec_reference": UCP_SPEC_REFERENCE,
         "api_versions": ["v1"],
         "base_url": base_url,
         "capabilities": [c.model_dump(mode="json") for c in profile.capabilities],
