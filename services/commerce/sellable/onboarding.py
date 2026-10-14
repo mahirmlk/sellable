@@ -62,6 +62,26 @@ READINESS_CHECKS: tuple[str, ...] = (
 )
 
 
+#: Wizard step ids for the shared multi-page onboarding (UPDATE.md §5).
+#: Order is the display/resume order; the backend only validates membership.
+WIZARD_STEPS: tuple[str, ...] = (
+    "welcome",
+    "store",
+    "catalog",
+    "rules",
+    "agents",
+    "payments",
+    "review",
+)
+
+
+def validate_wizard_step(step: str) -> str:
+    """Return *step* or raise ValueError for an unknown wizard step id."""
+    if step not in WIZARD_STEPS:
+        raise ValueError(f"unknown onboarding wizard step: {step}")
+    return step
+
+
 class MerchantOnboarding(StrictModel):
     """A merchant's onboarding pointer: current stage plus the readiness
     checks satisfied so far. Activation requires stage READY_FOR_REVIEW
