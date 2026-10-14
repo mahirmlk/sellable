@@ -375,6 +375,21 @@ class MerchantOnboardingRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class OnboardingWizardRecord(Base):
+    """Per-merchant wizard progress for the shared multi-page onboarding
+    (UPDATE.md §5). One row per merchant; tracks the UI pointer
+    (current/completed steps plus per-step payloads), never commerce state.
+    Demo mode never writes here — demo progress lives in session storage."""
+
+    __tablename__ = "onboarding_wizard_progress"
+
+    merchant_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    current_step: Mapped[str] = mapped_column(String(32), nullable=False, default="welcome")
+    completed_steps_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    data_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class OutboxEventRecord(Base):
     """Transactional-outbox rows for the future Event Bus (target §27).
 
