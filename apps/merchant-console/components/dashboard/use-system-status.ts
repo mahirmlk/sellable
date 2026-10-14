@@ -8,11 +8,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, getAgentsStatus, type AgentsStatusResponse } from "@/lib/api";
 
 export type StatusError =
-  | { kind: "auth"; message: string }
-  | { kind: "endpoint"; message: string }
-  | { kind: "backend"; message: string }
-  | { kind: "network"; message: string }
-  | { kind: "contract"; message: string };
+  | { kind: "auth"; message: string; traceId?: string | null; code?: string | null }
+  | { kind: "endpoint"; message: string; traceId?: string | null; code?: string | null }
+  | { kind: "backend"; message: string; traceId?: string | null; code?: string | null }
+  | { kind: "network"; message: string; traceId?: string | null; code?: string | null }
+  | { kind: "contract"; message: string; traceId?: string | null; code?: string | null };
 
 export interface SystemStatusState {
   data: AgentsStatusResponse | null;
@@ -24,19 +24,23 @@ export interface SystemStatusState {
 
 export function classifyError(error: unknown): StatusError {
   if (error instanceof ApiError) {
+    const traceId = error.traceId;
+    const code = error.errorCode;
     if (error.isAuthFailure) {
       return {
         kind: "auth",
         message: `Authentication/authorization problem (${error.status}). ${error.detail}`,
+        traceId,
+        code,
       };
     }
     if (error.isNotFound) {
-      return { kind: "endpoint", message: `Wrong endpoint (404): ${error.detail}` };
+      return { kind: "endpoint", message: `Wrong endpoint (404): ${error.detail}`, traceId, code };
     }
     if (error.isServerError) {
-      return { kind: "backend", message: `Backend error (${error.status}). ${error.detail}` };
+      return { kind: "backend", message: `Backend error (${error.status}). ${error.detail}`, traceId, code };
     }
-    return { kind: "backend", message: `Request failed (${error.status}). ${error.detail}` };
+    return { kind: "backend", message: `Request failed (${error.status}). ${error.detail}`, traceId, code };
   }
   if (error instanceof TypeError) {
     return { kind: "network", message: "Backend unreachable. Check your network or api.sellable.shop." };

@@ -36,9 +36,35 @@ const CROSS_LINK =
   "mt-3 inline-flex items-center gap-1.5 text-[13px] font-medium text-accent-strong hover:underline focus-visible:outline-2 focus-visible:outline-accent";
 const ROW = "py-3 flex items-center justify-between gap-3 border-b border-black/[0.06] last:border-b-0";
 
+function TraceRef({ traceId }: { traceId?: string | null }) {
+  if (!traceId) return null;
+  return (
+    <span className="mt-1 block text-[12px] opacity-80 font-mono">
+      Reference: {traceId}
+    </span>
+  );
+}
+
 function PolicyLoadBanner({ error, loading }: { error: StatusError | null; loading: boolean }) {
   if (loading) return null;
   if (!error) return null;
+  // No merchant store yet: onboarding, not an auth failure. The dashboard
+  // guard also redirects, but a direct visit here must explain itself.
+  if (error.code === "onboarding_required") {
+    return (
+      <div className="rounded-2xl bg-blue-50 border border-blue-200/60 px-4 py-3 flex flex-wrap items-center gap-3">
+        <p className="min-w-0 flex-1 text-[13px] text-blue-900">
+          Your account has no merchant store yet. Finish setup to configure selling rules.
+        </p>
+        <Link
+          href="/dashboard/onboarding"
+          className="inline-flex items-center gap-1.5 h-8 px-4 rounded-full bg-ink text-white text-[13px] font-semibold hover:bg-ink-2 transition-colors focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          Continue setup <ArrowRight size={12} />
+        </Link>
+      </div>
+    );
+  }
   const message =
     error.kind === "auth"
       ? "Authentication problem — policy could not be loaded. Sign in again or check the backend Supabase configuration."
@@ -49,7 +75,25 @@ function PolicyLoadBanner({ error, loading }: { error: StatusError | null; loadi
           : error.kind === "contract"
             ? "Malformed policy response from the backend."
             : `Backend error while loading policy: ${error.message}`;
-  return <ErrorBanner message={message} />;
+  return (
+    <div>
+      <ErrorBanner message={message} />
+      <TraceRef traceId={error.traceId} />
+    </div>
+  );
+}
+
+function DefaultPolicyBanner({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <div className="rounded-2xl bg-amber-50 border border-amber-200/60 px-4 py-3">
+      <p className="text-[13px] text-amber-900">
+        No saved policy yet — these are first-run defaults, not an error. Review
+        them and <span className="font-semibold">Save changes</span> to activate
+        your store&apos;s guardrails.
+      </p>
+    </div>
+  );
 }
 
 export default function SettingsPage() {
@@ -193,7 +237,7 @@ export default function SettingsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <RefreshButton onRefresh={handleRefresh} loading={loading || statusLoading} />
-          <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className={PRIMARY_PILL}>
+          <button onClick={() => void handleSave()} disabled={!hasChanges || saving || !current} className={PRIMARY_PILL}>
             <Save size={13} /> {saving ? "Saving…" : "Save changes"}
           </button>
         </div>
@@ -213,6 +257,7 @@ export default function SettingsPage() {
       {validationError && <PartialBanner message={validationError} />}
 
       <PolicyLoadBanner error={policyError} loading={loading} />
+      {!loading && !policyError && <DefaultPolicyBanner show={policy?.is_default === true} />}
 
       {loading ? (
         <TableSkeleton rows={8} />
