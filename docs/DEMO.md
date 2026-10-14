@@ -2,6 +2,12 @@
 
 **Track:** Razorpay AI Buildathon 2026 — Track 01, AI Growth & Agentic Commerce
 
+> Console Demo Mode vs this script: the merchant console's **Explore Demo
+> Mode** (`/demo`, no account) runs on curated fixtures with a localStorage
+> overlay — no live backend, payments, or notifications involved. The script
+> below is the **live sales demo** against a development backend with
+> Razorpay test credentials.
+
 ---
 
 ## Demo Duration

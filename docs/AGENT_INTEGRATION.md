@@ -17,7 +17,12 @@ GET /llms.txt                 # human/agent-readable instructions
 GET /catalog.ai.json          # machine-readable catalog
 GET /a2a/card                # A2A actor card (seller + service)
 GET /mcp/tools               # MCP-compatible tool list (agent key required)
+GET /acp/status              # ACP scaffold status (disabled by default; no placement claims)
 ```
+
+The UCP declaration pins `ucp_version: "ucp-1"` (SELLABLE's adapter
+version) plus `ucp_spec_reference` and advertises only live capabilities —
+no certification is claimed.
 
 ## 2. Authenticate
 
@@ -86,6 +91,16 @@ POST /commerce/support/cases           # case-managed support
 
 Every canonical path is mirrored under `/v1/*` (e.g.
 `POST /v1/commerce/cart`) — same implementation, versioned address.
+
+Money moves only on verified webhooks (signed agent auth on all three):
+
+```http
+POST /agent/consents.request   # {order_id} → single-use, amount+payee-bound consent
+POST /orders/{id}/payment      # {consent_id} → provider attempt (PAYMENT_PENDING)
+# provider webhook, HMAC-verified → reconciled → PAID (Razorpay + Stripe
+# share the orchestrated boundary: idempotent delivery claims, exact amount
+# match, strict transitions; duplicates collapse to one settlement)
+```
 
 Or drive one tool at a time:
 
