@@ -61,9 +61,16 @@ python -m evals.runner
 | `RAZORPAY_WEBHOOK_SECRET` | Yes | Webhook signing secret |
 | `BUYER_AGENT_API_KEY_HASH` | Yes (prod) | SHA-256 hashes of agent API keys |
 | `BUYER_AGENT_HMAC_SECRET` | Yes (prod) | HMAC request-signing secret |
+| `SELLABLE_ACP_ENABLED` | No | `1`/`true`/`yes` exposes the ACP scaffold (`/acp/*`); default off. No partner placement implied |
 | `CORS_ORIGINS` | Yes (prod) | Comma-separated frontend origins, e.g. `https://sellable.shop,https://www.sellable.shop` |
 
 **Never commit `.env` with real credentials.**
+
+**Demo key vs remote data.** Demo-key sessions (console `_dev_session` and
+agent-gateway static keys) are refused with `auth_not_configured` (401) when
+the backend points at a remote database — even in `development`. Never
+combine `SELLABLE_ENVIRONMENT=development` with a production `DATABASE_URL`;
+use local SQLite for demo work, or configure Supabase on both sides.
 
 **Production CORS is mandatory, not optional.** `CORS_ORIGINS` must list the
 exact frontend origin(s) (e.g. `https://sellable.shop,https://www.sellable.shop`);
@@ -121,6 +128,11 @@ Vercel projects (monorepo):
 Set the frontend env vars in Vercel:
 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_AGENT_KEY`.
+
+Supabase Auth must allow the console as a redirect target: set the project
+Site URL to the console origin and add `{site}/auth/callback` (plus
+`http://localhost:3000/auth/callback` for local dev) to the redirect
+allowlist, or verification/recovery links will not complete sign-in.
 
 ### Database — Supabase
 
