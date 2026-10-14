@@ -5,7 +5,7 @@ export const metadata: Metadata = {
   title: "Sign in — SELLABLE",
 };
 
-// Auth removed: the dashboard opens directly. Old bookmarks land here.
+// Auth entry points live at /sign-in and /sign-up now. Old bookmarks land here.
 export default function LoginPage() {
-  redirect("/dashboard");
+  redirect("/sign-in");
 }
