@@ -4,11 +4,10 @@ import { cookies } from "next/headers";
 import { DEMO_COOKIE } from "@/lib/supabase/middleware";
 
 // Ends both session kinds: Supabase merchant session (when configured)
-// and the Demo Mode routing cookie. Always lands on the marketing site.
+// and the Demo Mode routing cookie. Always lands on the marketing site
+// (relative redirect keeps one host).
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL || `${url.protocol}//${url.host}`;
 
   if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const cookieStore = await cookies();
@@ -35,7 +34,7 @@ export async function GET(request: Request) {
     await supabase.auth.signOut();
   }
 
-  const response = NextResponse.redirect(`${siteUrl}/`);
+  const response = NextResponse.redirect(new URL("/", request.url));
   response.cookies.set(DEMO_COOKIE, "", { path: "/", maxAge: 0 });
   return response;
 }
