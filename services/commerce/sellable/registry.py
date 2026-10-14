@@ -64,6 +64,22 @@ def load_policy_for(merchant_id: str, engine: object | None = None) -> MerchantP
     return MerchantPolicy.model_validate({"merchant_id": merchant_id, **DEFAULT_POLICY})
 
 
+def has_policy_for(merchant_id: str, engine: object | None = None) -> bool:
+    """True when the merchant has a persisted policy row.
+
+    Distinguishes first-run defaults (no row yet — the merchant has never
+    saved policy) from a configured policy, so the console can show
+    "defaults, review and save" instead of an error (UPDATE.md §7.5).
+    """
+    from sqlalchemy.orm import Session
+
+    from sellable.ledger.database import PolicyRecord
+
+    engine = engine or make_engine()
+    with Session(engine) as session:
+        return session.get(PolicyRecord, merchant_id) is not None
+
+
 def save_policy_for(policy: MerchantPolicy, engine: object | None = None) -> None:
     from sqlalchemy.orm import Session
 
