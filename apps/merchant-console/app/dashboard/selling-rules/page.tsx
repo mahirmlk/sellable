@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Save, Check, FlaskConical } from "lucide-react";
+import Link from "next/link";
+import { Save, Check, FlaskConical, ArrowRight } from "lucide-react";
 import {
   getConsolePolicy,
   updateConsolePolicy,
@@ -9,6 +10,7 @@ import {
   type ConsolePolicySettings,
   type Product,
 } from "@/lib/api";
+import { classifyError, type StatusError } from "@/components/dashboard/use-system-status";
 import { formatPaise } from "@/lib/formatters";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { TableSkeleton } from "@/components/dashboard/loading-skeleton";
@@ -37,7 +39,7 @@ export default function SellingRulesPage() {
   const [policy, setPolicy] = useState<ConsolePolicySettings | null>(null);
   const [editing, setEditing] = useState<Partial<ConsolePolicySettings>>({});
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<StatusError | null>(null);
   const [partialError, setPartialError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<"success" | "error" | null>(null);
@@ -58,11 +60,7 @@ export default function SellingRulesPage() {
       setEditing({});
     } else {
       setPolicy(null);
-      setLoadError(
-        p.reason instanceof TypeError
-          ? "Backend unreachable — selling rules could not be loaded."
-          : "Selling rules could not be loaded from the backend."
-      );
+      setLoadError(classifyError(p.reason));
     }
     if (c.status === "fulfilled") setCatalog(c.value);
     else {
@@ -240,7 +238,7 @@ export default function SellingRulesPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <RefreshButton onRefresh={() => void fetchData()} loading={loading} />
-          <button onClick={() => void handleSave()} disabled={!hasChanges || saving} className={PRIMARY_PILL}>
+          <button onClick={() => void handleSave()} disabled={!hasChanges || saving || !current} className={PRIMARY_PILL}>
             <Save size={13} /> {saving ? "Saving…" : "Save changes"}
           </button>
         </div>
@@ -258,7 +256,49 @@ export default function SellingRulesPage() {
       )}
       {saveMsg === "error" && <ErrorBanner message="Failed to update policy. Please try again." onRetry={() => void handleSave()} />}
       {validationError && <PartialBanner message={validationError} />}
-      {loadError && <ErrorBanner message={loadError} onRetry={() => void fetchData()} />}
+      {loadError?.code === "onboarding_required" && (
+        <div className="rounded-2xl bg-blue-50 border border-blue-200/60 px-4 py-3 flex flex-wrap items-center gap-3">
+          <p className="min-w-0 flex-1 text-[13px] text-blue-900">
+            Your account has no merchant store yet. Finish setup to configure selling rules.
+          </p>
+          <Link
+            href="/dashboard/onboarding"
+            className="inline-flex items-center gap-1.5 h-8 px-4 rounded-full bg-ink text-white text-[13px] font-semibold hover:bg-ink-2 transition-colors focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            Continue setup <ArrowRight size={12} />
+          </Link>
+        </div>
+      )}
+      {loadError && loadError.code !== "onboarding_required" && (
+        <div>
+          <ErrorBanner
+            message={
+              loadError.kind === "network"
+                ? "Backend unreachable — selling rules could not be loaded."
+                : loadError.kind === "endpoint"
+                  ? "Wrong endpoint — the policy route was not found on the backend."
+                  : loadError.kind === "auth"
+                    ? "Authentication problem — selling rules could not be loaded. Sign in again."
+                    : `Selling rules could not be loaded: ${loadError.message}`
+            }
+            onRetry={() => void fetchData()}
+          />
+          {loadError.traceId && (
+            <span className="mt-1 block text-[12px] opacity-80 font-mono">
+              Reference: {loadError.traceId}
+            </span>
+          )}
+        </div>
+      )}
+      {!loading && !loadError && policy?.is_default === true && (
+        <div className="rounded-2xl bg-amber-50 border border-amber-200/60 px-4 py-3">
+          <p className="text-[13px] text-amber-900">
+            No saved policy yet — these are first-run defaults, not an error. Review
+            them and <span className="font-semibold">Save changes</span> to activate
+            your store&apos;s guardrails.
+          </p>
+        </div>
+      )}
       {partialError && <PartialBanner message={partialError} />}
 
       {loading ? (
