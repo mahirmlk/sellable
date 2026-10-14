@@ -83,6 +83,7 @@ class LedgerActor(StrEnum):
     RISK_ENGINE = "risk_engine"
     HUMAN = "human"
     RAZORPAY = "razorpay"
+    STRIPE = "stripe"
     COMMERCE_CORE = "commerce_core"
 
 
@@ -1330,6 +1331,9 @@ class ConsolePolicySettings(StrictModel):
     max_negotiation_rounds: int
     max_upsells_per_session: int
     human_approval_threshold_paise: int
+    # True when no policy row exists yet and these are first-run defaults.
+    # The console shows "review and save" instead of an error (UPDATE.md §7).
+    is_default: bool = False
 
 
 class ConsolePolicyUpdate(StrictModel):
@@ -1340,3 +1344,25 @@ class ConsolePolicyUpdate(StrictModel):
     max_negotiation_rounds: int | None = Field(default=None, ge=0, le=20)
     max_upsells_per_session: int | None = Field(default=None, ge=0, le=10)
     human_approval_threshold_paise: PositivePaise | None = None
+
+
+class OnboardingWizardProgress(StrictModel):
+    """Shared multi-page onboarding pointer (UPDATE.md §5).
+
+    Per-merchant UI state only: current/resumable step, completed steps,
+    and per-step payloads (store profile extras, catalog choice, …).
+    Commerce writes still go through their own endpoints; demo mode never
+    touches this model (session storage instead).
+    """
+
+    merchant_id: str
+    current_step: str
+    completed_steps: list[str] = Field(default_factory=list)
+    data: dict[str, Any] = Field(default_factory=dict)
+    updated_at: str | None = None
+
+
+class OnboardingWizardUpdate(StrictModel):
+    current_step: str | None = None
+    completed_steps: list[str] | None = None
+    data: dict[str, Any] | None = None

@@ -58,6 +58,8 @@ from sellable.contracts import (
     OrderCreateRequest,
     OrderStatus,
     OrderStatusRequest,
+    OnboardingWizardProgress,
+    OnboardingWizardUpdate,
     PaymentAttempt,
     PaymentStartRequest,
     PolicyVerdict,
@@ -583,6 +585,62 @@ def ucp_negotiate(
     except Exception as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return session.model_dump(mode="json")
+
+
+@app.get("/acp/status", tags=["protocol-acp"])
+@limiter.exempt
+def acp_status() -> dict:
+    """ACP scaffold status (UPDATE.md §9.4): always visible, never a
+    placement claim. Partner onboarding and approval stay external."""
+    from sellable.protocols import acp as acp_adapter
+
+    return {
+        "enabled": settings.acp_enabled,
+        "version": acp_adapter.ACP_VERSION,
+        "spec_reference": acp_adapter.ACP_SPEC_REFERENCE,
+        "note": (
+            "Scaffold only: exposes an ACP-shaped view of AUTHORIZED "
+            "checkouts when enabled. No conformance claim; ChatGPT placement "
+            "and Instant Checkout require separate partner approval."
+        ),
+    }
+
+
+class AcpCheckoutSessionRequest(BaseModel):
+    checkout_id: str
+
+
+@app.post("/acp/checkout/sessions", tags=["protocol-acp"])
+@limiter.limit("30/minute")
+def acp_checkout_session(
+    request: Request,
+    body: AcpCheckoutSessionRequest,
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    """ACP-shaped session state for a canonical AUTHORIZED checkout.
+
+    Disabled by default (501 + machine-readable code). When enabled, the
+    response is a read-only mapping — totals, auth binding, and idempotency
+    guidance come from the authoritative checkout, never from the caller.
+    """
+    from sellable.protocols import acp as acp_adapter
+
+    if not settings.acp_enabled:
+        raise HTTPException(
+            status_code=501,
+            detail={
+                "code": acp_adapter.ACP_DISABLED_CODE,
+                "message": "ACP scaffold is disabled. Set SELLABLE_ACP_ENABLED=1 to expose it.",
+            },
+        )
+    core = registry.get(_api_key.merchant_id)
+    checkout = core.checkout_repo.get(body.checkout_id, _api_key.merchant_id)
+    if checkout is None:
+        raise HTTPException(status_code=404, detail="Unknown checkout")
+    try:
+        return acp_adapter.build_checkout_session(checkout)
+    except acp_adapter.AcpError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @app.post("/commerce/identity/link", tags=["protocol-identity"])
@@ -1351,27 +1409,103 @@ def console_onboarding_readiness(
     x_trace_id: str | None = Header(default=None),
 ) -> dict:
     """Automated merchant readiness checks (§10.3) with per-check results
-    recorded on the onboarding row."""
+    recorded on the onboarding row. ``payment_health`` reflects validated
+    provider credentials (shape/mode checked locally, no network), not
+    merely present strings; ``evidence`` carries observed state
+    (last verified webhook) and ``live_blockers`` names the failing
+    required checks that gate live transactions."""
+    from sellable.payments import provider_is_valid
     from sellable.repositories import SandboxRepository
 
     core = merchant_core(session)
+    payment_ok = provider_is_valid(settings)
     results = core.refresh_onboarding_readiness(
         trace_id=resolve_trace_id(x_trace_id),
-        payment_configured=bool(
-            settings.razorpay_is_configured or settings.stripe_secret_key
-        ),
+        payment_configured=payment_ok,
         webhook_configured=bool(
             settings.razorpay_webhook_secret or settings.shipping_webhook_secret
         ),
         sandbox_repo=SandboxRepository(),
     )
     onboarding = core.onboarding_repo.get(session.merchant_id)
+    try:
+        last_verified = core.ledger.last_webhook_time()
+        webhook_last_verified_at = (
+            last_verified.isoformat() if last_verified is not None else None
+        )
+    except Exception:  # noqa: BLE001 — evidence is informational, never fatal
+        webhook_last_verified_at = None
+    live_blockers = sorted(
+        check
+        for check in (
+            "catalog_completeness",
+            "policy_consistency",
+            "payment_health",
+            "webhook_health",
+        )
+        if not results.get(check, False)
+    )
     return {
         "merchant_id": session.merchant_id,
         "stage": onboarding.stage.value if onboarding else "CREATED",
         "checks": results,
         "activation_ready": onboarding.is_activation_ready if onboarding else False,
+        "evidence": {
+            "provider": settings.payment_provider,
+            "payment_credentials_valid": payment_ok,
+            "webhook_last_verified_at": webhook_last_verified_at,
+        },
+        "live_blockers": live_blockers,
     }
+
+
+@app.get(
+    "/console/onboarding/progress",
+    response_model=OnboardingWizardProgress,
+    tags=["console"],
+)
+@limiter.limit("60/minute")
+def console_onboarding_progress_get(
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> OnboardingWizardProgress:
+    """Resumable wizard pointer for the shared multi-page onboarding
+    (UPDATE.md §5). Returns the default first-step pointer when the
+    merchant has no saved progress yet — resume is a read, never a 404."""
+    from sellable.repositories import OnboardingWizardRepository
+
+    return OnboardingWizardProgress.model_validate(
+        OnboardingWizardRepository().get(session.merchant_id)
+    )
+
+
+@app.put(
+    "/console/onboarding/progress",
+    response_model=OnboardingWizardProgress,
+    tags=["console"],
+)
+@limiter.limit("30/minute")
+def console_onboarding_progress_put(
+    body: OnboardingWizardUpdate,
+    request: Request,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> OnboardingWizardProgress:
+    """Persist the wizard pointer after each completed step (UPDATE.md §5).
+    Step ids are validated against the canonical wizard; per-step payloads
+    merge over previous data. Unknown steps fail with 409, never silent
+    acceptance — the frontend resume order depends on exact ids."""
+    from sellable.repositories import OnboardingWizardRepository
+
+    try:
+        saved = OnboardingWizardRepository().save(
+            session.merchant_id,
+            current_step=body.current_step,
+            completed_steps=body.completed_steps,
+            data=body.data,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return OnboardingWizardProgress.model_validate(saved)
 
 
 # ---------------------------------------------------------------------------
@@ -1878,9 +2012,17 @@ def admin_incidents(request: Request, limit: int = 50) -> dict:
 async def stripe_webhook(
     request: Request,
     stripe_signature: str | None = Header(default=None, alias="Stripe-Signature"),
+    payments: PaymentService = Depends(get_payment_service),
 ) -> dict:
-    """Second provider rail (§25): HMAC-verified Stripe events settle the
-    same deterministic order machine. Test mode only."""
+    """Second provider rail (§25): HMAC-verified Stripe events settle through
+    the same orchestrated boundary as Razorpay — idempotent delivery claims,
+    exact amount matching, strict state-machine settlement, and auditable
+    ledger rows. Test mode only."""
+    from sellable.payments.service import (
+        UnexpectedOrderStateError,
+        UnknownProviderOrderError,
+        UnsupportedWebhookEventError,
+    )
     from sellable.payments.stripe import (
         InvalidStripeSignatureError,
         StripeConfigurationError,
@@ -1891,50 +2033,29 @@ async def stripe_webhook(
         payload = json.loads(body.decode("utf-8"))
     except Exception as error:
         raise HTTPException(status_code=400, detail="Invalid JSON body") from error
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
     from sellable.payments import build_provider
 
     adapter = build_provider(settings, "stripe")
     try:
-        adapter.verify_webhook(body, stripe_signature)
+        attempt = payments.handle_stripe_webhook(
+            body, stripe_signature, stripe_adapter=adapter
+        )
     except InvalidStripeSignatureError as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
     except StripeConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    event_type = payload.get("type", "")
-    entity = payload.get("data", {}).get("object", {}) or {}
-    if event_type not in ("payment_intent.succeeded", "payment_intent.payment_failed"):
-        return {"status": "ignored", "event_type": event_type}
-    local_order_id = (entity.get("metadata") or {}).get("local_order_id")
-    if not local_order_id:
-        raise HTTPException(status_code=400, detail="Missing local_order_id metadata")
-    core = registry.get(_merchant_for_order(local_order_id))
-    try:
-        if event_type == "payment_intent.succeeded":
-            order = core.mark_paid(
-                local_order_id, provider_ref=str(entity.get("id", ""))
-            )
-        else:
-            order = core.mark_payment_failed(
-                local_order_id,
-                reason=str(entity.get("last_payment_error", {}).get("message") or "stripe declined"),
-                provider_ref=str(entity.get("id", "")),
-            )
-    except ValueError as error:
+    except UnsupportedWebhookEventError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except UnknownProviderOrderError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except UnexpectedOrderStateError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    if attempt is None:
+        return {"status": "ignored", "event_type": payload.get("type", "")}
     _drain_bus_best_effort()
-    return {"status": order.status.value, "order_id": order.order_id}
-
-
-def _merchant_for_order(order_id: str) -> str:
-    """Resolve the owning merchant for a provider-referenced order without
-    leaking cross-tenant existence (unknown ids fall through to the demo
-    resolution path, which 404s identically)."""
-    from sellable.repositories import OrderRepository
-
-    order = OrderRepository().get(order_id)
-    if order is not None:
-        return order.merchant_id
-    return DEMO_MERCHANT_ID
+    return {"status": attempt.status.value, "order_id": attempt.order_id}
 
 
 @app.get("/console/connectors", tags=["console"])
@@ -3219,6 +3340,8 @@ def console_policy(
     commerce: CommerceCore = Depends(get_commerce),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> ConsolePolicySettings:
+    from sellable.registry import has_policy_for
+
     p = merchant_core(session).get_policy()
     return ConsolePolicySettings(
         merchant_id=p.merchant_id,
@@ -3230,6 +3353,7 @@ def console_policy(
         max_negotiation_rounds=p.max_negotiation_rounds,
         max_upsells_per_session=p.max_upsells_per_session,
         human_approval_threshold_paise=p.human_approval_threshold_paise,
+        is_default=not has_policy_for(session.merchant_id),
     )
 
 
@@ -3241,8 +3365,10 @@ def console_update_policy(
     commerce: CommerceCore = Depends(get_commerce),
     ledger: LedgerRepository = Depends(get_ledger),
     session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
 ) -> ConsolePolicySettings:
     require_owner(session)
+    trace_id = resolve_trace_id(x_trace_id)
     updates = body.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -3262,6 +3388,12 @@ def console_update_policy(
         output={"new_policy": new_policy.model_dump()},
         reasoning_summary=f"Merchant updated policy fields: {', '.join(updates.keys())}.",
     )
+    logger.info(
+        "policy updated merchant_id=%s fields=%s trace_id=%s",
+        session.merchant_id,
+        ",".join(sorted(updates.keys())),
+        trace_id,
+    )
     p = new_policy
     return ConsolePolicySettings(
         merchant_id=p.merchant_id,
@@ -3273,6 +3405,7 @@ def console_update_policy(
         max_negotiation_rounds=p.max_negotiation_rounds,
         max_upsells_per_session=p.max_upsells_per_session,
         human_approval_threshold_paise=p.human_approval_threshold_paise,
+        is_default=False,
     )
 
 
