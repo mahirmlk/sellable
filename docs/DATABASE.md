@@ -299,6 +299,23 @@ CREATE TABLE agent_nonces (
 
 **Claim:** `sellable/repositories.py` → `NonceRepository.claim()`.
 
+### `merchant_onboarding` / `onboarding_wizard_progress`
+
+- `merchant_onboarding(merchant_id PK, stage, completed_checks_json,
+  updated_at)` — lifecycle stage pointer + recorded readiness checks; never
+  commerce state (`sellable/repositories.py` → `MerchantOnboardingRepository`).
+- `onboarding_wizard_progress(merchant_id PK, current_step,
+  completed_steps_json, data_json, updated_at)` — resumable pointer for the
+  shared multi-page onboarding wizard (UPDATE.md §5): current/completed step
+  ids plus per-step payloads (store profile extras, catalog choice). UI state
+  only — catalog/policy/order writes still go through their own endpoints.
+  Demo mode never writes here (session storage instead).
+  (`sellable/repositories.py` → `OnboardingWizardRepository`.)
+
+Both tables are deny-by-default under RLS (no `anon`/`authenticated`
+grants; migration `supabase/migrations/20261014_onboarding_wizard_progress.sql`
+covers the wizard table).
+
 ### `merchants` / `merchant_users` / `catalog_products`
 
 - `merchants(merchant_id PK, name, created_at)` — one row per store.
@@ -397,8 +414,10 @@ commerce_core = registry.get(DEMO_MERCHANT_ID)
 | `/console/approvals/{id}/approve` | POST | `orders`, `consents`, `ledger_events` | Issue consent |
 | `/console/approvals/{id}/reject` | POST | `orders`, `ledger_events` | Abort order |
 | `/console/insights` | GET | `orders`, `ledger_events` | Revenue analytics |
-| `/console/policy` | GET | `policy` | Read current policy |
+| `/console/policy` | GET | `policy` | Read current policy (`is_default: true` when no row exists yet — first-run defaults) |
 | `/console/policy` | PUT | `policy`, `ledger_events` | Update policy |
+| `/console/onboarding/progress` | GET/PUT | `onboarding_wizard_progress` | Read/resume or persist the wizard pointer (step ids validated; unknown → 409) |
+| `/console/onboarding/readiness` | GET | `merchant_onboarding`, `catalog_products`, `policy` | Recompute + record readiness checks; returns checks, evidence, and live blockers |
 
 ---
 
@@ -407,7 +426,9 @@ commerce_core = registry.get(DEMO_MERCHANT_ID)
 On first startup with a fresh database:
 
 1. `initialise_database()` creates all tables
-2. `MerchantRegistry.ensure_demo_merchant()` seeds the demo store, catalog, and policy
+2. `MerchantRegistry.ensure_demo_merchant()` seeds the demo store and catalog
+   (policy starts as first-run defaults — `GET /console/policy` reports
+   `is_default: true` until the merchant saves)
 3. Each `CommerceCore._hydrate()` loads its merchant slice (empty on first run)
 
 The database file is created at `data/sellable.db` (relative to project root).
