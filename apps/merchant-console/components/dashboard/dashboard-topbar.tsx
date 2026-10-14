@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Code2, Settings, ShieldCheck, Store } from "lucide-react";
+import { ChevronDown, Code2, LogOut, RotateCcw, Settings, ShieldCheck, Store } from "lucide-react";
 import { useSystemStatus } from "@/components/dashboard/use-system-status";
 import { OPEN_COMMAND_MENU_EVENT } from "@/components/dashboard/command-menu";
-import { getStore } from "@/lib/api";
+import { getStore, isDemoMode } from "@/lib/api";
+import { resetDemo } from "@/lib/demo/store";
 import { ThemeSwitcher } from "@/components/theme-switcher";import {
   DropdownMenu,
   DropdownMenuContent,
@@ -66,6 +67,14 @@ function AccountMenu({ store, fallback }: { store: StoreInfo | null; fallback: s
         <span className="text-[15px] font-semibold tracking-[-0.01em] text-ink truncate">
           {store?.name ?? fallback}
         </span>
+        {isDemoMode() && (
+          <span
+            className="shrink-0 inline-flex items-center rounded-full bg-ink px-2 py-0.5 text-[10px] font-bold tracking-[0.1em] text-white"
+            title="Demo Mode: sample data only. Nothing here touches live merchant data."
+          >
+            DEMO
+          </span>
+        )}
         <ChevronDown size={14} aria-hidden className="shrink-0 text-faint" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -115,6 +124,27 @@ function AccountMenu({ store, fallback }: { store: StoreInfo | null; fallback: s
             {label}
           </DropdownMenuItem>
         ))}
+        <DropdownMenuSeparator className="bg-ink/10" />
+        <DropdownMenuItem
+          onClick={() => router.push("/sign-out")}
+          className="text-ink"
+        >
+          <LogOut size={15} className="text-faint" aria-hidden />
+          Sign out
+        </DropdownMenuItem>
+        {isDemoMode() && (
+          <DropdownMenuItem
+            onClick={() => {
+              resetDemo();
+              router.push("/demo");
+              router.refresh();
+            }}
+            className="text-ink"
+          >
+            <RotateCcw size={15} className="text-faint" aria-hidden />
+            Reset demo data
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
