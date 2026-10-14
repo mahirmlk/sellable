@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### UPDATE.md implementation (Phases 0–6, `feat/agentic-commerce-core-v2`)
+- Access: restored `/sign-in`, `/sign-up`, `/forgot-password`, `/reset-password` + `/auth/callback`; root middleware gates `/dashboard` by session (`next` resume); `/demo` entry sets an httpOnly demo cookie; `/sign-out` clears both sessions; landing CTAs route to sign-in/up/demo; account menu gains Sign out + Reset demo data
+- Onboarding: shared 7-step wizard (welcome → store → catalog → rules → agents → payments → review) with per-step persistence — `GET/PUT /console/onboarding/progress` (tenant-scoped, step-id validated, 409 on unknown) for production, localStorage prefill for demo; review shows required vs optional readiness with server `live_blockers`
+- Demo Mode: dedicated `lib/demo/` adapter (curated fixtures + localStorage overlay, zero network by construction) behind every console data function; DEMO badge; curated cross-consistent fixtures (orders↔catalog↔payments↔analytics); demo writes provably tenant-local
+- Backend hardening: demo-key sessions refused against remote databases (console + agent gateway); `GET /console/policy` reports first-run `is_default`; `X-Trace-Id` on every response and captured into console `ApiError.traceId` for support reference
+- Payments: Stripe webhooks settled through the orchestrated boundary (idempotent claims, amount match, strict transitions, `stripe`-actor ledger rows; 400/404/409 mapping); canonical REST + UCP + MCP sandbox purchase proven end to end (consent → payment → verified webhook → PAID, idempotent retries, correlated audit)
+- Live readiness + protocols: `payment_health` from validated credentials, readiness `evidence` (provider, credential validity, last verified webhook) + `live_blockers`; UCP discovery pins `ucp_version` + spec reference (no cert claims); ACP scaffold (`protocols/acp.py`, `GET /acp/status`, `POST /acp/checkout/sessions`) disabled by default via `SELLABLE_ACP_ENABLED`
+- Docs: API/DATABASE/DEPLOYMENT/DEMO references updated; `SELLABLE_ARCHITECTURE.md` §53 records the UCP pin and ACP scaffold status
+
 ### Revamp (target architecture SELLABLE_ARCHITECTURE.md, Phases 0–8)
 - Foundation: agent identity/reputation, delegation + authorization service (`ALLOW/DENY/REQUIRE_CUSTOMER/REQUIRE_HUMAN`), event envelope, merchant onboarding lifecycle
 - Commerce: persistent versioned carts, deterministic pricing, promotion engine (10 primitives, eligibility/stacking/budgets), bounded quotes/negotiation, checkout FSM with hash-bound authorization, GST tax, shipping + basic fulfillment, returns/exchanges/refund asks
