@@ -7,16 +7,11 @@ import { Loader2 } from "lucide-react";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
-import { clearDemoCookie } from "@/lib/api";
+import { clearDemoCookie, clearStatusCache } from "@/lib/api";
+import { safeNext } from "@/lib/safe-next";
 
-export const INPUT_DARK =
-  "w-full h-12 bg-[var(--bb-black)] border border-[var(--bb-line)] px-4 text-[15px] text-[var(--bb-white)] placeholder:text-[var(--bb-grey-3)] focus:outline-none focus:border-[var(--bb-orange)] transition-colors";
-export const LABEL_DARK =
-  "font-[var(--font-mono)] text-[0.64rem] tracking-[0.12em] uppercase text-[var(--bb-grey-2)]";
-export const PRIMARY_ORANGE =
-  "btn-orange-primary w-full !min-h-[52px] !text-[0.74rem] disabled:opacity-50 disabled:cursor-not-allowed";
-export const INLINE_LINK =
-  "font-medium text-[var(--bb-orange)] hover:underline focus-visible:outline-2 focus-visible:outline-accent";
+export { INLINE_LINK, INPUT_DARK, LABEL_DARK, PRIMARY_ORANGE } from "@/components/auth/fields";
+import { INLINE_LINK, INPUT_DARK, LABEL_DARK, PRIMARY_ORANGE } from "@/components/auth/fields";
 
 function friendlyError(message: string): string {
   const lower = message.toLowerCase();
@@ -68,7 +63,8 @@ function SignInForm() {
       }
       // A real session always wins: drop any demo flag before entering.
       clearDemoCookie();
-      router.push(next.startsWith("/") ? next : "/dashboard");
+      clearStatusCache();
+      router.push(safeNext(next));
       router.refresh();
     } catch {
       setError("Sign-in failed. Check your connection and try again.");

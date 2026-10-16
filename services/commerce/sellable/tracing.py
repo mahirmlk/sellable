@@ -77,12 +77,16 @@ def traced(span_name: str):
 
 async def trace_middleware(request, call_next):
     """Echo/resolve the trace id on every response (pure ASGI)."""
+    import re as _re
+
     from uuid import uuid4
 
     incoming = request.headers.get("X-Trace-Id", "")
+    # Same contract as resolve_trace_id: a malformed id is never echoed
+    # (it would 422 downstream while the response header pretends it is real).
     trace_id = (
         incoming
-        if incoming.startswith("trc_") and len(incoming) == 36
+        if _re.fullmatch(r"trc_[0-9a-f]{32}", incoming or "")
         else f"trc_{uuid4().hex}"
     )
     response = await call_next(request)

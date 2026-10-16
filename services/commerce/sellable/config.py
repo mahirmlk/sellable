@@ -204,10 +204,18 @@ class Settings:
             in ("1", "true", "yes"),
             cors_origins=_parse_cors_origins(os.getenv("CORS_ORIGINS"))
             or (
-                "https://sellable.shop",
-                "https://www.sellable.shop",
-                "http://localhost:3000",
-                "http://127.0.0.1:3000",
+                ("https://sellable.shop", "https://www.sellable.shop")
+                if os.getenv("SELLABLE_ENVIRONMENT", "production")
+                not in ("development", "test")
+                # Production fallback is shop-only: localhost entries are
+                # dev-only so a forgotten CORS_ORIGINS cannot expose
+                # credentialed APIs to any local page.
+                else (
+                    "https://sellable.shop",
+                    "https://www.sellable.shop",
+                    "http://localhost:3000",
+                    "http://127.0.0.1:3000",
+                )
             ),
         )
 

@@ -68,6 +68,19 @@ function demoId(prefix: string): string {
   return `${prefix}_demo_${Date.now().toString(36)}_${demoCounter}`;
 }
 
+/** Demo trace ids match the backend contract ^trc_[0-9a-f]{32}$ (32 hex). */
+function demoTraceId(seed: string): string {
+  let hex = "";
+  for (let i = 0; i < seed.length && hex.length < 32; i += 1) {
+    hex += (seed.charCodeAt(i) % 16).toString(16);
+  }
+  while (hex.length < 32) {
+    demoCounter += 1;
+    hex += (demoCounter % 16).toString(16);
+  }
+  return `trc_${hex.slice(0, 32)}`;
+}
+
 function notFound(what: string): never {
   throw new ApiError(404, "Not Found", `${what} not found in demo data`);
 }
@@ -408,7 +421,7 @@ export async function refundOrder(
     order.trace_id,
     orderId,
     { amount_paise: order.amount_paise, reason },
-    `Demo refund ({reason}): no live money moved.`.replace("{reason}", reason),
+    `Demo refund (${reason}): no live money moved.`,
     ["refund_authority"]
   );
   return {
@@ -494,12 +507,20 @@ export async function updateConsolePolicy(
 }
 
 export async function getConsoleInsights(): Promise<ConsoleGrowthMetrics> {
+  // Derived from the merged fixture + overlay order set so demo actions
+  // (new orders, refunds, captures) move the numbers. Fixture baseline:
+  // paid orders ord_demo_001/002/003 = 799400 GMV; total 6 orders.
+  // Static engagement counters (upsells, negotiations) stay fixture-fixed
+  // because the demo has no live agent-run telemetry.
+  const all = orders();
+  const paid = all.filter((o) => o.status === "PAID");
+  const revenue = paid.reduce((sum, o) => sum + o.amount_paise, 0);
   return {
-    revenue: 799400,
-    agent_assisted_revenue: 799400,
+    revenue,
+    agent_assisted_revenue: revenue,
     upsell_revenue: 0,
-    avg_order_value: 266467,
-    total_orders: 6,
+    avg_order_value: paid.length > 0 ? Math.round(revenue / paid.length) : 0,
+    total_orders: all.length,
     upsell_offers: 2,
     upsell_accepted: 0,
     negotiations: 1,
@@ -669,8 +690,7 @@ export async function consoleSellerRespond(body: {
 }): Promise<SellerDecisionPayload> {
   const traceId = /^trc_[0-9a-f]{32}$/.test(body.trace_id ?? "")
     ? (body.trace_id as string)
-    : `trc_${"d".repeat(8)}emo${"0".repeat(20)}`.slice(0, 36);
-  const message = body.message.toLowerCase();
+    : demoTraceId(`d${body.message}${Date.now()}`);
   const currentPolicy = policy();
 
   const product =
@@ -692,7 +712,14 @@ export async function consoleSellerRespond(body: {
     };
   }
 
-  const quantity = Math.min(Math.max(body.quantity ?? 1, 1), 10);
+  const requestedQty = body.quantity ?? 1;
+  // Clamp openly instead of silently: quantities outside 1-10 quote at the
+  // boundary and say so, so buyers see why 20 units became 10.
+  const quantity = Math.min(Math.max(requestedQty, 1), 10);
+  const quantityNote =
+    requestedQty !== quantity
+      ? ` (Demo caps quantities at 10 per quote, so ${requestedQty} became ${quantity}.)`
+      : "";
   let unitPrice = product.price_paise;
 
   if (body.buyer_offer_paise != null && body.buyer_offer_paise < unitPrice) {
@@ -756,14 +783,13 @@ export async function consoleSellerRespond(body: {
     };
   }
 
-  void message;
   return {
     trace_id: traceId,
     action: "QUOTE_READY",
     response_message:
       body.price_query === true
-        ? `The ${product.title} is ₹${(unitPrice / 100).toFixed(2)}${quantity > 1 ? ` × ${quantity}` : ""} in the demo catalog.`
-        : `Here's the ${product.title} at ₹${(unitPrice / 100).toFixed(2)}${quantity > 1 ? ` × ${quantity} = ₹${(total / 100).toFixed(2)}` : ""} — ready when you are.`,
+        ? `The ${product.title} is ₹${(unitPrice / 100).toFixed(2)}${quantity > 1 ? ` × ${quantity}` : ""} in the demo catalog.${quantityNote}`
+        : `Here's the ${product.title} at ₹${(unitPrice / 100).toFixed(2)}${quantity > 1 ? ` × ${quantity} = ₹${(total / 100).toFixed(2)}` : ""}. Ready when you are.${quantityNote}`,
     cart: buildCart(body.intent.mandate_id, product, quantity, unitPrice),
     policy_decision: {
       verdict: "ALLOW",
@@ -844,7 +870,9 @@ export async function consoleCreateOrder(body: {
   const order: ConsoleTransaction = {
     order_id: orderId,
     trace_id: decision.trace_id,
-    status: decision.action === "NEEDS_HUMAN_APPROVAL" ? "AWAITING_CONSENT" : "AWAITING_CONSENT",
+    // Created orders always await consent first; approval-required ones are
+    // distinguished by policy_verdict NEEDS_HUMAN_APPROVAL, not status.
+    status: "AWAITING_CONSENT",
     amount_paise: decision.cart.total_paise,
     buyer_agent_id: body.intent.buyer_agent_id ?? "human_chat",
     merchant_id: DEMO_MERCHANT,
@@ -1008,7 +1036,7 @@ export async function consoleRunBuyerMission(body: {
   quantity?: number;
   buyer_offer_paise?: number | null;
 }): Promise<BuyerResultPayload> {
-  const traceId = `trc_${"e".repeat(8)}mo${"0".repeat(20)}`.slice(0, 36);
+  const traceId = demoTraceId(`e${body.message}${Date.now()}`);
   const match = filterCatalog(body.message, body.allowed_categories)[0] ?? null;
   const missionId = demoId("mis");
   if (!match) {
@@ -1134,6 +1162,14 @@ export async function listBuyerMissions(limit = 20): Promise<BuyerMissionPayload
 
 export async function continueBuyerMission(missionId: string): Promise<BuyerMissionPayload> {
   const mission = await getBuyerMission(missionId);
+  if (mission.state === "NEEDS_HUMAN_APPROVAL") {
+    // Approval-queue missions cannot auto-progress: point at the queue.
+    return {
+      ...mission,
+      required_action: "Approve the order in the demo approvals queue first, then continue.",
+      mission_message: "Waiting on merchant approval in the demo. Nothing is charged until then.",
+    };
+  }
   if (mission.state !== "PAYMENT_PENDING" || !mission.order_id) return mission;
   await simulatePaymentCapture(mission.order_id);
   const updated: BuyerMissionPayload = {
@@ -1251,7 +1287,23 @@ export async function markNotificationRead(notificationId: string): Promise<unkn
 }
 
 export async function getAnalyticsOverview(): Promise<AnalyticsOverview> {
-  return clone(getFixtures().analyticsOverview) as AnalyticsOverview;
+  // Core money fields derive from the live order set so demo actions move
+  // them; engagement counters stay fixture-fixed (no live telemetry).
+  const base = clone(getFixtures().analyticsOverview) as AnalyticsOverview;
+  const all = orders();
+  const paid = all.filter((o) => o.status === "PAID");
+  const gmv = paid.reduce((sum, o) => sum + o.amount_paise, 0);
+  const refunded = all.filter((o) => o.status === "REFUNDED");
+  return {
+    ...base,
+    gmv_paise: gmv,
+    orders_created: all.length,
+    orders_paid: paid.length,
+    aov_paise: paid.length > 0 ? Math.round(gmv / paid.length) : 0,
+    refunds_completed: refunded.length,
+    refund_amount_paise: refunded.reduce((sum, o) => sum + o.amount_paise, 0),
+    computed_at: new Date().toISOString(),
+  };
 }
 
 export async function getAnalyticsTimeseries(): Promise<AnalyticsDay[]> {
@@ -1306,7 +1358,11 @@ export async function consoleServiceRespond(body: {
   amount_paise?: number | null;
   reason?: string | null;
 }): Promise<CSResponse> {
-  const traceId = `trc_${"f".repeat(8)}cs${"0".repeat(20)}`.slice(0, 36);
+  // Demo support answers from order records only. Item-level actions
+  // (replacements, amounts, hints) are accepted by the form but the scripted
+  // demo has no fulfillment engine behind them, so they are acknowledged
+  // rather than silently dropped.
+  const traceId = demoTraceId(`f${body.message}${Date.now()}`);
   const base = {
     trace_id: traceId,
     case_id: null as string | null,
@@ -1329,14 +1385,18 @@ export async function consoleServiceRespond(body: {
     };
   }
   if (order) {
+    const extras: string[] = [];
+    if (body.items?.length) extras.push(`${body.items.length} item line(s) noted`);
+    if (body.replacement_sku) extras.push(`replacement ${body.replacement_sku} noted`);
+    if (body.amount_paise != null) extras.push("amount noted");
+    if (body.action_hint) extras.push(`action ${body.action_hint} noted`);
     return {
       ...base,
       action: "ORDER_STATUS",
-      response_message: `Demo order ${order.order_id} is ${order.status} for ₹${(order.amount_paise / 100).toFixed(2)}${order.payment_status ? ` (payment ${order.payment_status})` : ""}.`,
+      response_message: `Demo order ${order.order_id} is ${order.status} for ₹${(order.amount_paise / 100).toFixed(2)}${order.payment_status ? ` (payment ${order.payment_status})` : ""}.${extras.length > 0 ? ` Also ${extras.join(", ")}. The demo does not run replacements or adjustments.` : ""}`,
       order_status: order.status,
     };
   }
-  void body.customer_id;
   return {
     ...base,
     action: "GREETING",
@@ -1372,8 +1432,27 @@ export async function getEvalRun(runId: string): Promise<{
   run_id: string;
   results: EvalCaseResult[];
 }> {
-  void runId;
-  return { run_id: runId, results: [] };
+  // Demo has no persisted run store: synthesize fixture-grounded passing
+  // results for the advertised latest runs so drill-down is never empty.
+  const suites = clone(getFixtures().evalSuites) as EvalSuiteView[];
+  const owner = suites.find((s) => s.latest_run?.run_id === runId);
+  if (!owner?.latest_run) {
+    return { run_id: runId, results: [] };
+  }
+  const results: EvalCaseResult[] = Array.from(
+    { length: owner.latest_run.passed },
+    (_, i) => ({
+      result_id: `${runId}_case_${i + 1}`,
+      run_id: runId,
+      case_id: `${owner.suite_id}_case_${i + 1}`,
+      passed: true,
+      score_bps: 10000,
+      duration_ms: 120,
+      error: null,
+      details: { suite_id: owner.suite_id, demo: true },
+    })
+  );
+  return { run_id: runId, results };
 }
 
 export async function getEvalDrift(): Promise<{
@@ -1462,10 +1541,12 @@ export async function getAgentMetrics(): Promise<Record<string, unknown>> {
 }
 
 export async function getCommerceMetrics(): Promise<Record<string, unknown>> {
+  const all = orders();
+  const paid = all.filter((o) => o.status === "PAID");
   return {
-    gmv_paise: 799400,
-    orders: orders().length,
-    paid_orders: orders().filter((o) => o.status === "PAID").length,
+    gmv_paise: paid.reduce((sum, o) => sum + o.amount_paise, 0),
+    orders: all.length,
+    paid_orders: paid.length,
     demo: true,
   };
 }

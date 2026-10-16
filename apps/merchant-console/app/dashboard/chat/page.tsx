@@ -105,6 +105,22 @@ type ChatPhase =
   | "failed"
   | "aborted";
 
+// Payment links must come from Razorpay. A backend or provider compromise
+// must not redirect the merchant to a phishing checkout.
+function isRazorpayUrl(raw: string): boolean {
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return (
+      host === "razorpay.com" ||
+      host.endsWith(".razorpay.com") ||
+      host === "rzp.io" ||
+      host.endsWith(".rzp.io")
+    );
+  } catch {
+    return false;
+  }
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "seller" | "system";
@@ -375,7 +391,10 @@ export default function ChatPageInner() {
     getConsolePolicy()
       .then((p) => {
         setPolicy(p);
-        setCategories(p.allowed_categories.length > 0 ? p.allowed_categories : ["accessories", "gifting", "snacks"]);
+        // Empty allow-list means "allow all" (selling-rules convention):
+        // pass through empty instead of a hardcoded subset so new
+        // categories (e.g. home) are never silently excluded.
+        setCategories(p.allowed_categories ?? []);
       })
       .catch(() => {});
     getConsoleCatalog()
@@ -420,7 +439,7 @@ export default function ChatPageInner() {
 
   const buildIntent = useCallback(
     (message: string): IntentMandate => ({
-      mandate_id: `im_${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36)}`,
+      mandate_id: `im_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}${Date.now().toString(36)}`,
       buyer_agent_id: "human_chat",
       budget_ceiling_paise: budgetPaise,
       allowed_categories: categories,
@@ -1132,7 +1151,7 @@ export default function ChatPageInner() {
         message: sessionMessageRef.current,
         idempotency_key: replayingRestoredOrder
           ? order.idempotency_key
-          : `idem_chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          : `idem_chat_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
         request_upsell: upsellOn,
         trace_id: lastTraceIdRef.current || undefined,
         requested_sku: effectiveSku,
@@ -1218,7 +1237,9 @@ export default function ChatPageInner() {
       setPayment(attempt);
       // The backend returns a hosted Razorpay Payment Link — the browser never
       // holds payment credentials and can never mark the order PAID itself.
-      if (attempt.payment_url) {
+      // Allow-list the host first: a compromised provider response must not
+      // send the merchant to a phishing checkout.
+      if (attempt.payment_url && isRazorpayUrl(attempt.payment_url)) {
         const opened = window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
         setMessages((prev) => [
           ...prev,
@@ -1262,7 +1283,7 @@ export default function ChatPageInner() {
     try {
       const attempt = await consoleRetryPayment(order.order_id);
       setPayment(attempt);
-      if (attempt.payment_url) {
+      if (attempt.payment_url && isRazorpayUrl(attempt.payment_url)) {
         const opened = window.open(attempt.payment_url, "_blank", "noopener,noreferrer");
         setMessages((prev) => [
           ...prev,
@@ -1993,7 +2014,7 @@ export default function ChatPageInner() {
                     <p className="mt-3 border-t border-hairline pt-3 text-[12px] leading-relaxed text-muted">
                       Waiting on provider confirmation. The browser cannot mark this paid, only a verified webhook settles it.
                     </p>
-                    {payment.payment_url && (
+                    {payment.payment_url && isRazorpayUrl(payment.payment_url) && (
                       <a
                         href={payment.payment_url}
                         target="_blank"

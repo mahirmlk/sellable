@@ -12,8 +12,9 @@ export function apiBaseUrl(): string {
 // In demo mode (no Supabase configured) the console authenticates with the
 // public demo key. With Supabase configured, merchant auth uses the JWT.
 import * as demoAdapter from "./demo/adapter";
+import { DEMO_COOKIE } from "./demo/cookie";
 
-export const DEMO_COOKIE = "sellable_demo_auth";
+export { DEMO_COOKIE };
 
 /** Demo routing cookie (set by /demo, cleared on sign-in/sign-out and by
  * middleware whenever a real Supabase session exists). Client-only read. */
@@ -26,7 +27,13 @@ export function hasDemoCookie(): boolean {
 
 export function clearDemoCookie(): void {
   if (typeof document === "undefined") return;
-  document.cookie = `${DEMO_COOKIE}=; Path=/; Max-Age=0`;
+  // Same Path/SameSite as the server-set cookie so the clear actually
+  // applies. Secure only in production (localhost has no TLS).
+  const secure =
+    typeof window !== "undefined" && window.location.protocol === "https:"
+      ? "; Secure"
+      : "";
+  document.cookie = `${DEMO_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax${secure}`;
 }
 
 // Demo data applies when Supabase is unconfigured, or when the visitor
@@ -35,8 +42,7 @@ export function clearDemoCookie(): void {
 // over demo state — demo functions here never call production APIs.
 export const isDemoMode = () =>
   !process.env.NEXT_PUBLIC_SUPABASE_URL || hasDemoCookie();
-const AGENT_KEY =
-  process.env.NEXT_PUBLIC_AGENT_KEY || "sellable_demo_key_001";
+const AGENT_KEY = process.env.NEXT_PUBLIC_AGENT_KEY || "";
 
 export interface Product {
   id: string;
@@ -348,6 +354,10 @@ export async function archiveCheckoutSession(sessionId: string): Promise<void> {
  * commerce rows); falls back to close when the route is missing.
  */
 export async function deleteCheckoutSession(sessionId: string): Promise<void> {
+  // Demo isolation: demo sessions live in the localStorage overlay only and
+  // must never reach the production API. Every other data function branches
+  // on isDemoMode() first; this one was missing the guard.
+  if (isDemoMode()) return demoAdapter.deleteCheckoutSession(sessionId);
   try {
     await apiFetch<unknown>(
       `/console/checkout/session/${encodeURIComponent(sessionId)}`,
@@ -655,6 +665,8 @@ export interface BuyerMissionPayload {
   updated_at: string;
 }
 
+let refreshInflight: Promise<string | null> | null = null;
+
 async function getMerchantToken(): Promise<string | null> {
   try {
     const { isSupabaseConfigured } = await import("@/lib/supabase/client");
@@ -666,10 +678,25 @@ async function getMerchantToken(): Promise<string | null> {
     } = await supabase.auth.getSession();
 
     if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
-      const { data: refreshed, error } = await supabase.auth.refreshSession();
-      if (!error && refreshed?.session?.access_token) {
-        return refreshed.session.access_token;
+      // Single-flight refresh: concurrent apiFetch calls share one refresh
+      // instead of stampeding the auth server.
+      if (!refreshInflight) {
+        refreshInflight = supabase
+          .auth.refreshSession()
+          .then(({ data, error }) =>
+            !error && data?.session?.access_token
+              ? (data.session.access_token as string)
+              : null
+          )
+          .catch(() => null)
+          .finally(() => {
+            refreshInflight = null;
+          });
       }
+      const refreshed = await refreshInflight;
+      // Refresh failed: fall through to the stale token (or null) so the
+      // caller surfaces one classified 401, not a silent anonymous call.
+      return refreshed ?? session?.access_token ?? null;
     }
 
     return session?.access_token ?? null;
@@ -678,14 +705,15 @@ async function getMerchantToken(): Promise<string | null> {
   }
 }
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+async function buildApiHeaders(
+  extra?: Record<string, string>
+): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...((options?.headers as Record<string, string>) || {}),
+    ...(extra || {}),
   };
-  // The public demo agent key is ONLY for demo mode (no Supabase configured).
-  // It must never be sent in production — agent-gateway auth is separate from
-  // merchant auth and rejects the well-known demo key there.
+  // A demo key header is ONLY for demo mode. It must never be sent in
+  // production — agent-gateway auth is separate from merchant auth.
   if (isDemoMode() && AGENT_KEY) {
     headers["X-Agent-Key"] = AGENT_KEY;
   }
@@ -693,6 +721,13 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  return headers;
+}
+
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers = await buildApiHeaders(
+    options?.headers as Record<string, string> | undefined
+  );
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers,
@@ -849,8 +884,9 @@ export async function updateConsolePolicy(
 
 export async function getHealthPublic(): Promise<HealthResponse> {
   if (isDemoMode()) return demoAdapter.getHealthPublic();
-  const res = await fetch(`${API_BASE}/health`);
-  return res.json();
+  // Same classified-error contract as apiFetch: never let a 502 HTML page
+  // surface as a raw SyntaxError.
+  return apiFetch<HealthResponse>("/health");
 }
 
 // --- Agents / system status ---
@@ -859,18 +895,39 @@ export async function getHealthPublic(): Promise<HealthResponse> {
 // hook, which tripled /agents/status traffic per dashboard render. One
 // in-flight request is shared and fresh responses are reused for 15s;
 // manual refresh passes force=true to bypass.
-let statusCache: { data: AgentsStatusResponse; at: number } | null = null;
+// Scoped by auth identity (token hash prefix) so a demo→real or user→user
+// switch never serves the previous tenant. Exported clearer for sign-out.
+let statusCache: { data: AgentsStatusResponse; at: number; scope: string } | null = null;
 let statusInflight: Promise<AgentsStatusResponse> | null = null;
+let statusScope: string | null = null;
 const STATUS_TTL_MS = 15_000;
+
+async function statusScopeKey(): Promise<string> {
+  if (isDemoMode()) return "demo";
+  const token = await getMerchantToken();
+  return token ? token.slice(-12) : "anon";
+}
+
+/** Drop cached status (call on sign-in, sign-out, demo enter/reset). */
+export function clearStatusCache(): void {
+  statusCache = null;
+  statusInflight = null;
+  statusScope = null;
+}
 
 export async function getAgentsStatus(force = false): Promise<AgentsStatusResponse> {
   if (isDemoMode()) return demoAdapter.getAgentsStatus();
-  if (!force && statusCache && Date.now() - statusCache.at < STATUS_TTL_MS) {
+  const scope = await statusScopeKey();
+  if (scope !== statusScope) {
+    clearStatusCache();
+    statusScope = scope;
+  }
+  if (!force && statusCache && statusCache.scope === scope && Date.now() - statusCache.at < STATUS_TTL_MS) {
     return statusCache.data;
   }
   if (!force && statusInflight) return statusInflight;
   const pending = apiFetch<AgentsStatusResponse>("/agents/status").then((data) => {
-    statusCache = { data, at: Date.now() };
+    statusCache = { data, at: Date.now(), scope };
     return data;
   });
   if (!force) statusInflight = pending;
@@ -945,7 +1002,7 @@ export function streamConsoleEvents(
     try {
       const res = await fetch(`${API_BASE}/activity/stream`, {
         signal,
-        headers: await buildHeaders(),
+        headers: await buildApiHeaders(),
       });
       if (!res.ok || !res.body) {
         // Map to ApiError so callers get status classification
@@ -998,16 +1055,6 @@ export function streamConsoleEvents(
     clearTimer();
     controller?.abort();
   };
-}
-
-async function buildHeaders(): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (isDemoMode() && AGENT_KEY) headers["X-Agent-Key"] = AGENT_KEY;
-  const token = await getMerchantToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
 }
 
 // Backend trace ids match `^trc_[0-9a-f]{32}$` (resolve_trace_id 422s

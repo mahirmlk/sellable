@@ -52,13 +52,62 @@ function emptyOverlay(): DemoOverlay {
   return structuredClone(EMPTY_OVERLAY);
 }
 
+function asArray(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function asRecord(value: unknown): Record<string, Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return value as Record<string, Record<string, unknown>>;
+}
+
+function asStringRecord(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
+}
+
+/** Corrupt/older localStorage shapes fall back field-by-field, never crash. */
+function sanitizeOverlay(parsed: unknown): DemoOverlay {
+  const base = emptyOverlay();
+  if (typeof parsed !== "object" || parsed === null) return base;
+  const p = parsed as Record<string, unknown>;
+  return {
+    policy:
+      typeof p.policy === "object" && p.policy !== null && !Array.isArray(p.policy)
+        ? (p.policy as Record<string, unknown>)
+        : null,
+    notificationsRead: asStringArray(p.notificationsRead),
+    productsAdded: asArray(p.productsAdded),
+    orderPatches: asRecord(p.orderPatches),
+    ordersAdded: asArray(p.ordersAdded),
+    missionsAdded: asArray(p.missionsAdded),
+    sessions: asRecord(p.sessions),
+    sessionsArchived: asStringArray(p.sessionsArchived),
+    keys: asArray(p.keys),
+    keysRevoked: asStringArray(p.keysRevoked),
+    webhooksAdded: asArray(p.webhooksAdded),
+    webhooksRemoved: asStringArray(p.webhooksRemoved),
+    connectorsAdded: asArray(p.connectorsAdded),
+    connectorsRemoved: asStringArray(p.connectorsRemoved),
+    approvalsDecided: asStringRecord(p.approvalsDecided),
+    eventsAdded: asArray(p.eventsAdded),
+  };
+}
+
 export function loadOverlay(): DemoOverlay {
   if (typeof window === "undefined") return emptyOverlay();
   try {
     const raw = window.localStorage.getItem(DEMO_STATE_KEY);
     if (!raw) return emptyOverlay();
-    const parsed = JSON.parse(raw) as Partial<DemoOverlay>;
-    return { ...emptyOverlay(), ...parsed };
+    return sanitizeOverlay(JSON.parse(raw));
   } catch {
     return emptyOverlay();
   }

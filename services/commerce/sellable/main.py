@@ -153,10 +153,35 @@ def _assert_single_worker() -> None:
         )
 
 
+def _assert_no_demo_key_configured() -> None:
+    """Refuse startup if the well-known demo key hash is configured.
+
+    The demo key ships in client bundles and docs, so it must never appear
+    in BUYER_AGENT_API_KEY_HASH — production would then accept a public
+    credential. The dev-only demo path (auth.py) adds it in code when the
+    database is local; operators must never copy it into env.
+    """
+    try:
+        from sellable.auth import _DEMO_KEY_HASH
+    except ImportError:
+        return
+    # Dev/test add the demo hash in code for local databases anyway, so only
+    # production-likes fail closed here.
+    if settings.environment in ("development", "test"):
+        return
+    if _DEMO_KEY_HASH in set(settings.agent_api_key_hashes or ()):
+        raise RuntimeError(
+            "BUYER_AGENT_API_KEY_HASH contains the well-known demo key hash "
+            "(sellable_demo_key_001). Remove it: the dev demo path enables "
+            "itself for local databases without any env entry."
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info("Starting SELLABLE Commerce Core")
     _assert_single_worker()
+    _assert_no_demo_key_configured()
     initialise_database()
     logger.info("Database initialized")
     # Non-blocking JWKS warm: daemon thread only, startup never waits on it.
@@ -1918,10 +1943,23 @@ def readiness() -> dict:
 
 def require_admin(request: Request) -> None:
     import hmac as _hmac
+    import logging as _logging
+    import time as _time
 
     configured = settings.admin_api_key
     provided = request.headers.get("X-Admin-Key")
     if not configured or not provided or not _hmac.compare_digest(provided, configured):
+        # Silent to the caller (404), loud in the logs: brute-force probing
+        # of the admin surface must leave a trail without leaking whether a
+        # key is configured. Never log key material.
+        _logging.getLogger("sellable.admin").warning(
+            "admin auth failure",
+            extra={
+                "path": request.url.path,
+                "client": request.client.host if request.client else "?",
+                "at": int(_time.time()),
+            },
+        )
         raise HTTPException(status_code=404, detail="Not found")
 
 
@@ -2562,7 +2600,14 @@ def refund_order(
     order_id: str,
     # Same edge contract as the agent path's RefundCreateRequest: invalid
     # values 422 here too instead of slipping through to a 400/502 downstream.
-    reason: str = Query(default="merchant_initiated", min_length=1, max_length=500),
+    # Closed vocabulary (letters/digits/_/- only, 200 chars): refund reasons
+    # land in the ledger and UI banners, so free text is a log/PII vector.
+    reason: str = Query(
+        default="merchant_initiated",
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_\-]+$",
+    ),
     amount_paise: int | None = Query(default=None, gt=0),
     idempotency_key: str | None = Query(default=None, min_length=16, max_length=256),
     refunds: RefundService = Depends(get_refund_service),
