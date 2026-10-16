@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { DEMO_COOKIE } from "@/lib/demo/cookie";
+import { safeNext } from "@/lib/safe-next";
 
 // Supabase email-link landing: verification, recovery, and invites all
 // redirect here. Exchanges the code for a session, then follows `next`.
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
-  const rawNext = url.searchParams.get("next") ?? "/dashboard";
-  const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
+  const next = safeNext(url.searchParams.get("next") ?? "/dashboard");
 
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL || `${url.protocol}//${url.host}`;
@@ -56,8 +56,16 @@ export async function GET(request: Request) {
 
   // A real session always wins over demo state: drop the demo routing flag
   // here (middleware also deletes it) so a verified merchant can never see
-  // fixture data shadowed over their production tenant.
+  // fixture data shadowed over their production tenant. Mirror the set
+  // attributes (SameSite/Secure) so the clear isn't treated as a different
+  // cookie on HTTPS.
   const success = NextResponse.redirect(`${siteUrl}${next}`);
-  success.cookies.set(DEMO_COOKIE, "", { path: "/", maxAge: 0 });
+  success.cookies.set(DEMO_COOKIE, "", {
+    path: "/",
+    maxAge: 0,
+    sameSite: "lax",
+    secure: url.protocol === "https:",
+    httpOnly: false,
+  });
   return success;
 }

@@ -33,6 +33,13 @@ export async function GET(request: Request) {
   }
 
   const response = NextResponse.redirect(new URL("/", request.url));
-  response.cookies.set(DEMO_COOKIE, "", { path: "/", maxAge: 0 });
+  // Mirror the /demo set attributes so the clear applies on HTTPS too.
+  response.cookies.set(DEMO_COOKIE, "", {
+    path: "/",
+    maxAge: 0,
+    sameSite: "lax",
+    secure: new URL(request.url).protocol === "https:",
+    httpOnly: false,
+  });
   return response;
 }

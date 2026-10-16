@@ -27,9 +27,11 @@ export function DashboardGuard() {
         if (cancelled) return;
         if (err instanceof ApiError && err.isOnboardingRequired) {
           router.replace("/dashboard/onboarding");
-        } else if (err instanceof ApiError && err.isAuthFailure) {
+        } else if (err instanceof ApiError && err.status === 401) {
           // Expired/revoked token: central redirect instead of leaving
-          // each page to surface its own banner.
+          // each page to surface its own banner. Other 403s (owner-only
+          // actions, stale roles) surface in place — sending them to
+          // sign-in would loop: sign in → 403 → sign in.
           const next = window.location.pathname;
           router.replace(`/sign-in?next=${encodeURIComponent(next)}`);
         }

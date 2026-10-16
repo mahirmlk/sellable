@@ -17,13 +17,16 @@ const nextConfig: NextConfig = {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              // Razorpay origins pre-authorized in script-src: checkout
+              // currently uses hosted Payment Links (window.open), but an
+              // embedded checkout.js must not be CSP-blocked later.
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.razorpay.com https://*.rzp.io",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self' data:",
-              // Backend + Supabase + Razorpay checkout only. Tighten further
-              // once no other origins are needed.
-              "connect-src 'self' https://api.sellable.shop https://*.supabase.co https://*.razorpay.com https://*.rzp.io",
+              // Backend + Supabase + Razorpay checkout only. Localhost
+              // entries are dev-only: production never calls them.
+              "connect-src 'self' https://api.sellable.shop http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co https://*.razorpay.com https://*.rzp.io",
               "frame-src 'self' https://*.razorpay.com https://*.rzp.io",
               "frame-ancestors 'none'",
             ].join("; "),
