@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { DEMO_COOKIE } from "@/lib/supabase/middleware";
+import { DEMO_COOKIE } from "@/lib/demo/cookie";
 
 // Ends both session kinds: Supabase merchant session (when configured)
 // and the Demo Mode routing cookie. Always lands on the marketing site
 // (relative redirect keeps one host).
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-
   if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const cookieStore = await cookies();
     const supabase = createServerClient(

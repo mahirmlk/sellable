@@ -1,5 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { DEMO_COOKIE } from "@/lib/demo/cookie";
+
+export { DEMO_COOKIE };
 
 /**
  * Refreshes the Supabase session and routes by session state
@@ -16,11 +19,11 @@ import { NextResponse, type NextRequest } from "next/server";
  * session cookie set only by visiting /demo. Direct navigation to
  * /dashboard without it redirects to /sign-in, where Demo Mode is offered.
  */
-export const DEMO_COOKIE = "sellable_demo_auth";
-
 const SIGN_IN = "/sign-in";
 const SIGN_UP = "/sign-up";
-const AUTH_PAGES = new Set([SIGN_IN, SIGN_UP]);
+// Legacy bookmark routes redirect into these; include them so signed-in
+// merchants and demo visitors are bounced consistently.
+const AUTH_PAGES = new Set([SIGN_IN, SIGN_UP, "/login", "/signup"]);
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });

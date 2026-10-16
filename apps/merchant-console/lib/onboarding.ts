@@ -18,6 +18,7 @@ import {
   type OnboardingWizardStep,
 } from "@/lib/api";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
+import { DEMO_COOKIE } from "@/lib/demo/cookie";
 
 export type OnboardingMode = "production" | "demo";
 
@@ -25,7 +26,7 @@ export function resolveOnboardingMode(): OnboardingMode {
   if (typeof document !== "undefined") {
     const hasDemo = document.cookie
       .split(";")
-      .some((part) => part.trim().startsWith("sellable_demo_auth="));
+      .some((part) => part.trim().startsWith(`${DEMO_COOKIE}=`));
     if (hasDemo) return "demo";
   }
   return isSupabaseConfigured() ? "production" : "demo";
