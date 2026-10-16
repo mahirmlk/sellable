@@ -4,9 +4,10 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, getStore } from "@/lib/api";
 
-// No login wall: the dashboard opens directly. This guard only handles the
-// backend-driven onboarding redirect — a merchant without a store goes to
-// onboarding instead of seeing an empty dashboard.
+// Dashboard entry guard: the middleware owns the login wall (it redirects
+// anon visitors without a demo flag to /sign-in). This guard only handles
+// the backend-driven onboarding redirect plus expired/revoked sessions —
+// a merchant without a store goes to onboarding, a 401 goes to sign-in.
 export function DashboardGuard() {
   const router = useRouter();
 
@@ -23,8 +24,14 @@ export function DashboardGuard() {
       try {
         await getStore();
       } catch (err) {
-        if (!cancelled && err instanceof ApiError && err.isOnboardingRequired) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.isOnboardingRequired) {
           router.replace("/dashboard/onboarding");
+        } else if (err instanceof ApiError && err.isAuthFailure) {
+          // Expired/revoked token: central redirect instead of leaving
+          // each page to surface its own banner.
+          const next = window.location.pathname;
+          router.replace(`/sign-in?next=${encodeURIComponent(next)}`);
         }
         // Other errors (network/5xx) are surfaced by the pages themselves.
       }
