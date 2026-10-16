@@ -1,21 +1,34 @@
+"use client";
+
 import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { ArrowRight, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import { Eyebrow } from "@/components/ui/eyebrow";
+import { resetDemo } from "@/lib/demo/store";
+import { clearStatusCache } from "@/lib/api";
 
 // Access experience in the marketing site's own visual language: near-black
 // canvas, mono eyebrow labels, orange primary actions. Sign-in, sign-up,
 // and recovery share this shell so entry feels like one product.
+//
+// Demo placement differs per page: sign-in and recovery use the standard
+// DemoPanel; sign-up uses the DemoPass ticket so the no-account path reads
+// as a separate place, not a second login button.
 export function AuthShell({
   eyebrow,
   title,
   subtitle,
   children,
+  demo = "panel",
 }: {
   eyebrow: string;
   title: string;
   subtitle: ReactNode;
   children: ReactNode;
+  demo?: "panel" | "pass" | "none";
 }) {
   return (
     <div className="min-h-screen relative flex flex-col bg-[var(--bb-black)] text-[var(--bb-white)] overflow-hidden">
@@ -68,16 +81,16 @@ export function AuthShell({
             {children}
           </div>
 
-          <DemoPanel />
+          {demo === "panel" && <DemoPanel />}
+          {demo === "pass" && <DemoPass />}
         </div>
       </main>
     </div>
   );
 }
 
-// Demo Mode gets its own look on purpose: an orange-stamped panel that
-// reads as a separate place, not a second login button. Same panel on
-// every access page.
+// Standard demo block used on sign-in and recovery. Orange-stamped panel
+// that reads as a separate place, not a second login button.
 export function DemoPanel() {
   const perks = [
     "A home-goods store with 8 products and 6 orders already inside",
@@ -116,6 +129,104 @@ export function DemoPanel() {
       >
         Enter the demo
       </Link>
+    </section>
+  );
+}
+
+// Sign-up-only demo ticket. Same demo underneath (fixtures + browser
+// overlay, never the production API), presented as a pass with a stub,
+// perforation, and stamp so it cannot be mistaken for account auth.
+export function DemoPass() {
+  const router = useRouter();
+  const [resetting, setResetting] = useState(false);
+
+  const handleReset = () => {
+    setResetting(true);
+    try {
+      resetDemo();
+      clearStatusCache();
+    } finally {
+      router.push("/demo");
+    }
+  };
+
+  return (
+    <section
+      aria-label="Demo access"
+      className="relative overflow-hidden border border-[var(--bb-orange)] bg-[var(--bb-panel)]"
+    >
+      {/* stamp */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute right-4 top-4 rotate-[8deg] border-2 border-[var(--bb-orange)] px-2 py-0.5 font-[var(--font-mono)] text-[0.62rem] font-bold tracking-[0.28em] uppercase text-[var(--bb-orange)]"
+      >
+        Demo
+      </span>
+      {/* punched notches */}
+      <span
+        aria-hidden="true"
+        className="absolute -left-3 top-1/2 h-6 w-6 -translate-y-1/2 rounded-full bg-[var(--bb-black)] border-r border-[var(--bb-orange)]"
+      />
+      <span
+        aria-hidden="true"
+        className="absolute -right-3 top-1/2 h-6 w-6 -translate-y-1/2 rounded-full bg-[var(--bb-black)] border-l border-[var(--bb-orange)]"
+      />
+
+      <div className="p-6">
+        <p className="font-[var(--font-mono)] text-[0.64rem] tracking-[0.18em] uppercase text-[var(--bb-orange)]">
+          Demo access
+        </p>
+        <h2 className="mt-2 pr-16 text-[1.2rem] font-semibold leading-snug tracking-[-0.01em] text-[var(--bb-white)]">
+          Try the store before you sign up
+        </h2>
+        <p className="mt-2 text-[0.88rem] leading-relaxed text-[var(--bb-grey-1)]">
+          The demo opens Maple and Main with its products and orders already
+          loaded. Click through orders, approvals, and payments. Test
+          payments stay in the sandbox. Nothing leaves this browser.
+        </p>
+
+        <dl className="mt-4 space-y-1.5 border-t border-dashed border-[var(--bb-line)] pt-4 text-[0.82rem] leading-relaxed">
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
+              Store
+            </dt>
+            <dd className="text-right text-[var(--bb-white)]">Maple and Main Home Goods</dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
+              Inside
+            </dt>
+            <dd className="text-right text-[var(--bb-grey-1)]">8 products, 6 orders, INR sandbox</dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
+              Storage
+            </dt>
+            <dd className="text-right text-[var(--bb-grey-1)]">Local only, reset anytime</dd>
+          </div>
+        </dl>
+
+        <div className="mt-5 flex flex-col gap-2.5">
+          <Link
+            href="/demo"
+            className="btn-orange-primary w-full !min-h-[52px] !text-[0.72rem]"
+          >
+            Enter the demo <ArrowRight size={15} aria-hidden="true" />
+          </Link>
+          <button
+            type="button"
+            onClick={handleReset}
+            disabled={resetting}
+            className="btn-outline w-full !min-h-[46px] !text-[0.68rem] disabled:opacity-50"
+          >
+            <RotateCcw size={14} aria-hidden="true" /> Reset demo data
+          </button>
+        </div>
+        <p className="mt-3 text-[0.78rem] leading-relaxed text-[var(--bb-grey-2)]">
+          The demo runs without an account. It works whether or not login is
+          switched on.
+        </p>
+      </div>
     </section>
   );
 }

@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { ErrorBanner } from "@/components/dashboard/error-banner";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
-import { INLINE_LINK, INPUT_DARK, LABEL_DARK, PRIMARY_ORANGE } from "@/app/sign-in/page";
+import { INLINE_LINK, INPUT_DARK, LABEL_DARK, PRIMARY_ORANGE } from "@/components/auth/fields";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -17,6 +17,13 @@ export default function ForgotPasswordPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    // Not configured: fail fast with the deployment message instead of
+    // throwing inside createClient (which reads as a connection error).
+    if (!isSupabaseConfigured()) {
+      setError("Password recovery is not switched on for this deployment.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const supabase = createClient();
@@ -27,7 +34,14 @@ export default function ForgotPasswordPage() {
         { redirectTo: `${siteUrl}/auth/callback?next=/reset-password` }
       );
       if (resetError) {
-        setError(resetError.message || "The reset email did not send. Try again.");
+        // Generic on purpose: reserve specifics for rate limits so the form
+        // cannot be used to probe which emails have accounts.
+        const lower = (resetError.message || "").toLowerCase();
+        setError(
+          lower.includes("too many") || lower.includes("rate limit")
+            ? "Too many attempts. Wait a minute, then try again."
+            : "If an account exists for that email, a reset link is on its way."
+        );
         return;
       }
       setSent(true);
