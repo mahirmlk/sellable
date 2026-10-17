@@ -82,7 +82,7 @@ export function ProblemChain() {
     >
       <svg
         viewBox="0 0 600 500"
-        className="iso-svg bg-[var(--bb-panel)]"
+        className="iso-svg"
         aria-hidden="true"
       >
         {/* spine: live up to the wall, ghosted after it */}
@@ -93,7 +93,7 @@ export function ProblemChain() {
           x2="250"
           y2="404"
           className="iso-spine"
-          opacity="0.25"
+          style={{ opacity: 0.25 }}
         />
 
         {GATES.map((gate, i) => {
@@ -234,7 +234,7 @@ export function ShopFloor() {
     >
       <svg
         viewBox="0 0 600 560"
-        className="iso-svg bg-[var(--bb-panel)]"
+        className="iso-svg"
         aria-hidden="true"
       >
         <defs>
