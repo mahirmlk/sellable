@@ -8,8 +8,8 @@ import type { CSSProperties, ReactNode } from "react";
   at every breakpoint, and motion stays on tiny nodes (translate +
   opacity only).
 
-  ProblemChain — the gates a purchase has to clear, with a click
-  storefront's answer missing past the first one.
+  ProblemChain — the stair of gates a purchase has to clear. The agent
+  gets through the first and stops at a shut, hazard-marked door.
 
   ShopFloor — guests waiting outside, the gateway at the door, and the
   two merchant agents at their desks.
@@ -61,114 +61,165 @@ function IsoSlab({
 /* Problem chain                                                       */
 /* ------------------------------------------------------------------ */
 
-const GATES = [
-  { label: "Find the product", detail: "a public page, readable today" },
-  { label: "Check availability", detail: "no live stock feed" },
-  { label: "Agree on a price", detail: "coupons, not quotes" },
-  { label: "Negotiate bounds", detail: "limits never published" },
-  { label: "Approve the spend", detail: "no consent step" },
-  { label: "Pay and prove it", detail: "no agent payment, no proof" },
-];
+const CHAIN_GATES = [
+  { state: "open", label: "Find the product", detail: "a public page, readable today" },
+  { state: "wall", label: "Check availability", detail: "no live stock feed" },
+  { state: "far", label: "Agree on a price", detail: "coupons, not quotes" },
+  { state: "far", label: "Negotiate bounds", detail: "limits never published" },
+  { state: "far", label: "Approve the spend", detail: "no consent step" },
+  { state: "far", label: "Pay and prove it", detail: "no agent payment, no proof" },
+] as const;
 
-const GATE_YS = [84, 148, 212, 276, 340, 404];
-const CHAIN_FS = [0.32, 0.58, 0.84];
+const CHAIN = {
+  cx: 235,
+  hw: 95,
+  hh: 47.5,
+  t: 16,
+  pitch: 48,
+  y1: 418, // centre of the first (bottom) step
+  doorHw: 47.5,
+  doorH: 42,
+};
+
+const BOT_Y = 404; // the agent parks just past the open door
+
+// Stamp the terrace from the top step down, so nearer steps overlap the
+// far ones and the gate order reads from the bottom up.
+const chainGates = CHAIN_GATES.map((gate, i) => ({
+  ...gate,
+  k: i + 1,
+  y: CHAIN.y1 - CHAIN.pitch * i,
+})).reverse();
 
 export function ProblemChain() {
   return (
     <div
       className="iso-stage"
       role="img"
-      aria-label="Purchase-chain diagram: an agent can find the product, then stalls at checking availability. Stock, price, negotiation limits, spending approval, payment and proof have no machine-readable answer in a storefront built for clicks."
+      aria-label="Isometric staircase: the agent climbs the first step through an open doorway, then stops at a shut, hazard-marked doorway. The gates above, price and negotiation and approval and payment, stay faint because the purchase never gets there."
     >
-      <svg
-        viewBox="0 0 600 500"
-        className="iso-svg"
-        aria-hidden="true"
-      >
-        {/* spine: live up to the wall, ghosted after it */}
-        <line x1="250" y1="36" x2="250" y2="148" className="iso-spine" />
-        <line
-          x1="250"
-          y1="148"
-          x2="250"
-          y2="404"
-          className="iso-spine"
-          style={{ opacity: 0.25 }}
-        />
-
-        {GATES.map((gate, i) => {
-          const y = GATE_YS[i];
-          const state = i === 0 ? "open" : i === 1 ? "wall" : "locked";
+      <svg viewBox="0 0 500 560" className="iso-svg" aria-hidden="true">
+        {chainGates.map(({ k, y, state, label, detail }) => {
+          const a = [CHAIN.cx - CHAIN.doorHw, y - CHAIN.doorHw * 0.5] as const;
+          const b = [CHAIN.cx + CHAIN.doorHw, y + CHAIN.doorHw * 0.5] as const;
+          const at = [a[0], a[1] - CHAIN.doorH] as const;
+          const bt = [b[0], b[1] - CHAIN.doorH] as const;
+          const jamb =
+            state === "wall"
+              ? "chain-jamb chain-jamb--wall"
+              : state === "open"
+                ? "chain-jamb chain-jamb--open"
+                : "chain-jamb";
           return (
-            <g key={gate.label}>
+            <g
+              key={label}
+              className={
+                state === "far" ? "chain-gate chain-gate--far" : "chain-gate"
+              }
+            >
               <IsoSlab
-                cx={250}
+                cx={CHAIN.cx}
                 cy={y}
-                hw={105}
-                hh={52}
-                tone={state === "open" ? "solid" : "line"}
-                className={`chain-gate chain-gate--${state}`}
+                hw={CHAIN.hw}
+                hh={CHAIN.hh}
+                t={CHAIN.t}
+                tone="line"
               />
-              <circle
-                cx={250}
-                cy={y}
-                r={3.5}
-                className={
-                  state === "wall" ? "iso-joint iso-joint--accent" : "iso-joint"
-                }
-              />
-              {state === "wall" && (
-                <g className="chain-barrier line-pulse" aria-hidden="true">
-                  {CHAIN_FS.map((f) => {
-                    const px = 145 + f * 105;
-                    const py = y + f * 52;
-                    return (
-                      <line key={f} x1={px} y1={py} x2={px} y2={py - 26} />
-                    );
-                  })}
-                  <polyline
-                    fill="none"
-                    points={CHAIN_FS.map(
-                      (f) => `${145 + f * 105},${y + f * 52 - 26}`
-                    ).join(" ")}
+
+              {state !== "open" && (
+                <>
+                  <polygon
+                    points={`${a} ${b} ${bt} ${at}`}
+                    className={
+                      state === "wall"
+                        ? "chain-door chain-door--wall"
+                        : "chain-door chain-door--ghost"
+                    }
                   />
-                </g>
+                  {[0.25, 0.5, 0.75].map((f) => (
+                    <line
+                      key={f}
+                      x1={a[0]}
+                      y1={a[1] - CHAIN.doorH * f}
+                      x2={b[0]}
+                      y2={b[1] - CHAIN.doorH * f}
+                      className={
+                        state === "wall"
+                          ? "chain-slat chain-slat--wall"
+                          : "chain-slat chain-slat--ghost"
+                      }
+                    />
+                  ))}
+                </>
               )}
-              <text x={372} y={y - 2} className="iso-svg-label">
-                {gate.label}
-              </text>
+
+              {state === "wall" && (
+                <>
+                  <line
+                    x1={CHAIN.cx - 8}
+                    y1={y - 29}
+                    x2={CHAIN.cx + 8}
+                    y2={y - 13}
+                    className="chain-x"
+                  />
+                  <line
+                    x1={CHAIN.cx + 8}
+                    y1={y - 29}
+                    x2={CHAIN.cx - 8}
+                    y2={y - 13}
+                    className="chain-x"
+                  />
+                </>
+              )}
+
+              <line x1={a[0]} y1={a[1]} x2={at[0]} y2={at[1]} className={jamb} />
+              <line x1={b[0]} y1={b[1]} x2={bt[0]} y2={bt[1]} className={jamb} />
+              <line x1={at[0]} y1={at[1]} x2={bt[0]} y2={bt[1]} className={jamb} />
+
               <text
-                x={372}
-                y={y + 17}
-                className="iso-svg-detail"
-                style={
-                  state === "wall"
-                    ? { fill: "var(--bb-orange)" }
-                    : undefined
+                x={112}
+                y={y + 4}
+                textAnchor="end"
+                className={
+                  state === "wall" ? "chain-num chain-num--wall" : "chain-num"
                 }
               >
-                {gate.detail}
+                {String(k).padStart(2, "0")}
+              </text>
+              <text x={345} y={y - 2} className="iso-svg-label">
+                {label}
+              </text>
+              <text
+                x={345}
+                y={y + 17}
+                className="iso-svg-detail"
+                style={state === "wall" ? { fill: "var(--bb-orange)" } : undefined}
+              >
+                {detail}
               </text>
             </g>
           );
         })}
 
-        {/* packets: repeated attempts that stop at the wall */}
-        {[0, 0.93, 1.86].map((delay) => (
-          <circle
-            key={delay}
-            cx={250}
-            cy={36}
-            r={3.5}
-            className="chain-packet"
-            style={
-              {
-                animationDelay: `${delay}s`,
-                "--stop": "60px",
-              } as CSSProperties
-            }
+        {/* the agent: through the open door, stopped at the shut one */}
+        <IsoSlab
+          cx={CHAIN.cx}
+          cy={BOT_Y}
+          hw={20}
+          hh={10}
+          t={11}
+          tone="solid"
+          className="chain-runner"
+        >
+          <line
+            x1={CHAIN.cx}
+            y1={BOT_Y - 10}
+            x2={CHAIN.cx}
+            y2={BOT_Y - 24}
+            className="chain-antenna"
           />
-        ))}
+          <circle cx={CHAIN.cx} cy={BOT_Y - 27} r={3} className="chain-eye" />
+        </IsoSlab>
       </svg>
 
       <div className="iso-caption">
