@@ -1,166 +1,210 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import { Eyebrow } from "./ui/eyebrow";
-import { CornerBrackets } from "./ui/corner-brackets";
 
-// The real console surfaces, named after the routes that actually exist in
-// apps/merchant-console and services/commerce/sellable/main.py. No invented
-// features — every tab maps to shipped backend endpoints.
+// The console window, drawn from the real app. Nav groups and page names
+// come from components/dashboard/nav-config.ts, the feed uses the ledger's
+// own event names, and every endpoint in the status bar is live.
+// No sample orders, no amounts.
 
-interface Surface {
-  key: string;
-  nav: string;
-  title: string;
-  description: string;
-  endpoints: string[];
-  highlights: string[];
-}
+const NAV = [
+  { group: null, items: ["Home"] },
+  { group: "Store", items: ["Products", "Inventory", "Orders", "Buyers"] },
+  {
+    group: "Sales",
+    items: ["AI Sales", "Support", "AI Storefront", "Selling Rules", "Approvals"],
+  },
+  { group: "Analyze", items: ["Analytics", "Live Activity", "Evaluations"] },
+  {
+    group: "System",
+    items: ["Payments", "Operations", "Connectors", "Developers", "Settings"],
+  },
+];
 
-const SURFACES: Surface[] = [
+const FEED = [
+  { action: "catalog.search", actor: "buyer agent" },
+  { action: "quote.created", actor: "seller agent" },
+  { action: "policy.checked", actor: "policy engine · allow" },
+  { action: "order.created", actor: "commerce core · awaiting consent" },
+  { action: "consent.issued", actor: "consent service · single use" },
+  { action: "consent.used", actor: "consent service" },
+  { action: "payment.pending", actor: "razorpay · payment link" },
+  { action: "order.paid", actor: "razorpay · webhook verified" },
+];
+
+const HIGHLIGHTS = [
   {
-    key: "overview",
-    nav: "OVERVIEW",
-    title: "What is happening in your store, right now",
-    description:
-      "Revenue, agent-driven share, and pending approvals, plus a live event feed streamed from the ledger over SSE. Every number is derived from real orders. Nothing is cached or faked.",
-    endpoints: ["GET /console/insights", "GET /activity/stream"],
-    highlights: ["Live SSE feed", "Merchant-scoped metrics", "System health from the backend"],
+    nav: "Approvals",
+    line: "Orders over your line wait here. Payment stays impossible until you decide.",
   },
   {
-    key: "chat",
-    nav: "CHAT CHECKOUT",
-    title: "Conversational checkout on your own catalog",
-    description:
-      "Talk to the Seller Agent the same way a shopping agent would. It searches your catalog, quotes within policy, negotiates, and takes payment through Razorpay test mode. Each step lands in the ledger.",
-    endpoints: ["POST /console/agent/seller/respond", "POST /console/orders", "POST /console/orders/{id}/payment"],
-    highlights: ["Bounded negotiation", "Single-use consent", "Policy-gated checkout"],
+    nav: "Orders",
+    line: "Open any order down to its ledger lines: quotes, policy checks, consent, payment.",
   },
   {
-    key: "approvals",
-    nav: "APPROVALS",
-    title: "Human judgment where it matters",
-    description:
-      "Orders above your human-approval threshold are held. Payment stays technically impossible until you decide. One click approves and issues consent. Rejection aborts cleanly with a ledger event.",
-    endpoints: ["GET /console/approvals", "POST /console/approvals/{id}/approve"],
-    highlights: ["HITL by construction", "No payment before consent", "Auditable decisions"],
+    nav: "AI Sales",
+    line: "Talk to your Seller Agent the way a buyer's agent would, and watch each step land in the ledger.",
   },
   {
-    key: "replay",
-    nav: "REPLAY",
-    title: "Replay any transaction, line by line",
-    description:
-      "Open any order and walk its full trace: actor, action, reasoning, and policy references for every step. Disputes stop being arguments and become timelines.",
-    endpoints: ["GET /console/transactions/{id}", "GET /transactions/{id}/events"],
-    highlights: ["Actor + reasoning per step", "Policy refs on every check", "Payment verified by webhook"],
+    nav: "Support",
+    line: "The Service Agent answers order questions, opens returns and exchanges, and files refund requests.",
   },
   {
-    key: "catalog",
-    nav: "CATALOG",
-    title: "Your catalog is the agent's reality",
-    description:
-      "Products live in Postgres, persist across restarts, and are served machine-readable at /catalog.ai.json. The agent can only sell what is actually stocked. Inventing SKUs is structurally impossible.",
-    endpoints: ["GET /console/catalog", "POST /catalog/products", "GET /catalog.ai.json"],
-    highlights: ["DB-persisted per merchant", "Floor prices enforced", "Served machine-readable"],
+    nav: "Selling Rules",
+    line: "Order caps, discount cap, categories, rounds, and the approval line, edited right here.",
   },
   {
-    key: "growth",
-    nav: "GROWTH",
-    title: "Agentic revenue analytics",
-    description:
-      "Upsell attach rate, negotiation outcomes, and saved-deal insight, derived from ledger events and traceable to the transactions behind each number.",
-    endpoints: ["GET /console/insights", "GET /console/transactions"],
-    highlights: ["Derived from the ledger", "Price-sensitivity signals", "Nothing self-reported"],
+    nav: "Live Activity",
+    line: "The ledger streaming as events land, filtered by actor or event type.",
   },
 ];
 
 export function ConsolePreview() {
-  const [active, setActive] = useState(0);
-  const surface = SURFACES[active];
-
   return (
     <section id="console" className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
-        <div className="max-w-[720px]">
-          <Eyebrow label="Merchant console" />
-          <h2 className="section-title mt-6 text-[var(--bb-white)]">
-            Run the shop from one place
-          </h2>
-          <p className="body-copy mt-6">
-            Orders, approvals, catalog, and the ledger live here. Scoped to
-            your store, signed in with your session, plain about failures.
-          </p>
-        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-[clamp(48px,7vw,112px)] items-center">
+          <div>
+            <Eyebrow label="Merchant console" />
+            <h2 className="section-title mt-6 text-[var(--bb-white)]">
+              Run the shop from one place
+            </h2>
+            <p className="body-copy mt-6">
+              Orders, approvals, rules, and the ledger live in one console.
+              Every number traces back to a real transaction, and every
+              transaction opens up line by line.
+            </p>
 
-        <div className="mt-12 grid grid-cols-1 lg:grid-cols-[280px_1fr] border border-[#30302E] bg-[var(--bb-panel)]">
-          {/* Tab rail */}
-          <div className="border-b lg:border-b-0 lg:border-r border-[var(--bb-line)] flex lg:flex-col overflow-x-auto">
-            {SURFACES.map((s, i) => (
-              <button
-                key={s.key}
-                onClick={() => setActive(i)}
-                className={`relative flex items-center gap-3 px-5 py-4 text-left font-[var(--font-mono)] text-[0.62rem] tracking-[0.12em] uppercase whitespace-nowrap transition-colors cursor-pointer ${
-                  active === i
-                    ? "text-[var(--bb-white)] bg-[var(--bb-panel-3)]"
-                    : "text-[var(--bb-grey-3)] hover:text-[var(--bb-white)]"
-                }`}
-              >
-                <span
-                  className={`absolute left-0 top-0 bottom-0 w-[2px] transition-colors ${
-                    active === i ? "bg-[var(--bb-orange)]" : "bg-transparent"
-                  }`}
-                />
-                <span className={`tabular-nums text-[0.55rem] ${active === i ? "text-[var(--bb-orange)]" : "text-[var(--bb-grey-4)]"}`}>
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                {s.nav}
-              </button>
-            ))}
+            <div className="mt-8 border-y border-[var(--bb-line-soft)] divide-y divide-[var(--bb-line-soft)]">
+              {HIGHLIGHTS.map((h) => (
+                <div key={h.nav} className="py-3.5 flex items-baseline gap-4">
+                  <span className="w-[132px] shrink-0 font-[var(--font-mono)] text-[0.56rem] tracking-[0.12em] uppercase text-[var(--bb-orange)]">
+                    {h.nav}
+                  </span>
+                  <span className="font-[var(--font-sans)] text-[0.88rem] leading-relaxed text-[var(--bb-grey-1)]">
+                    {h.line}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <Link
+              href="/dashboard"
+              className="mt-7 inline-flex items-center gap-2 h-[36px] px-4 border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors"
+            >
+              Open the console →
+            </Link>
           </div>
 
-          {/* Detail panel */}
-          <div className="relative p-7 sm:p-9">
-            <CornerBrackets />
-            <div key={surface.key} className="tab-in">
-              <h3 className="font-[var(--font-sans)] text-[1.4rem] tracking-[-0.03em] text-[var(--bb-white)]">
-                {surface.title}
-              </h3>
-              <p className="mt-3 max-w-[62ch] font-[var(--font-sans)] text-[0.9rem] leading-relaxed text-[var(--bb-grey-1)]">
-                {surface.description}
-              </p>
+          {/* Console window */}
+          <div className="relative border border-[#30302E] bg-[var(--bb-panel)] overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--bb-line)] bg-[var(--bb-panel-2)]">
+              <div className="flex items-center gap-2.5">
+                <span className="w-[5px] h-[5px] rounded-full bg-[var(--bb-orange)] live-dot" />
+                <span className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
+                  Sellable console
+                </span>
+              </div>
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] text-[var(--bb-grey-4)]">
+                scoped to your store
+              </span>
+            </div>
 
-              <div className="mt-6 flex flex-wrap gap-2">
-                {surface.highlights.map((h) => (
-                  <span
-                    key={h}
-                    className="font-[var(--font-mono)] text-[0.55rem] tracking-[0.06em] px-2 py-1 border border-[var(--bb-line)] text-[var(--bb-grey-1)]"
-                  >
-                    {h}
-                  </span>
+            <div className="grid grid-cols-1 md:grid-cols-[170px_1fr]">
+              {/* Sidebar */}
+              <div className="hidden md:block border-r border-[var(--bb-line)] py-3">
+                {NAV.map((section) => (
+                  <div key={section.group ?? "home"} className={section.group ? "mt-2.5" : ""}>
+                    {section.group && (
+                      <div className="px-4 pb-1 font-[var(--font-mono)] text-[0.46rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)]">
+                        {section.group}
+                      </div>
+                    )}
+                    {section.items.map((item) => (
+                      <div
+                        key={item}
+                        className={`flex items-center gap-2 px-4 py-[3.5px] font-[var(--font-mono)] text-[0.56rem] ${
+                          item === "Home"
+                            ? "text-[var(--bb-white)]"
+                            : "text-[var(--bb-grey-3)]"
+                        }`}
+                      >
+                        {item === "Home" && (
+                          <span className="w-[3px] h-[3px] bg-[var(--bb-orange)]" />
+                        )}
+                        {item}
+                      </div>
+                    ))}
+                  </div>
                 ))}
               </div>
 
-              <div className="mt-7 pt-5 border-t border-[var(--bb-line-soft)]">
-                <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-2.5">
-                  Real endpoints behind this surface
+              {/* Main panel */}
+              <div className="p-4">
+                <div className="border border-[var(--bb-line-soft)]">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--bb-line-soft)]">
+                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-2)]">
+                      Live activity
+                    </span>
+                    <span className="font-[var(--font-mono)] text-[0.46rem] tracking-[0.06em] text-[var(--bb-grey-4)]">
+                      ledger stream
+                    </span>
+                  </div>
+                  <div className="px-3 py-2">
+                    {FEED.map((f) => (
+                      <div
+                        key={f.action}
+                        className="flex items-baseline gap-2 py-[3px] font-[var(--font-mono)] text-[0.55rem]"
+                      >
+                        <span className="text-[var(--bb-grey-4)]">›</span>
+                        <span className="text-[var(--bb-white)]">{f.action}</span>
+                        <span className="ml-auto text-right text-[var(--bb-grey-4)]">
+                          {f.actor}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  {surface.endpoints.map((e) => (
-                    <div key={e} className="font-[var(--font-mono)] text-[0.64rem] text-[var(--bb-grey-2)]">
-                      <span className="text-[var(--bb-grey-4)] mr-2">›</span>
-                      {e}
+
+                <div className="mt-3 border border-[var(--bb-orange)]/30 bg-[var(--bb-orange)]/[0.05] px-3 py-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.14em] uppercase text-[var(--bb-orange)]">
+                      Approvals
+                    </span>
+                    <div className="flex gap-1.5">
+                      <span className="px-2 py-[3px] border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.46rem] uppercase tracking-[0.06em] text-[var(--bb-grey-1)]">
+                        Reject
+                      </span>
+                      <span className="px-2 py-[3px] border border-[var(--bb-orange)] font-[var(--font-mono)] text-[0.46rem] uppercase tracking-[0.06em] text-[var(--bb-orange)]">
+                        Approve
+                      </span>
                     </div>
-                  ))}
+                  </div>
+                  <p className="mt-1.5 font-[var(--font-sans)] text-[0.74rem] leading-relaxed text-[var(--bb-grey-1)]">
+                    Orders over your approval line wait here. Payment stays
+                    impossible until you decide.
+                  </p>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 px-0.5 font-[var(--font-mono)] text-[0.48rem] tracking-[0.06em] uppercase text-[var(--bb-grey-3)]">
+                  {["Webhooks · signature verified", "Consent · single use", "Keys · hashed"].map(
+                    (s) => (
+                      <span key={s} className="inline-flex items-center gap-1.5">
+                        <span className="w-[4px] h-[4px] bg-[var(--bb-orange)]" />
+                        {s}
+                      </span>
+                    )
+                  )}
                 </div>
               </div>
+            </div>
 
-              <Link
-                href="/dashboard"
-                className="mt-7 inline-flex items-center gap-2 h-[36px] px-4 border border-[var(--bb-line)] font-[var(--font-mono)] text-[0.58rem] tracking-[0.12em] uppercase text-[var(--bb-grey-1)] hover:text-[var(--bb-white)] hover:border-[var(--bb-grey-4)] transition-colors"
-              >
-                Open the console →
-              </Link>
+            <div className="flex items-center gap-5 px-4 py-2 border-t border-[var(--bb-line)] font-[var(--font-mono)] text-[0.46rem] tracking-[0.04em] text-[var(--bb-grey-4)] overflow-hidden whitespace-nowrap">
+              <span>GET /console/insights</span>
+              <span>GET /activity/stream</span>
+              <span>GET /console/approvals</span>
+              <span>GET /console/transactions</span>
             </div>
           </div>
         </div>
