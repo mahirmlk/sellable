@@ -8,9 +8,8 @@ import { ArrowUpRight, Menu, X } from "lucide-react";
 
 const navLinks = [
   { label: "Platform", href: "/#platform", index: "01" },
-  { label: "How it works", href: "/#how-it-works", index: "02" },
-  { label: "Console", href: "/#console", index: "03" },
-  { label: "Security", href: "/#security", index: "04" },
+  { label: "Console", href: "/#console", index: "02" },
+  { label: "Security", href: "/#security", index: "03" },
 ];
 
 export function SiteHeader() {
