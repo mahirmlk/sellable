@@ -151,12 +151,24 @@ export function TwoAgents() {
   );
 }
 
-const CONTROLS = [
-  ["Products", "what the store actually sells"],
-  ["Prices", "your normal selling prices"],
-  ["Floors", "the lowest the agent may go"],
-  ["Selling rules", "what the agent may touch"],
-  ["Approvals", "when a person must sign off"],
+// The policy fields edited on /dashboard/selling-rules, named as they are
+// in MerchantPolicy. The outcomes below them are the engine's real
+// behaviors: counters land on the walk-away floor, caps deny, and orders
+// over the approval line wait for a person.
+const POLICY_FIELDS = [
+  { label: "Order cap", note: "the most one order can total", ref: "max_order_value_paise" },
+  { label: "Item cap", note: "the most one item can cost", ref: "max_single_item_value_paise" },
+  { label: "Discount cap", note: "the deepest discount an agent may give", ref: "max_discount_percent" },
+  { label: "Categories", note: "what your agents may sell for you", ref: "allowed_categories" },
+  { label: "Negotiation", note: "counter-offers per session", ref: "max_negotiation_rounds" },
+  { label: "Upsells", note: "add-ons per session", ref: "max_upsells_per_session" },
+  { label: "Approval line", note: "above it, a person decides", ref: "human_approval_threshold_paise" },
+];
+
+const RULE_OUTCOMES = [
+  ["Below your floor", "the counter lands on your floor"],
+  ["Over a cap", "the cart is denied"],
+  ["Over your line", "it waits for your yes"],
 ];
 
 export function MerchantControl() {
@@ -170,28 +182,73 @@ export function MerchantControl() {
               You set the limits. The agents stay inside them.
             </h2>
             <p className="body-copy mt-6">
-              The agents handle the back-and-forth. You keep the decisions
-              that affect margin and risk.
+              The agents handle the back-and-forth with buyers. The numbers
+              that affect margin are yours: what one order may total, how
+              deep a discount can go, which categories are in play, and how
+              many times an agent may counter.
             </p>
-          </div>
-          <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] p-6 sm:p-8">
-            {CONTROLS.map(([k, v]) => (
-              <div
-                key={k}
-                className="flex items-baseline gap-4 py-3 border-b border-[var(--bb-line-soft)] last:border-b-0"
-              >
-                <span className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.1em] uppercase text-[var(--bb-white)] w-[140px] shrink-0">
-                  {k}
-                </span>
-                <span className="font-[var(--font-sans)] text-[0.88rem] text-[var(--bb-grey-1)]">
-                  {v}
-                </span>
-              </div>
-            ))}
-            <p className="mt-6 font-[var(--font-sans)] text-[0.9rem] leading-relaxed text-[var(--bb-white)]">
-              Your catalog is the only source the agents can quote from. A
+            <p className="body-copy mt-4">
+              All of it lives in one policy, edited from the console and
+              checked on every cart. An order over your approval line waits
+              until you approve it, and payment stays impossible until you
+              do.
+            </p>
+            <p className="mt-8 border-l-2 border-[var(--bb-orange)] pl-5 font-[var(--font-sans)] text-[1.05rem] leading-relaxed text-[var(--bb-white)]">
+              Your catalog is the only source agents can quote from. A
               product that is not in stock cannot be sold.
             </p>
+          </div>
+
+          <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--bb-line)]">
+              <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-2)]">
+                Selling rules
+              </div>
+              <span className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.08em] text-[var(--bb-grey-4)]">
+                PUT /console/policy
+              </span>
+            </div>
+
+            <div className="px-6 py-1">
+              {POLICY_FIELDS.map((row) => (
+                <div
+                  key={row.label}
+                  className="group flex items-baseline gap-4 py-3 border-b border-[var(--bb-line-soft)] last:border-b-0"
+                >
+                  <span className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.1em] uppercase text-[var(--bb-white)] w-[128px] shrink-0">
+                    {row.label}
+                  </span>
+                  <span className="font-[var(--font-sans)] text-[0.88rem] text-[var(--bb-grey-1)]">
+                    {row.note}
+                  </span>
+                  <span className="ml-auto hidden xl:block font-[var(--font-mono)] text-[0.48rem] text-[var(--bb-grey-4)] shrink-0 group-hover:text-[var(--bb-grey-2)] transition-colors">
+                    {row.ref}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-6 py-5 border-t border-[var(--bb-line)] bg-[var(--bb-panel-2)]">
+              <div className="font-[var(--font-mono)] text-[0.5rem] tracking-[0.16em] uppercase text-[var(--bb-grey-4)] mb-3">
+                When a rule trips
+              </div>
+              <div className="space-y-1.5">
+                {RULE_OUTCOMES.map(([k, v]) => (
+                  <div key={k} className="flex items-baseline gap-3">
+                    <span className="w-[128px] shrink-0 font-[var(--font-mono)] text-[0.58rem] tracking-[0.1em] uppercase text-[var(--bb-orange)]">
+                      {k}
+                    </span>
+                    <span className="font-[var(--font-sans)] text-[0.82rem] text-[var(--bb-grey-1)]">
+                      {v}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-[var(--bb-line)] font-[var(--font-mono)] text-[0.5rem] tracking-[0.06em] text-[var(--bb-grey-4)]">
+              Every edit lands in the ledger as policy.updated
+            </div>
           </div>
         </div>
       </div>
