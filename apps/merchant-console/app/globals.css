@@ -948,17 +948,6 @@ svg {
   animation: grid-drift 18s linear infinite;
 }
 
-/* Sequential flow connectors — tiny strips cascading opacity */
-.flow-connector {
-  background: var(--bb-orange);
-  opacity: 0.2;
-  animation: flow-pulse 2s ease-in-out infinite;
-}
-@keyframes flow-pulse {
-  0%, 100% { opacity: 0.2; }
-  50% { opacity: 1; }
-}
-
 /* Animated dashed rail — 2px strip, background-position loop */
 .flow-rail {
   background-image: linear-gradient(to bottom, var(--bb-orange) 45%, transparent 45%);
@@ -2279,6 +2268,42 @@ a:active:not([aria-disabled="true"]) {
   font-size: 0.86rem;
   line-height: 1.55;
   color: var(--bb-grey-1);
+}
+
+/* Problem chain — the purchase path stalls at the first locked gate.
+   Locked gates ghost and go dashed; the wall gate turns orange. */
+.chain-gate--locked {
+  opacity: 0.42;
+}
+
+.chain-gate--locked .iso-slab-top {
+  stroke-dasharray: 5 5;
+}
+
+.chain-gate--wall .iso-slab-top {
+  stroke: rgba(255, 105, 0, 0.55);
+  stroke-dasharray: 5 5;
+}
+
+.chain-barrier {
+  stroke: var(--bb-orange);
+  stroke-width: 1.5;
+  opacity: 0.9;
+}
+
+/* Packets that travel to the wall and give up — translate + opacity. */
+.chain-packet {
+  fill: var(--bb-orange);
+  opacity: 0;
+  animation: chain-stop 2.8s linear infinite;
+}
+
+@keyframes chain-stop {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  68% { transform: translateY(var(--stop, 60px)); opacity: 1; }
+  88% { transform: translateY(var(--stop, 60px)); opacity: 1; }
+  100% { transform: translateY(var(--stop, 60px)); opacity: 0; }
 }
 
 @media (max-width: 640px) {
