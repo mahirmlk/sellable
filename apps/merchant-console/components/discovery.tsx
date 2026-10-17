@@ -27,16 +27,21 @@ export function Discovery() {
     if (!isInView || startedRef.current) return;
     startedRef.current = true;
 
+    const timeout = { signal: AbortSignal.timeout(6000) };
+
     Promise.all([
-      fetch(`${API_BASE}/.well-known/agents.json`).then((r) => {
+      fetch(`${API_BASE}/.well-known/agents.json`, timeout).then((r) => {
         if (!r.ok) throw new Error(String(r.status));
         return r.json();
       }),
-      fetch(`${API_BASE}/catalog.ai.json`)
+      fetch(`${API_BASE}/catalog.ai.json`, timeout)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null),
+      fetch(`${API_BASE}/mcp/tools`, timeout)
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
     ])
-      .then(([manifest, catalog]) => {
+      .then(([manifest, catalog, mcp]) => {
         const doc = {
           name: manifest.name,
           merchant_id: manifest.merchant_id,
@@ -44,7 +49,13 @@ export function Discovery() {
           capabilities: manifest.capabilities,
           discovery: manifest.discovery,
           payment: manifest.payment,
+          api_versions: manifest.api_versions,
           catalog_products: catalog?.products?.length ?? null,
+          mcp_tools: Array.isArray(mcp)
+            ? mcp.length
+            : Array.isArray(mcp?.tools)
+              ? mcp.tools.length
+              : null,
         };
         setState({
           status: "live",
@@ -75,13 +86,16 @@ export function Discovery() {
           <div>
             <Eyebrow label="Built for agents" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              Your store, legible to software.
+              Any agent can find you. You decide who buys.
             </h2>
             <p className="body-copy mt-6">
-              Agents do not browse like people. They read files. Your shop
-              publishes three: who you are, what you sell, and how to behave.
-              This panel fetches them live, exactly as a shopping agent
-              would.
+              A shopping agent does not load your storefront. It reads three
+              public files: who you are, what you sell, and how to behave.
+              Any assistant&apos;s agent can read them.
+            </p>
+            <p className="body-copy mt-4">
+              To place orders, it presents a key or a signed request. You
+              issue those keys, and you can revoke them, from the console.
             </p>
 
             <div className="mt-8 space-y-2">
@@ -138,10 +152,14 @@ export function Discovery() {
                 </span>
               </div>
 
-              <pre className="code-content px-5 py-4 min-h-[380px] max-h-[420px] overflow-auto font-[var(--font-mono)] text-[0.68rem] leading-[1.6] text-[var(--bb-grey-1)] whitespace-pre">
+              <pre
+                className={`code-content px-5 py-4 min-h-[380px] max-h-[420px] overflow-auto font-[var(--font-mono)] text-[0.68rem] leading-[1.6] text-[var(--bb-grey-1)] ${
+                  state.status === "offline" ? "is-offline" : ""
+                }`}
+              >
                 {state.status === "offline" ? (
                   <span className="text-[var(--bb-grey-3)]">
-                    {`// api.sellable.shop could not be reached from this browser.\n// The manifest is public. Try again later or open the URL directly.`}
+                    {`// No reply from the backend.\n// The manifest is public.\n// Try again, or open the URL.`}
                   </span>
                 ) : (
                   <>

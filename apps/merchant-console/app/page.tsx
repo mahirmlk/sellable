@@ -11,20 +11,18 @@ import {
   MerchantControl,
 } from "@/components/home-narrative";
 import { HowItWorks } from "@/components/how-it-works";
-import { TraceReplay } from "@/components/trace-replay";
-import { Discovery } from "@/components/discovery";
 import { Features } from "@/components/features";
-import { PolicyRules } from "@/components/policy-rules";
 import { ConsolePreview } from "@/components/console-preview";
-import { Security } from "@/components/security";
+import { PolicySecurity } from "@/components/policy-security";
+import { Discovery } from "@/components/discovery";
 import { CodeSection } from "@/components/code-window";
 import { OrangeCTA } from "@/components/orange-cta";
 import { Reveal } from "@/components/ui/reveal";
 import { AmbientVideoBg } from "@/components/ui/ambient-video-bg";
 
 // Landing order: hero → ledger path → guarantees → problem → agents →
-// control → flow → platform → policy → ledger shape → discovery →
-// console → security → developers → final CTA.
+// control → flow → platform → console → policy + security → discovery →
+// developers → final CTA.
 //
 // Copy is human-written, architecture-accurate (Seller + Service agents;
 // outside agents stay guests), and free of sample orders or amounts.
@@ -42,11 +40,9 @@ export default function HomePage() {
         <Reveal><MerchantControl /></Reveal>
         <Reveal><HowItWorks /></Reveal>
         <Reveal><Features /></Reveal>
-        <Reveal><PolicyRules /></Reveal>
-        <Reveal><TraceReplay /></Reveal>
-        <Reveal><Discovery /></Reveal>
         <Reveal><ConsolePreview /></Reveal>
-        <Reveal><Security /></Reveal>
+        <Reveal><PolicySecurity /></Reveal>
+        <Reveal><Discovery /></Reveal>
         <Reveal><CodeSection /></Reveal>
         <OrangeCTA />
       </main>

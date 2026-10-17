@@ -457,6 +457,11 @@ svg {
   white-space: pre;
 }
 
+/* Offline note inside the discovery panel: wrap instead of scroll */
+.code-content.is-offline {
+  white-space: pre-wrap;
+}
+
 /* --------------------------------------------------
    FEATURE LINE
    -------------------------------------------------- */
@@ -946,19 +951,6 @@ svg {
     linear-gradient(90deg, rgba(255,255,255,0.07) 1px, transparent 1px);
   background-size: 56px 56px;
   animation: grid-drift 18s linear infinite;
-}
-
-/* Animated dashed rail — 2px strip, background-position loop */
-.flow-rail {
-  background-image: linear-gradient(to bottom, var(--bb-orange) 45%, transparent 45%);
-  background-size: 2px 14px;
-  background-repeat: repeat-y;
-  opacity: 0.55;
-  animation: rail-slide 0.9s linear infinite;
-}
-@keyframes rail-slide {
-  from { background-position-y: 0; }
-  to { background-position-y: 14px; }
 }
 
 /* SVG highlight breathing — small element, opacity only */
@@ -2270,40 +2262,98 @@ a:active:not([aria-disabled="true"]) {
   color: var(--bb-grey-1);
 }
 
-/* Problem chain — the purchase path stalls at the first locked gate.
-   Locked gates ghost and go dashed; the wall gate turns orange. */
-.chain-gate--locked {
-  opacity: 0.42;
+/* Problem chain — a terrace of gates. The agent climbs through the open
+   first door and stalls at the shut one; the gates above stay faint. */
+.chain-door {
+  fill: #121211;
+  stroke: #333331;
+  stroke-width: 1;
 }
 
-.chain-gate--locked .iso-slab-top {
-  stroke-dasharray: 5 5;
+.chain-door--ghost {
+  fill: #101010;
+  stroke: #2c2c2b;
 }
 
-.chain-gate--wall .iso-slab-top {
+.chain-door--wall {
+  fill: rgba(255, 105, 0, 0.09);
   stroke: rgba(255, 105, 0, 0.55);
-  stroke-dasharray: 5 5;
 }
 
-.chain-barrier {
-  stroke: var(--bb-orange);
+.chain-jamb {
+  stroke: #3a3a38;
   stroke-width: 1.5;
-  opacity: 0.9;
 }
 
-/* Packets that travel to the wall and give up — translate + opacity. */
-.chain-packet {
+.chain-jamb--open {
+  stroke: #4a4a47;
+}
+
+.chain-jamb--wall {
+  stroke: rgba(255, 105, 0, 0.7);
+}
+
+.chain-slat {
+  stroke: #2a2a29;
+  stroke-width: 1;
+}
+
+.chain-slat--ghost {
+  stroke: #232322;
+}
+
+.chain-slat--wall {
+  stroke: rgba(255, 105, 0, 0.5);
+}
+
+.chain-gate--far {
+  opacity: 0.45;
+}
+
+.chain-x {
+  stroke: var(--bb-orange);
+  stroke-width: 2;
+}
+
+.chain-num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  fill: var(--bb-grey-2);
+}
+
+.chain-num--wall {
   fill: var(--bb-orange);
-  opacity: 0;
-  animation: chain-stop 2.8s linear infinite;
 }
 
-@keyframes chain-stop {
-  0% { transform: translateY(0); opacity: 0; }
+.chain-antenna {
+  stroke: var(--bb-grey-1);
+  stroke-width: 1.5;
+}
+
+.chain-eye {
+  fill: var(--bb-orange);
+  animation: chain-blink 2.6s ease-in-out infinite;
+}
+
+/* The agent walks up the stairs and stops at the shut door. The base
+   position is the parked one, so a paused animation shows the story
+   in a single frame. */
+.chain-runner {
+  animation: chain-run 4.8s cubic-bezier(0.25, 0.65, 0.25, 1) infinite;
+}
+
+@keyframes chain-run {
+  0% { transform: translateY(var(--run, 54px)); opacity: 0; }
   10% { opacity: 1; }
-  68% { transform: translateY(var(--stop, 60px)); opacity: 1; }
-  88% { transform: translateY(var(--stop, 60px)); opacity: 1; }
-  100% { transform: translateY(var(--stop, 60px)); opacity: 0; }
+  60% { transform: translateY(0); opacity: 1; }
+  92% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(0); opacity: 0; }
+}
+
+@keyframes chain-blink {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
 }
 
 @media (max-width: 640px) {
@@ -2318,7 +2368,9 @@ a:active:not([aria-disabled="true"]) {
 
 @media (prefers-reduced-motion: reduce) {
   .iso-drop,
-  .iso-sweep {
+  .iso-sweep,
+  .chain-runner,
+  .chain-eye {
     animation: none !important;
   }
 }
