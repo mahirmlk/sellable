@@ -2,72 +2,47 @@
 
 import { Eyebrow } from "./ui/eyebrow";
 import { IsoChip } from "./iso-stack";
+import { ProblemChain, ShopFloor } from "./narrative-diagrams";
 
 // Narrative sections, written plainly. No invented orders, no sample
 // amounts. Architecture source: SELLABLE_ARCHITECTURE.md.
-
-const BUY_STEPS = [
-  "Find the right merchant",
-  "Find the right product",
-  "Check availability",
-  "Get a price you can trust",
-  "Negotiate inside the rules",
-  "Get permission to pay",
-  "Pay",
-  "Prove the payment happened",
-];
 
 export function Problem() {
   return (
     <section className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] gap-[clamp(48px,7vw,112px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] gap-[clamp(48px,7vw,112px)] items-start">
           <div>
             <Eyebrow label="The problem" />
             <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              AI can suggest. Buying is harder.
+              An AI can find your store. It cannot buy from it.
             </h2>
             <p className="body-copy mt-6">
-              A recommendation is one reply. A purchase is a chain: find the
-              store, check stock, settle on a price, get permission, pay, and
-              prove it later. Most storefronts were built for clicks, so
-              agents cannot get past the first step.
+              Chat assistants already recommend products, and newer ones
+              place orders. An order has to clear a chain of gates: stock,
+              price, negotiation limits, spending approval, payment, and
+              proof that it happened. Each gate needs an answer a machine
+              can act on.
             </p>
             <p className="body-copy mt-4">
-              Merchants feel the other side of it. Nobody wants to hand an
-              AI open access to prices, discounts, and payments.
+              A storefront built for clicks answers those questions on a
+              page, for a person. An agent gets no catalog it can read, no
+              quote it can accept, no consent step to pass, and no receipt
+              to check. The purchase stalls right after the first step, and
+              the merchant side never sees it happen.
+            </p>
+            <p className="body-copy mt-4">
+              Merchants see the same gap from the other side. Opening
+              prices, discounts, and payments to a bot with no limits is a
+              risk nobody takes on purpose.
             </p>
             <p className="mt-8 border-l-2 border-[var(--bb-orange)] pl-5 font-[var(--font-sans)] text-[1.05rem] leading-relaxed text-[var(--bb-white)]">
-              Sellable sits between the two. Your shop stays in charge, and
-              agents get a clean way to buy from it.
+              Sellable sits between the two. Agents get a clean way in, and
+              your shop stays in charge.
             </p>
           </div>
 
-          <div className="border border-[var(--bb-line)] bg-[var(--bb-panel)] p-6 sm:p-8">
-            <div className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)] mb-5">
-              What a real purchase takes
-            </div>
-            <ol className="list-none m-0 p-0">
-              {BUY_STEPS.map((s, i) => (
-                <li
-                  key={s}
-                  className="flex items-center gap-4 py-2.5 border-b border-[var(--bb-line-soft)] last:border-b-0"
-                >
-                  <span
-                    className="w-[5px] h-[5px] shrink-0 bg-[var(--bb-orange)] live-dot"
-                    style={{ animationDelay: `${i * 0.28}s` }}
-                    aria-hidden="true"
-                  />
-                  <span className="font-[var(--font-mono)] text-[0.62rem] text-[var(--bb-grey-4)] tabular-nums shrink-0">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <span className="font-[var(--font-sans)] text-[0.95rem] text-[var(--bb-grey-1)]">
-                    {s}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </div>
+          <ProblemChain />
         </div>
       </div>
     </section>
@@ -75,20 +50,20 @@ export function Problem() {
 }
 
 const SELLER_POINTS = [
-  "Reads what the buyer actually wants",
+  "Reads what the shopper actually wants",
   "Searches your catalog, nothing else",
   "Builds quotes your policy allows",
-  "Counters inside your floor and discount cap",
+  "Keeps counter-offers inside your floor and discount cap",
   "Suggests add-ons you already linked",
-  "Walks the buyer to checkout",
+  "Walks the shopper through checkout",
 ];
 
 const SERVICE_POINTS = [
   "Checks who the customer is first",
   "Looks up orders inside their permission",
   "Explains shipping and delivery status",
-  "Opens cases for returns and refunds",
-  "Requests refunds inside your authority",
+  "Opens cases for returns and exchanges",
+  "Files refunds up to the limit you set",
   "Hands tricky cases to a human, with context",
 ];
 
@@ -99,12 +74,18 @@ export function TwoAgents() {
         <div className="max-w-[720px]">
           <Eyebrow label="Two agents, one shop" />
           <h2 className="section-title mt-6 text-[var(--bb-white)]">
-            Selling and support, covered.
+            One agent sells. The other looks after orders.
           </h2>
           <p className="body-copy mt-6">
-            Sellable runs two agents for your store. Shopping agents from
-            outside connect through the gateway as guests. They never run
-            inside your shop.
+            Sellable puts two agents on your staff. The Seller Agent runs
+            the sales floor: discovery, quotes, checkout. The Customer
+            Service Agent handles the order conversation: status, shipping,
+            returns, refunds.
+          </p>
+          <p className="body-copy mt-4">
+            Agents sent by shoppers are guests. They arrive through the
+            gateway, prove who they are, and act only on the permission
+            their customer granted. They never run inside your store.
           </p>
         </div>
 
@@ -127,8 +108,8 @@ export function TwoAgents() {
               ))}
             </ul>
             <p className="mt-6 font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)] leading-relaxed">
-              It proposes prices and bundles. Policy, consent, and the payment
-              rail decide what actually happens.
+              It proposes prices and bundles. Policy, consent, and the
+              payment rail decide what goes through.
             </p>
           </div>
 
@@ -150,8 +131,8 @@ export function TwoAgents() {
               ))}
             </ul>
             <p className="mt-6 font-[var(--font-sans)] text-[0.85rem] text-[var(--bb-grey-2)] leading-relaxed">
-              It cannot refund beyond your authority or share another
-              customer&apos;s data. Anything sensitive goes to a person.
+              It cannot refund beyond your authority or show one customer
+              another&apos;s data. Sensitive cases go to a person.
             </p>
           </div>
         </div>
@@ -162,47 +143,8 @@ export function TwoAgents() {
           <IsoChip label="Customers" detail="buy directly or send an agent" />
         </div>
 
-        <div className="mt-6 border border-[var(--bb-line)] bg-[var(--bb-panel)] px-6 py-8 sm:px-10">
-          <div className="flex flex-col items-center text-center">
-            {[
-              ["CUSTOMER", null],
-              ["SHOPPING AGENT", "asks on the customer's behalf"],
-              ["SELLABLE GATEWAY", "checks identity and permission"],
-              ["SELLER AGENT", "quotes inside store rules"],
-              ["YOUR STORE", "policy, consent, payment, ledger"],
-            ].map(([node, quote], i, arr) => (
-              <div key={node as string} className="flex flex-col items-center">
-                <div
-                  className={`font-[var(--font-mono)] text-[0.7rem] tracking-[0.16em] px-4 py-2 border ${
-                    node === "SELLABLE GATEWAY"
-                      ? "bg-[var(--bb-white)] text-[var(--bb-black)] border-[var(--bb-white)] font-semibold"
-                      : "text-[var(--bb-white)] border-[var(--bb-line)] bg-[var(--bb-panel-2)]"
-                  }`}
-                >
-                  {node}
-                </div>
-                {quote && (
-                  <div className="mt-2 font-[var(--font-sans)] text-[0.85rem] italic text-[var(--bb-grey-2)]">
-                    {quote}
-                  </div>
-                )}
-                {i < arr.length - 1 && (
-                  <div
-                    className="w-[2px] h-7 my-1 flow-connector"
-                    style={{ animationDelay: `${i * 0.4}s` }}
-                    aria-hidden="true"
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-          <p className="mt-8 text-center font-[var(--font-sans)] text-[0.9rem] text-[var(--bb-grey-1)]">
-            The shopping agent pushes for its customer. Your agents hold the
-            line.{" "}
-            <span className="text-[var(--bb-white)]">
-              The ledger keeps the receipt.
-            </span>
-          </p>
+        <div className="mt-6 max-w-[760px] mx-auto">
+          <ShopFloor />
         </div>
       </div>
     </section>
