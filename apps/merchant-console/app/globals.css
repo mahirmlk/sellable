@@ -2283,9 +2283,12 @@ a:active:not([aria-disabled="true"]) {
 }
 
 /* The lane runs the full corridor; keep its edge visible to the last
-   gate so the drawing continues to the end. */
-.chain-lane {
+   gate so the drawing continues to the end. The compound selector
+   outranks .iso-slab-top--line whatever the order, and the round join
+   keeps the far corner off the frame edge. */
+.iso-slab-top--line.chain-lane {
   stroke: #3a3a36;
+  stroke-linejoin: round;
 }
 
 .chain-jamb {
@@ -2314,8 +2317,9 @@ a:active:not([aria-disabled="true"]) {
   stroke: rgba(255, 105, 0, 0.5);
 }
 
-/* Gates past the shut one sit back a little; brighter linework keeps the
-   whole corridor readable, door to door, out to the last gate. */
+/* Gates past the shut one sit back a little; brighter linework and a
+   step up in label tone keep the whole corridor readable, door to
+   door, out to the last gate. */
 .chain-gate--far .chain-jamb {
   stroke: #565650;
 }
@@ -2333,7 +2337,7 @@ a:active:not([aria-disabled="true"]) {
 }
 
 .chain-gate--far .iso-svg-detail {
-  fill: var(--bb-grey-2);
+  fill: var(--bb-grey-1);
 }
 
 .chain-x {
@@ -2382,9 +2386,9 @@ a:active:not([aria-disabled="true"]) {
   animation: chain-blink 2.6s ease-in-out infinite;
 }
 
-/* The agent walks the lane up from the open gate and stops at the shut
-   one. The base position is the parked one, so a paused animation shows
-   the story in a single frame. */
+/* The agent walks the lane up from the open gate and parks before the
+   shut one. The base position is the parked one, so a paused animation
+   shows the story in a single frame. */
 .chain-runner {
   animation: chain-run 4.8s cubic-bezier(0.25, 0.65, 0.25, 1) infinite;
 }

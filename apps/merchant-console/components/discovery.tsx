@@ -8,14 +8,34 @@ import { useInView } from "@/lib/use-in-view";
 
 // This section fetches the REAL discovery documents served by the deployed
 // backend — /.well-known/agents.json and /catalog.ai.json are public
-// endpoints, exactly what an AI buyer would request. If the backend is
-// unreachable, the panel says so honestly instead of inventing data.
+// endpoints, exactly what an AI buyer would request. If the fetch fails,
+// the panel prints the failure it saw instead of inventing data.
 
 const API_BASE = "https://api.sellable.shop";
 
 interface FetchState {
   status: "loading" | "live" | "offline";
   manifest: string;
+  /** Plain line for the request log when the fetch fails. */
+  reason?: string;
+}
+
+// The fetch can fail in several ways; the panel prints the one that
+// happened instead of blaming the API for all of them.
+function describeFailure(err: unknown): string {
+  if (err instanceof DOMException && err.name === "TimeoutError") {
+    return "no answer in 6s";
+  }
+  if (err instanceof SyntaxError) {
+    return "reply was not readable as JSON";
+  }
+  if (err instanceof TypeError) {
+    return "request could not reach the host";
+  }
+  if (err instanceof Error && /^\d{3}$/.test(err.message)) {
+    return `HTTP ${err.message}`;
+  }
+  return "request failed";
 }
 
 // How an outside agent comes here and buys through the merchant's agents
@@ -39,24 +59,29 @@ export function Discovery() {
 
   useEffect(() => {
     if (!isInView) return;
-    let cancelled = false;
 
-    const timeout = { signal: AbortSignal.timeout(6000) };
+    // One signal per attempt: the 6s timeout or the abort on retry and
+    // unmount ends the in-flight requests instead of leaving them running.
+    const controller = new AbortController();
+    const signal = AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(6000),
+    ]);
 
     Promise.all([
-      fetch(`${API_BASE}/.well-known/agents.json`, timeout).then((r) => {
+      fetch(`${API_BASE}/.well-known/agents.json`, { signal }).then((r) => {
         if (!r.ok) throw new Error(String(r.status));
         return r.json();
       }),
-      fetch(`${API_BASE}/catalog.ai.json`, timeout)
+      fetch(`${API_BASE}/catalog.ai.json`, { signal })
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
-      fetch(`${API_BASE}/mcp/tools`, timeout)
+      fetch(`${API_BASE}/mcp/tools`, { signal })
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
     ])
       .then(([manifest, catalog, mcp]) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         const doc = {
           name: manifest.name,
           merchant_id: manifest.merchant_id,
@@ -77,14 +102,16 @@ export function Discovery() {
           manifest: JSON.stringify(doc, null, 2),
         });
       })
-      .catch(() => {
-        if (cancelled) return;
-        setState({ status: "offline", manifest: "" });
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setState({
+          status: "offline",
+          manifest: "",
+          reason: describeFailure(err),
+        });
       });
 
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, [isInView, attempt]);
 
   // Progressive reveal — coarse chunks so the whole animation costs ~25
@@ -171,18 +198,22 @@ export function Discovery() {
                     /.well-known/agents.json
                   </span>
                 </div>
-                <span className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] text-[var(--bb-grey-2)]">
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className="font-[var(--font-mono)] text-[0.52rem] tracking-[0.1em] text-[var(--bb-grey-2)]"
+                >
                   {state.status === "live"
                     ? "LIVE · FETCHED NOW"
                     : state.status === "loading"
                       ? "FETCHING…"
-                      : "NO REPLY"}
+                      : "FETCH FAILED"}
                 </span>
               </div>
 
               {state.status === "offline" ? (
-                <div className="flex min-h-[380px] max-h-[420px] flex-col justify-center px-6 py-10 sm:px-8">
-                  {/* the request that came back empty */}
+                <div className="flex min-h-[380px] flex-col justify-center px-6 py-10 sm:px-8">
+                  {/* the failed request, and how it ended */}
                   <div className="space-y-2.5 font-[var(--font-mono)] text-[0.62rem]">
                     <div className="flex items-baseline gap-3">
                       <span className="w-[28px] shrink-0 text-[var(--bb-grey-3)]">
@@ -201,19 +232,20 @@ export function Discovery() {
                           className="w-[5px] h-[5px] bg-[var(--bb-grey-4)]"
                           aria-hidden="true"
                         />
-                        no answer
+                        {state.reason ?? "request failed"}
                       </span>
                     </div>
                   </div>
 
                   <p className="mt-9 max-w-[46ch] font-[var(--font-sans)] text-[0.95rem] leading-relaxed text-[var(--bb-grey-1)]">
-                    The API that serves this file is down right now. This
-                    panel prints what the live endpoint returns, so there is
-                    nothing to show until it answers.
+                    This panel reads api.sellable.shop live from your
+                    browser and prints a digest of what it gets back.
+                    Nothing usable came back just now, so there is nothing
+                    to show. The log above says how the request ended.
                   </p>
                   <p className="mt-4 max-w-[46ch] font-[var(--font-sans)] text-[0.92rem] leading-relaxed text-[var(--bb-grey-2)]">
-                    The file itself is public and needs no key. Open it
-                    straight from the URL, or fetch it again from here.
+                    That file is public and needs no key. Open it straight
+                    from the URL, or fetch it again from here.
                   </p>
 
                   <div className="mt-9 flex flex-wrap items-center gap-3">

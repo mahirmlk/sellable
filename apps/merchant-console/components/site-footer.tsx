@@ -71,8 +71,9 @@ export function SiteFooter() {
   return (
     <footer className="footer overflow-hidden">
       <div className="page-frame relative">
-        {/* live system line */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-6 pb-2 border-b border-[var(--bb-line)]/60">
+        {/* tagline line — the status pills that used to sit opposite it
+            are gone; the API Status link in the bottom bar covers that */}
+        <div className="flex flex-wrap items-center gap-3 pt-6 pb-2 border-b border-[var(--bb-line)]/60">
           <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
             Agentic commerce · agent proposes, policy disposes
           </span>

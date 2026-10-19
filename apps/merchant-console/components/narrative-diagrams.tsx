@@ -7,6 +7,8 @@ import type { CSSProperties, ReactNode } from "react";
   as the hero stack. A single viewBox scales the whole drawing at every
   breakpoint; below 768px the in-SVG captions hand off to a plain
   ordered list under the drawing so nothing shrinks into illegibility.
+  Each drawing's svg carries role="img" and its label, so the caption
+  and the small-screen list stay real content for screen readers.
   Motion stays on tiny nodes (translate + opacity only).
 
   ProblemChain — the corridor of gates a purchase has to clear. The
@@ -143,12 +145,13 @@ export function ProblemChain() {
   const botY = (first[1] + second[1]) / 2 + 6;
 
   return (
-    <div
-      className="iso-stage"
-      role="img"
-      aria-label="Isometric corridor of six gates a purchase must clear. The agent passes the open first gate, then stops at the shut second gate, marked with an orange cross because there is no live stock feed. The gates beyond — price, negotiation bounds, spend approval, payment and proof — stay visible but recessed, because the purchase never gets there."
-    >
-      <svg viewBox="0 0 1240 560" className="iso-svg" aria-hidden="true">
+    <div className="iso-stage">
+      <svg
+        viewBox="0 0 1240 560"
+        className="iso-svg"
+        role="img"
+        aria-label="Isometric corridor of six gates a purchase must clear. The agent passes the open first gate, then stops on the lane before the shut second gate, marked with an orange cross because there is no live stock feed. The gates beyond — price, negotiation bounds, spend approval, payment and proof — stay visible but recessed, because the purchase never gets there."
+      >
         {/* the lane the purchase has to walk */}
         <polygon
           points={CHAIN_LANE}
@@ -333,12 +336,13 @@ export function AgentJourney() {
   const [arrive, files, gateway, seller, settle, service] = journeyStops;
 
   return (
-    <div
-      className="iso-stage"
-      role="img"
-      aria-label="Isometric journey of an outside agent: it arrives from the open web on three public files, proves itself at the gateway with a key or a signed request, is quoted and negotiated by your Seller Agent inside policy bounds, settles through single-use consent confirmed by a verified provider webhook, and is supported by your Service Agent — every step recorded in the ledger."
-    >
-      <svg viewBox="0 0 1200 300" className="iso-svg" aria-hidden="true">
+    <div className="iso-stage">
+      <svg
+        viewBox="0 0 1200 300"
+        className="iso-svg"
+        role="img"
+        aria-label="Isometric journey of an outside agent: it arrives from the open web on three public files, proves itself at the gateway with a key or a signed request, is quoted and negotiated by your Seller Agent inside policy bounds, settles through single-use consent confirmed by a verified provider webhook, and is supported by your Service Agent."
+      >
         {/* the wire between consecutive stops */}
         {journeyStops.slice(0, -1).map((stop) => (
           <line
@@ -499,7 +503,9 @@ export function AgentJourney() {
         </p>
       </div>
 
-      <ul className="mt-6 space-y-3.5 md:hidden">
+      {/* An ordered list keeps the sequence for screen readers; the
+          markers are the orange squares, not numbers. */}
+      <ol className="mt-6 space-y-3.5 md:hidden list-none">
         {JOURNEY_STOPS.map((stop) => (
           <li key={stop.label} className="flex gap-3">
             <span
@@ -513,13 +519,13 @@ export function AgentJourney() {
               <div className="mt-0.5 font-[var(--font-sans)] text-[0.78rem] leading-snug text-[var(--bb-grey-2)]">
                 {stop.detail}
               </div>
-              <div className="mt-0.5 font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-4)]">
+              <div className="mt-0.5 font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-2)]">
                 {stop.ref}
               </div>
             </div>
           </li>
         ))}
-      </ul>
+      </ol>
     </div>
   );
 }
@@ -569,15 +575,12 @@ function Route({ points }: { points: number[] }) {
 
 export function ShopFloor() {
   return (
-    <div
-      className="iso-stage"
-      role="img"
-      aria-label="Isometric shop diagram: a customer and their shopping agent connect through the gateway. Inside the store, the Seller Agent quotes and checks out, and the Service Agent handles orders and support, all working from the merchant's catalog and rules."
-    >
+    <div className="iso-stage">
       <svg
         viewBox="0 0 600 560"
         className="iso-svg"
-        aria-hidden="true"
+        role="img"
+        aria-label="Isometric shop diagram: a customer and their shopping agent connect through the gateway. Inside the store, the Seller Agent quotes and checks out, and the Service Agent handles orders and support, all working from the merchant's catalog and rules."
       >
         <defs>
           <clipPath id="shop-floor-clip">
