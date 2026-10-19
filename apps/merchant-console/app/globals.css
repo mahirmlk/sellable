@@ -457,11 +457,6 @@ svg {
   white-space: pre;
 }
 
-/* Offline note inside the discovery panel: wrap instead of scroll */
-.code-content.is-offline {
-  white-space: pre-wrap;
-}
-
 /* --------------------------------------------------
    FEATURE LINE
    -------------------------------------------------- */
@@ -492,6 +487,11 @@ svg {
   padding: 88px 0 96px;
   background: var(--bb-orange);
   color: var(--bb-black);
+}
+
+/* No frame rails on the orange panel — a clean, full-bleed orange. */
+.orange-cta .page-frame {
+  border-inline-color: transparent;
 }
 
 .orange-cta h2 {
@@ -962,9 +962,10 @@ svg {
   50% { opacity: 0.7; }
 }
 
-/* In-box packets — dots travelling the diagram's own wires.
+/* In-box packets — accent dots travelling the diagram's own wires.
    Pure translate + opacity on tiny circles, staggered loops. */
 .packet {
+  fill: var(--bb-orange);
   opacity: 0;
   animation-name: packet-move;
   animation-timing-function: linear;
@@ -2262,8 +2263,9 @@ a:active:not([aria-disabled="true"]) {
   color: var(--bb-grey-1);
 }
 
-/* Problem chain — a terrace of gates. The agent climbs through the open
-   first door and stalls at the shut one; the gates above stay faint. */
+/* Problem chain — a corridor of gates. The agent passes the open first
+   door and stalls at the shut one; the gates beyond sit back a little
+   but stay drawn. */
 .chain-door {
   fill: #121211;
   stroke: #333331;
@@ -2280,13 +2282,19 @@ a:active:not([aria-disabled="true"]) {
   stroke: rgba(255, 105, 0, 0.55);
 }
 
+/* The lane runs the full corridor; keep its edge visible to the last
+   gate so the drawing continues to the end. */
+.chain-lane {
+  stroke: #3a3a36;
+}
+
 .chain-jamb {
   stroke: #3a3a38;
   stroke-width: 1.5;
 }
 
 .chain-jamb--open {
-  stroke: #4a4a47;
+  stroke: #54544d;
 }
 
 .chain-jamb--wall {
@@ -2306,8 +2314,26 @@ a:active:not([aria-disabled="true"]) {
   stroke: rgba(255, 105, 0, 0.5);
 }
 
-.chain-gate--far {
-  opacity: 0.45;
+/* Gates past the shut one sit back a little; brighter linework keeps the
+   whole corridor readable, door to door, out to the last gate. */
+.chain-gate--far .chain-jamb {
+  stroke: #565650;
+}
+
+.chain-gate--far .chain-door--ghost {
+  stroke: #4b4b46;
+}
+
+.chain-gate--far .chain-slat--ghost {
+  stroke: #3f3f3a;
+}
+
+.chain-gate--far .iso-svg-label {
+  fill: var(--bb-grey-1);
+}
+
+.chain-gate--far .iso-svg-detail {
+  fill: var(--bb-grey-2);
 }
 
 .chain-x {
@@ -2315,15 +2341,35 @@ a:active:not([aria-disabled="true"]) {
   stroke-width: 2;
 }
 
-.chain-num {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  fill: var(--bb-grey-2);
+/* Journey keys — a keycard at the gateway, a coin and tick at
+   settlement, and the folders and slips on the agents' desks. */
+.chain-key {
+  fill: rgba(255, 105, 0, 0.18);
+  stroke: rgba(255, 105, 0, 0.7);
+  stroke-width: 1;
 }
 
-.chain-num--wall {
-  fill: var(--bb-orange);
+.chain-coin {
+  fill: rgba(255, 105, 0, 0.12);
+  stroke: rgba(255, 105, 0, 0.6);
+  stroke-width: 1.5;
+}
+
+.iso-slip {
+  fill: #141414;
+  stroke: #3a3a38;
+  stroke-width: 1;
+}
+
+.iso-arrow {
+  fill: var(--bb-grey-3);
+}
+
+.iso-svg-ref {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  fill: var(--bb-grey-3);
 }
 
 .chain-antenna {
@@ -2336,24 +2382,32 @@ a:active:not([aria-disabled="true"]) {
   animation: chain-blink 2.6s ease-in-out infinite;
 }
 
-/* The agent walks up the stairs and stops at the shut door. The base
-   position is the parked one, so a paused animation shows the story
-   in a single frame. */
+/* The agent walks the lane up from the open gate and stops at the shut
+   one. The base position is the parked one, so a paused animation shows
+   the story in a single frame. */
 .chain-runner {
   animation: chain-run 4.8s cubic-bezier(0.25, 0.65, 0.25, 1) infinite;
 }
 
 @keyframes chain-run {
-  0% { transform: translateY(var(--run, 54px)); opacity: 0; }
+  0% { transform: translate(var(--runx, -46px), var(--runy, 23px)); opacity: 0; }
   10% { opacity: 1; }
-  60% { transform: translateY(0); opacity: 1; }
-  92% { transform: translateY(0); opacity: 1; }
-  100% { transform: translateY(0); opacity: 0; }
+  60% { transform: translate(0, 0); opacity: 1; }
+  92% { transform: translate(0, 0); opacity: 1; }
+  100% { transform: translate(0, 0); opacity: 0; }
 }
 
 @keyframes chain-blink {
   0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
+}
+
+/* Narrative diagrams hand their captions to plain HTML lists below
+   768px — SVG text at that width would render too small to read. */
+@media (max-width: 767px) {
+  .iso-svg-hide-sm {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {
