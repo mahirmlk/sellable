@@ -18,16 +18,7 @@ export function OrangeCTA() {
       />
       <div className="page-frame relative">
         <Reveal>
-          <div className="inline-flex items-center gap-2 border border-black/15 bg-black/[0.07] px-3 py-1.5 rounded-full">
-            <span className="w-[6px] h-[6px] rounded-full bg-black live-dot" />
-            <span className="font-[var(--font-mono)] text-[0.62rem] tracking-[0.14em] uppercase text-black/70">
-              Live on test rails
-            </span>
-            <span className="font-[var(--font-mono)] text-[0.58rem] text-black/45">
-              settlement stays webhook-verified
-            </span>
-          </div>
-          <h2 className="mt-6">Give your store an AI sales floor.</h2>
+          <h2>Give your store an AI sales floor.</h2>
           <p className="mt-6 font-[var(--font-sans)] text-[1.15rem] leading-relaxed text-[#080808] opacity-80 max-w-[620px]">
             Put your catalog where agents already shop. You keep the pricing,
             the approvals, and the final word. The agents do the talking.

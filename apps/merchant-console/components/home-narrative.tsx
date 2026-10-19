@@ -11,37 +11,39 @@ export function Problem() {
   return (
     <section className="technical-section py-[clamp(80px,10vw,160px)]">
       <div className="page-frame relative">
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] gap-[clamp(48px,7vw,112px)] items-start">
-          <div>
-            <Eyebrow label="The problem" />
-            <h2 className="section-title mt-6 text-[var(--bb-white)]">
-              An AI can find your store. It cannot buy from it.
-            </h2>
-            <p className="body-copy mt-6">
-              Chat assistants already recommend products, and newer ones
-              place orders. An order has to clear a chain of gates: stock,
-              price, negotiation limits, spending approval, payment, and
-              proof that it happened. Each gate needs an answer a machine
-              can act on.
-            </p>
-            <p className="body-copy mt-4">
-              A storefront built for clicks answers those questions on a
-              page, for a person. An agent gets no catalog it can read, no
-              quote it can accept, no consent step to pass, and no receipt
-              to check. The purchase stalls right after the first step, and
-              the merchant side never sees it happen.
-            </p>
-            <p className="body-copy mt-4">
-              Merchants see the same gap from the other side. Opening
-              prices, discounts, and payments to a bot with no limits is a
-              risk nobody takes on purpose.
-            </p>
-            <p className="mt-8 border-l-2 border-[var(--bb-orange)] pl-5 font-[var(--font-sans)] text-[1.05rem] leading-relaxed text-[var(--bb-white)]">
-              Sellable sits between the two. Agents get a clean way in, and
-              your shop stays in charge.
-            </p>
-          </div>
+        <div className="max-w-[860px]">
+          <Eyebrow label="The problem" />
+          <h2 className="section-title mt-6 text-[var(--bb-white)]">
+            An AI can find your store. It cannot buy from it.
+          </h2>
+          <p className="body-copy mt-6">
+            Chat assistants already recommend products, and newer ones
+            place orders. An order has to clear a chain of gates: stock,
+            price, negotiation limits, spending approval, payment, and
+            proof that it happened. Each gate needs an answer a machine
+            can act on.
+          </p>
+          <p className="body-copy mt-4">
+            A storefront built for clicks answers those questions on a
+            page, for a person. An agent gets no catalog it can read, no
+            quote it can accept, no consent step to pass, and no receipt
+            to check. The purchase stalls right after the first step, and
+            the merchant side never sees it happen.
+          </p>
+          <p className="body-copy mt-4">
+            Merchants see the same gap from the other side. Opening
+            prices, discounts, and payments to a bot with no limits is a
+            risk nobody takes on purpose.
+          </p>
+          <p className="mt-8 border-l-2 border-[var(--bb-orange)] pl-5 font-[var(--font-sans)] text-[1.05rem] leading-relaxed text-[var(--bb-white)]">
+            Sellable sits between the two. Agents get a clean way in, and
+            your shop stays in charge.
+          </p>
+        </div>
 
+        {/* The gate corridor carries the section; full width gives the
+            drawing room to read. */}
+        <div className="mt-[clamp(44px,6vw,88px)]">
           <ProblemChain />
         </div>
       </div>
