@@ -10,7 +10,6 @@ import {
   TwoAgents,
   MerchantControl,
 } from "@/components/home-narrative";
-import { HowItWorks } from "@/components/how-it-works";
 import { Features } from "@/components/features";
 import { ConsolePreview } from "@/components/console-preview";
 import { PolicySecurity } from "@/components/policy-security";
@@ -21,7 +20,7 @@ import { Reveal } from "@/components/ui/reveal";
 import { AmbientVideoBg } from "@/components/ui/ambient-video-bg";
 
 // Landing order: hero → ledger path → guarantees → problem → agents →
-// control → flow → platform → console → policy + security → discovery →
+// control → platform → console → policy + security → discovery →
 // developers → final CTA.
 //
 // Copy is human-written, architecture-accurate (Seller + Service agents;
@@ -38,7 +37,6 @@ export default function HomePage() {
         <Reveal><Problem /></Reveal>
         <Reveal><TwoAgents /></Reveal>
         <Reveal><MerchantControl /></Reveal>
-        <Reveal><HowItWorks /></Reveal>
         <Reveal><Features /></Reveal>
         <Reveal><ConsolePreview /></Reveal>
         <Reveal><PolicySecurity /></Reveal>

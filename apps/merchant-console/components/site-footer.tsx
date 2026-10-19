@@ -14,7 +14,7 @@ const footerColumns: FooterColumn[] = [
   {
     heading: "Product",
     links: [
-      { label: "How it works", href: "/#how-it-works", hint: "Discovery to support lifecycle" },
+      { label: "Built for agents", href: "/#discovery", hint: "How outside agents buy, end to end" },
       { label: "Platform", href: "/#platform", hint: "Commerce and trust planes" },
       { label: "Live Catalog", href: "/dashboard/catalog", hint: "Merchant catalog management" },
       { label: "Growth Insights", href: "/dashboard/growth", hint: "Revenue & agent analytics" },
@@ -73,23 +73,6 @@ export function SiteFooter() {
       <div className="page-frame relative">
         {/* live system line */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-6 pb-2 border-b border-[var(--bb-line)]/60">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-grey-2)]" />
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Ledger</span>
-              <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-1)]">recording</span>
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-white)]" />
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Policy</span>
-              <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-white)]">deterministic</span>
-            </span>
-            <span className="hidden md:inline-flex items-center gap-2 rounded-full border border-[var(--bb-line)] bg-[var(--bb-panel)] px-3 py-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--bb-grey-2)]" />
-              <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.1em] uppercase text-[var(--bb-grey-1)]">Payments</span>
-              <span className="font-[var(--font-mono)] text-[0.6rem] text-[var(--bb-grey-1)]">Razorpay test</span>
-            </span>
-          </div>
           <span className="font-[var(--font-mono)] text-[0.6rem] tracking-[0.14em] uppercase text-[var(--bb-grey-3)]">
             Agentic commerce · agent proposes, policy disposes
           </span>
