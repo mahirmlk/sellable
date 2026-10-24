@@ -49,11 +49,24 @@ def commerce_core() -> CommerceCore:
 def _client(commerce_core: CommerceCore) -> TestClient:
     from sellable.agents.seller import SellerAgent
     from sellable.gateway import AgentGateway
-    from sellable.main import app, get_agent_gateway, get_commerce, get_payment_service
+    from sellable.main import (
+        app,
+        get_agent_gateway,
+        get_commerce,
+        get_payment_service,
+        get_scoped_commerce,
+        get_scoped_commerce_signed,
+        get_scoped_commerce,
+        get_scoped_commerce_signed,
+    )
 
     gateway = AgentGateway(commerce_core, SellerAgent(commerce_core))
     app.dependency_overrides[get_agent_gateway] = lambda: gateway
     app.dependency_overrides[get_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     app.dependency_overrides[get_payment_service] = lambda: PaymentService(
         commerce_core, razorpay_adapter()
     )

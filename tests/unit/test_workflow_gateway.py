@@ -144,13 +144,20 @@ def test_hmac_signed_request_is_authenticated_and_replay_is_rejected(
 def test_agent_order_and_consent_flow(
     commerce_core: CommerceCore,
 ) -> None:
-    from sellable.main import get_agent_gateway, get_commerce
+    from sellable.main import (
+        get_agent_gateway,
+        get_commerce,
+        get_scoped_commerce,
+        get_scoped_commerce_signed,
+    )
     from sellable.gateway import AgentGateway
     from sellable.agents.seller import SellerAgent
 
     gateway = AgentGateway(commerce_core, SellerAgent(commerce_core))
     app.dependency_overrides[get_agent_gateway] = lambda: gateway
     app.dependency_overrides[get_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     intent = buyer_intent()
     try:
         with TestClient(app) as client:

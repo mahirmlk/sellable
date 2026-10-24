@@ -44,8 +44,14 @@ def decide(
     authorization_ttl_minutes: int = 10,
     categories: list[str] | None = None,
     usage_count: int | None = None,
+    agent_id: str | None = None,
 ) -> AuthorizationDecision:
-    """Resolve a delegation grant into an explicit authorization decision."""
+    """Resolve a delegation grant into an explicit authorization decision.
+
+    ``agent_id`` is the identity presenting the delegation. When supplied,
+    a mismatch with ``subject_agent_id`` is a DENY (§45: agents cannot use
+    another agent's delegation — impersonation protection).
+    """
     now = utc_now()
     expires_at = now + timedelta(minutes=authorization_ttl_minutes)
 
@@ -72,6 +78,8 @@ def decide(
         return _deny("SCOPE_NOT_GRANTED")
     if merchant_id != grant.merchant_scope:
         return _deny("MERCHANT_SCOPE_MISMATCH")
+    if agent_id is not None and agent_id != grant.subject_agent_id:
+        return _deny("AGENT_MISMATCH", ["DELEGATION.subject_agent_id"])
     if (
         amount_paise is not None
         and grant.amount_limit_paise is not None
@@ -157,6 +165,7 @@ class AuthorizationService:
         amount_paise: int | None = None,
         risk_reference: str | None = None,
         categories: list[str] | None = None,
+        agent_id: str | None = None,
     ) -> AuthorizationDecision:
         grant = None
         if self._lookup is not None:
@@ -177,4 +186,5 @@ class AuthorizationService:
             risk_reference=risk_reference,
             categories=categories,
             usage_count=usage_count,
+            agent_id=agent_id,
         )

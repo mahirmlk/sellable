@@ -35,14 +35,17 @@ def enforce_delegation(
     amount_paise: int | None = None,
     trace_id: str | None = None,
     route: str = "",
+    agent_id: str | None = None,
 ) -> AuthorizationDecision | None:
     """Resolve an optional delegation header at the gateway (target §14).
 
     No header → None (legacy callers flow unchanged). Presented delegations
     are resolved through the authorization service with full ledger
     attribution: DENY raises (403), REQUIRE_* raises a hold (409), ALLOW
-    returns the decision. Amount binding stays at the commerce layer, which
-    re-resolves with the exact totals.
+    returns the decision. ``agent_id`` is the authenticated caller's agent
+    identity: a delegation granted to a different agent is DENY
+    (impersonation protection, §45). Amount binding stays at the commerce
+    layer, which re-resolves with the exact totals.
     """
     from sellable.delegations import AuthorizationOutcome
 
@@ -53,6 +56,7 @@ def enforce_delegation(
         scope=scope,
         merchant_id=commerce.merchant_scope,
         amount_paise=amount_paise,
+        agent_id=agent_id,
     )
     if trace_id is not None:
         commerce.log_gateway_authorization(

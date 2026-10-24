@@ -364,11 +364,14 @@ def _gate_delegation(
     trace_id: str,
     route: str,
     hold_status: int = 409,
+    agent_id: str | None = None,
 ) -> None:
     """Resolve an optional delegation header: DENY → 403, hold → ``hold_status``.
 
-    No header → legacy behavior unchanged. Amount binding stays at the
-    commerce layer, which re-resolves with exact totals.
+    No header → legacy behavior unchanged. ``agent_id`` is the authenticated
+    caller's agent identity; a delegation granted to another agent is denied
+    (§45). Amount binding stays at the commerce layer, which re-resolves
+    with exact totals.
     """
     try:
         enforce_delegation(
@@ -378,6 +381,7 @@ def _gate_delegation(
             amount_paise=amount_paise,
             trace_id=trace_id,
             route=route,
+            agent_id=agent_id,
         )
     except DelegationDeniedError as error:
         raise HTTPException(
@@ -423,6 +427,40 @@ def get_commerce() -> CommerceCore:
     return commerce_core
 
 
+def get_scoped_commerce(_api_key: AgentApiKey = Depends(get_agent_api_key)) -> CommerceCore:
+    """Machine-facing canonical surface resolves the *caller's* merchant core
+    (§37.2 tenant isolation): a merchant-issued agent key transacts its own
+    store, never the demo merchant. Static/env keys map to the demo merchant,
+    preserving legacy behavior. FastAPI caches the ``get_agent_api_key``
+    dependency, so authentication runs exactly once per request."""
+    return registry.get(_api_key.merchant_id)
+
+
+def get_scoped_commerce_signed(
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+) -> CommerceCore:
+    """Scoped core for mutating canonical routes (HMAC-enforced outside dev)."""
+    return registry.get(_api_key.merchant_id)
+
+
+def _seller_agent_for_key(api_key: AgentApiKey) -> SellerAgent:
+    """The platform seller agent, bound to the caller's merchant."""
+    if api_key.merchant_id == DEMO_MERCHANT_ID:
+        return seller_agent
+    core = registry.get(api_key.merchant_id)
+    return SellerAgent(core, llm=_seller_llm, recorder=_agent_recorder(core, SELLER_AGENT_ID))
+
+
+def _cs_agent_for_key(api_key: AgentApiKey) -> CustomerServiceAgent:
+    """The platform customer-service agent, bound to the caller's merchant."""
+    if api_key.merchant_id == DEMO_MERCHANT_ID:
+        return customer_service_agent
+    core = registry.get(api_key.merchant_id)
+    return CustomerServiceAgent(
+        core, llm=_seller_llm, recorder=_agent_recorder(core, CUSTOMER_SERVICE_AGENT_ID)
+    )
+
+
 def get_ledger() -> LedgerRepository:
     return commerce_core.ledger
 
@@ -454,11 +492,11 @@ def health() -> dict[str, str | bool | list[str]]:
 def seller_respond(
     request: Request,
     body: SellerRequest,
-    agent: SellerAgent = Depends(get_seller_agent),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
 ) -> SellerDecision:
     """Never creates an order, issues consent, or executes a payment."""
+    agent = _seller_agent_for_key(_api_key)
     return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
 
 
@@ -472,11 +510,11 @@ def seller_respond(
 def service_respond(
     request: Request,
     body: CSRequest,
-    agent: CustomerServiceAgent = Depends(get_customer_service_agent),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
 ) -> CSDecision:
     """Never executes refunds, mutates account security, or overrides policy."""
+    agent = _cs_agent_for_key(_api_key)
     return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
 
 
@@ -568,7 +606,7 @@ def agent_capabilities() -> dict[str, object]:
 def session_negotiate(
     request: Request,
     body: AgentProfile,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -587,7 +625,7 @@ def session_negotiate(
 def session_get(
     session_id: str,
     request: Request,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -602,7 +640,7 @@ def session_get(
 def ucp_negotiate(
     request: Request,
     body: AgentProfile,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -673,7 +711,7 @@ def acp_checkout_session(
 def identity_link_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
 ) -> dict:
@@ -698,7 +736,7 @@ def identity_link_create(
 def identity_link_approve(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     if not body.get("link_id"):
@@ -722,7 +760,7 @@ def identity_link_approve(
 def identity_me(
     request: Request,
     link_id: str,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -771,7 +809,7 @@ def _require(body: dict, *fields: str) -> None:
 def commerce_search(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -795,7 +833,7 @@ def commerce_search(
 def commerce_lookup(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -818,7 +856,7 @@ def commerce_lookup(
 def commerce_recommendations(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -842,7 +880,7 @@ def commerce_recommendations(
 def commerce_cart_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -866,7 +904,7 @@ def commerce_cart_create(
 def commerce_cart_items(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -893,7 +931,7 @@ def commerce_cart_items(
 def commerce_quote_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -917,7 +955,7 @@ def commerce_quote_create(
 def commerce_quote_negotiate(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -944,7 +982,7 @@ def commerce_quote_negotiate(
 def commerce_promotions_evaluate(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -970,7 +1008,7 @@ def commerce_promotions_evaluate(
 def commerce_checkout_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -998,7 +1036,7 @@ def commerce_checkout_create(
 def commerce_checkout_authorize(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1029,7 +1067,7 @@ def commerce_checkout_authorize(
 def commerce_order_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1060,7 +1098,7 @@ def commerce_order_create(
 def commerce_order_get(
     order_id: str,
     request: Request,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1082,7 +1120,7 @@ def commerce_order_get(
 def commerce_shipping_quote(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1107,7 +1145,7 @@ def commerce_shipping_quote(
 def commerce_return_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1133,7 +1171,7 @@ def commerce_return_create(
 def commerce_refund_request(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1158,7 +1196,7 @@ def commerce_refund_request(
 def commerce_support_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1193,7 +1231,7 @@ def mcp_tools(
 def mcp_call(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None),
@@ -2279,6 +2317,7 @@ def agent_quote_create(
         trace_id=trace_id,
         route="agent.quotes.create",
         hold_status=403,
+        agent_id=_api_key.buyer_agent_id,
     )
     return gateway.create_quote(body, trace_id=trace_id)
 
@@ -2303,6 +2342,7 @@ def agent_quote_negotiate(
         trace_id=trace_id,
         route="agent.quotes.negotiate",
         hold_status=403,
+        agent_id=_api_key.buyer_agent_id,
     )
     return gateway.create_quote(body, trace_id=trace_id)
 
@@ -2317,14 +2357,16 @@ def agent_quote_negotiate(
 def buyer_run(
     request: Request,
     mission: BuyerMission,
-    agent: BuyerAgent = Depends(get_buyer_agent),
-    # The reference buyer creates real orders + consents: signed-only
-    # outside dev/test, like every mutating agent route.
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
 ) -> BuyerResult:
+    # The reference buyer creates real orders + consents: signed-only
+    # outside dev/test, like every mutating agent route, and always bound
+    # to the caller's own merchant core (§37.2).
+    buyer_core = registry.get(_api_key.merchant_id)
+    agent = BuyerAgent(AgentGateway(buyer_core, SellerAgent(buyer_core, llm=_seller_llm)), llm=_seller_llm)
     result = agent.run(mission, trace_id=resolve_trace_id(x_trace_id))
-    return _with_mission_id(commerce_core.merchant_scope, mission, result)
+    return _with_mission_id(_api_key.merchant_id, mission, result)
 
 
 @app.post("/agent/consents.request", tags=["agent-gateway"])
@@ -2349,6 +2391,7 @@ def agent_consents_request(
         amount_paise=order.amount_paise,
         trace_id=trace_id,
         route="agent.consents.request",
+        agent_id=_api_key.buyer_agent_id,
     )
     try:
         consent = commerce.issue_consent(body.order_id)
@@ -2392,6 +2435,7 @@ def agent_order_create(
         amount_paise=None,
         trace_id=trace_id,
         route="agent.orders.create",
+        agent_id=_api_key.buyer_agent_id,
     )
     pre_existing = commerce.get_order_by_idempotency_key(body.idempotency_key)
     if pre_existing is not None and pre_existing.trace_id == trace_id:

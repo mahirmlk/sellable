@@ -3240,13 +3240,18 @@ class IdentityLinkRepository:
     def linked_for_customer(
         self, merchant_id: str, customer_id: str, *, agent_id: str | None = None
     ) -> list[Any]:
-        """LINKED identities for a customer (optionally via one agent)."""
+        """LINKED identities for a customer (optionally via one agent).
+
+        Expired links are excluded here so a stale LINKED row can never
+        re-authenticate a customer (§12.1: trust levels require a live link).
+        """
         with Session(self._engine) as session:
             query = (
                 select(self._record_cls)
                 .where(self._record_cls.merchant_id == merchant_id)
                 .where(self._record_cls.customer_id == customer_id)
                 .where(self._record_cls.status == "LINKED")
+                .where(self._record_cls.expires_at > datetime.now(timezone.utc))
             )
             if agent_id is not None:
                 query = query.where(self._record_cls.agent_id == agent_id)

@@ -58,6 +58,13 @@ class CheckoutNotFoundError(CheckoutError, LookupError):
     """No such checkout for this merchant (foreign ids stay invisible)."""
 
 
+class CheckoutHoldError(CheckoutError):
+    """A delegation approval gate (REQUIRE_CUSTOMER/REQUIRE_HUMAN, §14.4)
+    blocks the checkout. Fail-closed: the checkout never advances to
+    AUTHORIZED until the required approval exists; the caller surfaces the
+    hold instead of retrying blindly."""
+
+
 class CheckoutService:
     def __init__(
         self,
@@ -205,6 +212,9 @@ class CheckoutService:
                 raise CheckoutError(
                     f"delegation rejected checkout: {decision.reason_code}"
                 ) from None
+            # REQUIRE_* deliberately does NOT hold at validate: pricing must
+            # complete so approval sees the authoritative total. The approval
+            # gate (§14.4) is enforced at authorize.
         return self._move(checkout, CheckoutStatus.VALIDATED, "checkout.validated")
 
     # ------------------------------------------------------------------
@@ -320,6 +330,10 @@ class CheckoutService:
                 raise CheckoutError(
                     f"delegation rejected checkout: {decision.reason_code}"
                 )
+            if decision.outcome is not AuthorizationOutcome.ALLOW:
+                # Same fail-closed rule as validate (§14.4): an approval-gated
+                # delegation cannot reach AUTHORIZED by retrying the pipeline.
+                raise CheckoutHoldError(decision.outcome.value, decision.reason_code)
             authorization_id = decision.decision_id
         authorized = checkout.model_copy(
             update={

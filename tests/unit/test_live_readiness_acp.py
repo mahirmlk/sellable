@@ -273,7 +273,7 @@ def test_acp_status_and_disabled_route(isolated_env):
 
 
 def test_acp_route_serves_authorized_checkout(isolated_env):
-    from sellable.main import get_commerce
+    from sellable.main import get_commerce, get_scoped_commerce, get_scoped_commerce_signed
 
     client, engine, registry = isolated_env
     original = main_module.settings

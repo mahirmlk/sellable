@@ -48,7 +48,9 @@ def require_capability(sessions, core, ctx: ProtocolContext, capability_id: str)
 
 def authorize_scope(core, ctx: ProtocolContext, scope: OperationScope, amount_paise=None):
     """Resolve the delegation for one command. None when no delegation is
-    presented (legacy trust); DENY → 403; REQUIRE_* → 409 hold."""
+    presented (legacy trust); DENY → 403; REQUIRE_* → 409 hold. The
+    authenticated caller identity (``ctx.agent_id``) is bound to the
+    delegation's subject: another agent's delegation is DENY (§45)."""
     delegation_id = ctx.delegation_id
     if not delegation_id:
         return None
@@ -57,6 +59,7 @@ def authorize_scope(core, ctx: ProtocolContext, scope: OperationScope, amount_pa
         scope=scope,
         merchant_id=core.merchant_scope,
         amount_paise=amount_paise,
+        agent_id=ctx.agent_id,
     )
     core.log_gateway_authorization(
         trace_id=ctx.trace_id, decision=decision, route=f"{ctx.protocol}.{scope.value}"

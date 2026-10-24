@@ -327,9 +327,11 @@ def test_cs_run_recorded(commerce_core: CommerceCore) -> None:
 def test_service_route_smoke(commerce_core: CommerceCore) -> None:
     from fastapi.testclient import TestClient
 
-    from sellable.main import app, get_commerce, get_customer_service_agent
+    from sellable.main import app, get_commerce, get_scoped_commerce, get_scoped_commerce_signed, get_customer_service_agent
 
     app.dependency_overrides[get_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     app.dependency_overrides[get_customer_service_agent] = lambda: _agent(
         commerce_core
     )
