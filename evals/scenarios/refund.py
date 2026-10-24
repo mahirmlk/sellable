@@ -76,7 +76,7 @@ def run() -> dict:
     unpaid = core.create_order(
         cart=_cart(unpaid_intent),
         intent=unpaid_intent,
-        trace_id="eval_refund_unpaid_trace",
+        trace_id="trc_e8c9d0b2e8c9d0b2e8c9d0b2e8c9d0b2",
         idempotency_key="eval_refund_unpaid_001",
     )
     try:
@@ -90,7 +90,7 @@ def run() -> dict:
     order = core.create_order(
         cart=_cart(intent),
         intent=intent,
-        trace_id="eval_refund_trace",
+        trace_id="trc_f9d0e1c3f9d0e1c3f9d0e1c3f9d0e1c3",
         idempotency_key="eval_refund_paid_0001",
     )
     consent = core.issue_consent(order.order_id)
@@ -100,7 +100,7 @@ def run() -> dict:
 
     result = refunds.initiate_refund(order_id=order.order_id, reason="eval full refund")
     settled = core.get_order(order.order_id)
-    actions = [e.action for e in core.ledger.for_trace("eval_refund_trace")]
+    actions = [e.action for e in core.ledger.for_trace("trc_f9d0e1c3f9d0e1c3f9d0e1c3f9d0e1c3")]
 
     return {
         "passed": unpaid_refused

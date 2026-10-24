@@ -42,7 +42,7 @@ def run() -> dict:
         negotiation_round=0,
     )
 
-    trace_id = "eval_valid_purchase_trace"
+    trace_id = "trc_d7b8c9a1d7b8c9a1d7b8c9a1d7b8c9a1"
     order = core.create_order(cart=cart, intent=intent, trace_id=trace_id, idempotency_key="eval_valid_purchase_001")
     consent = core.issue_consent(order.order_id)
     core.consume_consent(consent.consent_id, order_id=order.order_id)

@@ -42,7 +42,7 @@ def run() -> dict:
         negotiation_round=0,
     )
 
-    trace_id = "eval_dup_webhook_trace"
+    trace_id = "trc_d1b2c3a4d1b2c3a4d1b2c3a4d1b2c3a4"
     order = core.create_order(
         cart=cart, intent=intent, trace_id=trace_id, idempotency_key="eval_dup_webhook_001"
     )

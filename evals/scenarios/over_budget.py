@@ -40,7 +40,7 @@ def run() -> dict:
         negotiation_round=0,
     )
 
-    trace_id = "eval_over_budget_trace"
+    trace_id = "trc_e2c3d4b5e2c3d4b5e2c3d4b5e2c3d4b5"
     products = {p.sku: p for p in core.catalog.all()}
     decision = core.policy_engine.evaluate_cart(
         cart=cart, intent=intent, policy=core.policy, products=products

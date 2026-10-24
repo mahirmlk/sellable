@@ -136,6 +136,47 @@ def _build_paid_order(core, amount: int = 69_900, buyer: str = "buyer_eval", qua
     return core.mark_paid(order.order_id, provider_ref=f"pay_eval_{uuid4().hex[:8]}")
 
 
+
+# ------------------------------------------------------------------
+# Real-model gateway for evals (§30: agent quality must be testable with
+# the same model configuration production uses). Resolved once per
+# process from the environment; None when the provider is mock or
+# unconfigured, which keeps the battery fully deterministic.
+# ------------------------------------------------------------------
+
+EVAL_MODEL_CALLS: list = []
+
+
+def _eval_model_gateway():
+    from sellable.config import settings
+
+    if settings.llm_provider in ("mock", "deterministic", ""):
+        return None
+    if not settings.llm_is_configured:
+        return None
+    try:
+        from agents.llm import get_llm
+        from agents.runtime.model_gateway import ModelGateway
+
+        gateway = ModelGateway(
+            get_llm(),
+            recorder=lambda record, purpose="": EVAL_MODEL_CALLS.append(record),
+        )
+        return gateway
+    except Exception:  # noqa: BLE001 — eval falls back to deterministic
+        return None
+
+
+_EVAL_GATEWAYS: dict = {}
+
+
+def _gateway_for(key: str):
+    """One gateway per agent role per process (calls append per case)."""
+    if key not in _EVAL_GATEWAYS:
+        _EVAL_GATEWAYS[key] = _eval_model_gateway()
+    return _EVAL_GATEWAYS[key]
+
+
 def _check_seller_turn(core, params: dict, expects: dict, recorder=None):
     from agents.seller.agent import SellerAgent, SellerRequest
 
@@ -151,7 +192,7 @@ def _check_seller_turn(core, params: dict, expects: dict, recorder=None):
         price_query=bool(params.get("price_query", False)),
         coupon_code=params.get("coupon_code"),
     )
-    agent = SellerAgent(core, recorder=recorder)
+    agent = SellerAgent(core, recorder=recorder, model_gateway=_gateway_for("seller"))
     decision = agent.respond(request, trace_id=_trace())
     return _assert_seller(decision, core, expects)
 
@@ -240,6 +281,7 @@ def _check_cs_turn(core, params: dict, expects: dict, recorder=None):
     agent = CustomerServiceAgent(
         core,
         recorder=recorder,
+        model_gateway=_gateway_for("cs"),
         max_direct_refund_paise=params.get("refund_cap_paise"),
     )
     request = CSRequest(

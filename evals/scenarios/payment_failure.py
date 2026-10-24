@@ -42,7 +42,7 @@ def run() -> dict:
         negotiation_round=0,
     )
 
-    trace_id = "eval_payment_failure_trace"
+    trace_id = "trc_b5f6a7e8b5f6a7e8b5f6a7e8b5f6a7e8"
     order = core.create_order(
         cart=cart, intent=intent, trace_id=trace_id, idempotency_key="eval_payment_failure_001"
     )
