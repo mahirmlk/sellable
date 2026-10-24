@@ -61,6 +61,15 @@ class PaymentService:
 
         self.commerce = commerce
         self.rail = rail
+        # §46.2: the provider is behind a circuit breaker so a down provider
+        # fails fast instead of every caller paying the network timeout.
+        from sellable.resilience import CircuitBreaker
+
+        self.provider_breaker = CircuitBreaker(
+            name=f"payment:{getattr(rail, 'provider_name', 'provider')}",
+            failure_threshold=5,
+            cooldown_seconds=30.0,
+        )
         self._core_resolver = core_resolver
         # Guards start_payment / retry_payment check-and-set so concurrent
         # calls cannot mint two live provider links for one order.
@@ -173,7 +182,9 @@ class PaymentService:
         order = core.get_order(order_id)
         if not order.provider_link_id:
             return False
-        self.rail.cancel_payment_link(order.provider_link_id)
+        self.provider_breaker.call(
+            self.rail.cancel_payment_link, order.provider_link_id
+        )
         self._record(
             core=core,
             trace_id=order.trace_id,
@@ -247,7 +258,9 @@ class PaymentService:
             # Human checkout uses a hosted Razorpay Payment Link (spec §10):
             # the browser receives only a public short_url — no keys, no SDK,
             # and the provider never confirms through the frontend.
-            provider_link = self.rail.create_payment_link(pending_order)
+            provider_link = self.provider_breaker.call(
+                self.rail.create_payment_link, pending_order
+            )
             if (
                 provider_link.amount_paise != pending_order.amount_paise
                 or provider_link.currency != "INR"

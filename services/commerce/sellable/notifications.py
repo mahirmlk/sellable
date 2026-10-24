@@ -87,6 +87,51 @@ def merchant_notifications_for(event) -> list[dict[str, object]]:
     return []
 
 
+
+def email_channel_configured(settings=None) -> bool:
+    """True when an SMTP relay and recipients are configured (§35 email)."""
+    from sellable.config import settings as default_settings
+
+    cfg = settings or default_settings
+    return bool(cfg.smtp_host and cfg.smtp_from and cfg.smtp_recipients)
+
+
+def send_email_for_event(event, rule: dict[str, object], settings=None) -> bool:
+    """Deliver one urgent merchant event by email. Best-effort by design:
+    the in-app feed and webhook channels are the delivery truth; email is
+    an additive attention channel. Returns True when handed to the relay."""
+    import smtplib
+    from email.message import EmailMessage
+
+    from sellable.config import settings as default_settings
+
+    cfg = settings or default_settings
+    if not email_channel_configured(cfg):
+        return False
+    recipients = [
+        address.strip()
+        for address in str(cfg.smtp_recipients).split(",")
+        if address.strip()
+    ]
+    message = EmailMessage()
+    message["From"] = str(cfg.smtp_from)
+    message["To"] = ", ".join(recipients)
+    message["Subject"] = f"[SELLABLE {rule['urgency']}] {rule['title']}"
+    body = str(rule.get("body") or "")
+    detail = (
+        f"{body}\n\nEvent: {event.event_type}\n"
+        f"Merchant: {event.merchant_id}\nTrace: {event.trace_id}\n"
+    )
+    message.set_content(detail)
+    try:
+        with smtplib.SMTP(str(cfg.smtp_host), int(cfg.smtp_port), timeout=10) as smtp:
+            smtp.starttls()
+            smtp.send_message(message)
+        return True
+    except Exception as error:  # noqa: BLE001 — email never breaks commerce
+        logger.warning("Email notification failed: %s", error)
+        return False
+
 def notify_for_event(event, *, notification_repo=None, webhook_dispatcher=None) -> list[str]:
     """Persist merchant feed entries and fan out to matching subscriptions.
     Returns created notification ids. Feed rows are idempotent per (event,
@@ -109,6 +154,8 @@ def notify_for_event(event, *, notification_repo=None, webhook_dispatcher=None) 
             )
             if notification_id is not None:
                 created.append(notification_id)
+            if str(rule["urgency"]) == "URGENT":
+                send_email_for_event(event, rule)
     if webhook_dispatcher is not None and event.event_type in SUBSCRIBABLE_EVENTS:
         webhook_dispatcher.dispatch(event)
     return created
@@ -144,15 +191,70 @@ class WebhookDispatcher:
         self._post = post_fn or post_json
         self._max_attempts = max_attempts
 
+    def __init__(self, webhooks, *, post_fn=None, max_attempts: int = 3) -> None:
+        self._webhooks = webhooks
+        self._post = post_fn or post_json
+        self._max_attempts = max_attempts
+        # §46.2 circuit breakers: a subscription endpoint that keeps failing
+        # is skipped fast instead of each delivery paying the full timeout.
+        # Bounded map; subscriptions are a small per-merchant set.
+        self._breakers: dict[str, "CircuitBreaker"] = {}
+
+    def _breaker_for(self, subscription: dict[str, object]) -> "CircuitBreaker":
+        from sellable.resilience import CircuitBreaker
+
+        key = str(subscription.get("subscription_id") or subscription.get("url") or "?")
+        breaker = self._breakers.get(key)
+        if breaker is None:
+            breaker = CircuitBreaker(
+                name=f"webhook:{key}", failure_threshold=5, cooldown_seconds=60.0
+            )
+            self._breakers[key] = breaker
+        return breaker
+
     def dispatch(self, event) -> int:
-        """Deliver to all matching subscriptions. Returns deliveries made."""
+        """Deliver to all matching subscriptions. Returns deliveries made.
+        An open breaker skips the subscription (the retry log records it as
+        SKIPPED_CIRCUIT_OPEN)."""
         made = 0
         for subscription in self._webhooks.matching_subscriptions(
             event.merchant_id, event.event_type
         ):
-            self._deliver_to(subscription, event)
+            from sellable.resilience import CircuitOpenError
+
+            try:
+                self._breaker_for(subscription).before_call()
+            except CircuitOpenError:
+                self._record_skipped(subscription, event)
+                continue
+            try:
+                self._deliver_to(subscription, event)
+            except Exception:
+                self._breaker_for(subscription).record_failure()
+                raise
+            self._breaker_for(subscription).record_success()
             made += 1
         return made
+
+    def _record_skipped(self, subscription: dict[str, object], event) -> None:
+        """Best-effort SKIPPED_CIRCUIT_OPEN row so triage sees the gap."""
+        try:
+            from sellable.contracts import new_id
+            from sellable.repositories import WebhookRepository
+
+            self._webhooks.log_dispatch(
+                dispatch_id=new_id("whd"),
+                subscription_id=str(subscription.get("subscription_id") or ""),
+                merchant_id=event.merchant_id,
+                event_id=event.event_id,
+                event_type=event.event_type,
+                status="SKIPPED_CIRCUIT_OPEN",
+                attempts=0,
+                last_status_code=None,
+                last_error="circuit open; endpoint skipped",
+            )
+        except Exception:  # noqa: BLE001 — triage evidence is best-effort
+            pass
 
     def _deliver_to(self, subscription: dict[str, object], event) -> None:
         from sellable.contracts import new_id

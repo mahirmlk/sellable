@@ -641,30 +641,48 @@ def _protocol_call(fn, *args, **kwargs):
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+def _discovery_core(merchant: str | None) -> CommerceCore:
+    """Resolve the merchant core for a public discovery surface.
+
+    The surfaces are multi-tenant now: a caller may name a merchant with
+    ``?merchant=<id>``; without the parameter the demo store answers.
+    Unknown merchants 404 rather than fabricating a profile (§37.2)."""
+    if not merchant or merchant == DEMO_MERCHANT_ID:
+        return commerce_core
+    from sellable.repositories import MerchantRepository
+
+    if MerchantRepository().get(merchant) is None:
+        raise HTTPException(status_code=404, detail="Unknown merchant")
+    return registry.get(merchant)
+
+
 @app.get("/.well-known/ucp", tags=["protocol-ucp"])
 @limiter.exempt
-def ucp_well_known(request: Request) -> dict[str, object]:
+def ucp_well_known(
+    request: Request, merchant: str | None = None
+) -> dict[str, object]:
     return ucp.discovery_document(
-        commerce_core, base_url=str(request.base_url).rstrip("/")
+        _discovery_core(merchant), base_url=str(request.base_url).rstrip("/")
     )
 
 
 @app.get("/agent/profile", tags=["protocol-discovery"])
 @limiter.exempt
-def agent_profile() -> dict[str, object]:
+def agent_profile(merchant: str | None = None) -> dict[str, object]:
     """Merchant agent profile: the two platform agents, versions, and the
     §32.3 access tier each agent's trust evidence supports."""
     from agents.runtime.versions import VersionRegistry, seed_registry
     from sellable.trust import AgentAccessTier, derive_access_tier
 
-    versions = seed_registry(VersionRegistry(), commerce_core.policy)
+    core = _discovery_core(merchant)
+    versions = seed_registry(VersionRegistry(), core.policy)
     agents = []
     for version in versions.all():
         entry = version.as_dict()
         tier = AgentAccessTier.PUBLIC_DISCOVERY
         try:
-            assessment = commerce_core.trust_service.agent_assessment(
-                version.agent_id, commerce_core.merchant_scope
+            assessment = core.trust_service.agent_assessment(
+                version.agent_id, core.merchant_scope
             )
             tier = derive_access_tier(assessment, agent_type="SELLABLE_INTERNAL_AGENT")
         except Exception:  # noqa: BLE001 — discovery degrades, never fails
@@ -672,16 +690,18 @@ def agent_profile() -> dict[str, object]:
         entry["access_tier"] = tier.value
         agents.append(entry)
     return {
-        "merchant_id": commerce_core.merchant_scope,
+        "merchant_id": core.merchant_scope,
         "agents": agents,
     }
 
 
 @app.get("/agent/capabilities", tags=["protocol-discovery"])
 @limiter.exempt
-def agent_capabilities() -> dict[str, object]:
+def agent_capabilities(merchant: str | None = None) -> dict[str, object]:
     """Merchant capability profile for negotiation (§15.1)."""
-    return build_merchant_profile(commerce_core.merchant_scope).model_dump(mode="json")
+    return build_merchant_profile(_discovery_core(merchant).merchant_scope).model_dump(
+        mode="json"
+    )
 
 
 @app.post("/commerce/sessions/negotiate", tags=["protocol-sessions"])

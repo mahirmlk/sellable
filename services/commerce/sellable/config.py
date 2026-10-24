@@ -110,6 +110,14 @@ class Settings:
     # Payment provider selection: razorpay (default) | stripe | simulated.
     payment_provider: str = "razorpay"
 
+    # Email notification channel (§35): disabled unless an SMTP relay is
+    # configured. Only urgent merchant events (approvals, payment failures)
+    # are emailed; the in-app feed and webhooks stay primary.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_from: str | None = None
+    smtp_recipients: str | None = None
+
     # Background maintenance worker (§46.1): drains the durable outbox and
     # runs cart/checkout/session expiry sweeps. On by default in production;
     # SELLABLE_MAINTENANCE_WORKER=0|1 overrides explicitly (tests off).
@@ -215,6 +223,10 @@ class Settings:
             admin_api_key=os.getenv("SELLABLE_ADMIN_API_KEY"),
             acp_enabled=os.getenv("SELLABLE_ACP_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            smtp_host=os.getenv("SMTP_HOST"),
+            smtp_port=int(os.getenv("SMTP_PORT", "587")),
+            smtp_from=os.getenv("SMTP_FROM"),
+            smtp_recipients=os.getenv("SMTP_RECIPIENTS"),
             maintenance_worker=(
                 None
                 if os.getenv("SELLABLE_MAINTENANCE_WORKER") is None
