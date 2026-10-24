@@ -447,6 +447,14 @@ class RefundRepository:
             )
             return [self._to_refund(r) for r in session.scalars(query).all()]
 
+    def get(self, refund_id: str, merchant_id: str) -> Refund | None:
+        """One refund, merchant-scoped; foreign ids stay invisible."""
+        with Session(self._engine) as session:
+            record = session.get(RefundRecord, refund_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            return self._to_refund(record)
+
 
 class NonceRepository:
     """Persistent HMAC nonce store for agent-request replay protection."""
@@ -1160,6 +1168,22 @@ class DelegationRepository:
             record.revoked_at = datetime.now(timezone.utc)
             session.commit()
             return _delegation_to_grant(record)
+
+    def list_for_merchant(
+        self, merchant_id: str, *, customer_id: str | None = None
+    ) -> list[Any]:
+        """All grants for a merchant, newest first (console lifecycle surface)."""
+        with Session(self._engine) as session:
+            query = (
+                select(self._record_cls)
+                .where(self._record_cls.merchant_id == merchant_id)
+                .order_by(self._record_cls.created_at.desc())
+            )
+            if customer_id is not None:
+                query = query.where(
+                    self._record_cls.principal_customer_id == customer_id
+                )
+            return [_delegation_to_grant(r) for r in session.scalars(query).all()]
 
     def history_for_principal(self, merchant_id: str, customer_id: str) -> list[Any]:
         """All grants (active and revoked) where the customer is principal —
