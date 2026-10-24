@@ -929,6 +929,9 @@ class NotificationRecord(Base):
     trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # At-least-once bus delivery redelivers events: the dedupe key makes the
+    # feed idempotent per (event, rule) instead of duplicating rows.
+    dedupe_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
 
 class WebhookSubscriptionRecord(Base):
@@ -1206,24 +1209,33 @@ _LEDGER_ATTRIBUTION_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: Post-initial columns per table: {table: ((name, ddl), ...)}.
+_LATE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "ledger_events": _LEDGER_ATTRIBUTION_COLUMNS,
+    "notifications": (("dedupe_key", "VARCHAR(160)"),),
+}
+
+
 def _ensure_ledger_attribution_columns(engine) -> None:
-    """Add missing ledger_events attribution columns (SQLite + Postgres)."""
+    """Add missing late columns to live databases (SQLite + Postgres)."""
     import logging
 
     from sqlalchemy import inspect as sa_inspect, text
 
     log = logging.getLogger("sellable.migrate")
-    try:
-        existing = {c["name"] for c in sa_inspect(engine).get_columns("ledger_events")}
-    except Exception:  # noqa: BLE001 — fresh databases get them from create_all
-        return
-    missing = [(name, ddl) for name, ddl in _LEDGER_ATTRIBUTION_COLUMNS if name not in existing]
-    if not missing:
-        return
-    with engine.begin() as connection:
-        for name, ddl in missing:
-            connection.execute(text(f"ALTER TABLE ledger_events ADD COLUMN {name} {ddl}"))
-            log.info("ledger_events: added column %s", name)
+    inspector = sa_inspect(engine)
+    for table, columns in _LATE_COLUMNS.items():
+        try:
+            existing = {c["name"] for c in inspector.get_columns(table)}
+        except Exception:  # noqa: BLE001 — fresh databases get them from create_all
+            continue
+        missing = [(name, ddl) for name, ddl in columns if name not in existing]
+        if not missing:
+            continue
+        with engine.begin() as connection:
+            for name, ddl in missing:
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                log.info("%s: added column %s", table, name)
 
 
 def _migrate(engine) -> None:

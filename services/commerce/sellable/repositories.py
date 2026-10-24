@@ -1880,6 +1880,17 @@ class PromotionRepository:
             )
             return [_promotion_to_contract(r) for r in session.scalars(query).all()]
 
+    def redemptions_since(self, merchant_id: str, since) -> list[Any]:
+        """Redemption rows in a window (§24.4 promotion-abuse input)."""
+        with Session(self._engine) as session:
+            query = (
+                select(self._redemption_cls)
+                .where(self._redemption_cls.merchant_id == merchant_id)
+                .where(self._redemption_cls.created_at >= since)
+                .order_by(self._redemption_cls.created_at.desc())
+            )
+            return list(session.scalars(query).all())
+
     def record_redemption(
         self, *, promotion_id: str, merchant_id: str, checkout_id: str, discount_paise: int
     ) -> None:
@@ -3291,6 +3302,18 @@ class IdentityLinkRepository:
                 return None
             return _link_to_contract(record)
 
+    def any_for_customer(self, merchant_id: str, customer_id: str) -> bool:
+        """True when the customer has any identity-link row (any status) —
+        the §12.1 known_customer evidence."""
+        with Session(self._engine) as session:
+            record = session.scalars(
+                select(self._record_cls)
+                .where(self._record_cls.merchant_id == merchant_id)
+                .where(self._record_cls.customer_id == customer_id)
+                .limit(1)
+            ).first()
+            return record is not None
+
     def linked_for_customer(
         self, merchant_id: str, customer_id: str, *, agent_id: str | None = None
     ) -> list[Any]:
@@ -3433,11 +3456,24 @@ class NotificationRepository:
         body: str = "",
         urgency: str = "NORMAL",
         trace_id: str | None = None,
-    ) -> str:
+        dedupe_key: str | None = None,
+    ) -> str | None:
+        """Persist one feed entry. With a ``dedupe_key``, an existing row for
+        the same (merchant, key) wins: at-least-once bus delivery must not
+        duplicate the merchant feed. Returns None on a duplicate."""
         from sellable.contracts import new_id
 
-        notification_id = new_id("ntf")
         with Session(self._engine) as session:
+            if dedupe_key is not None:
+                existing = session.scalars(
+                    select(self._record_cls)
+                    .where(self._record_cls.merchant_id == merchant_id)
+                    .where(self._record_cls.dedupe_key == dedupe_key)
+                    .limit(1)
+                ).first()
+                if existing is not None:
+                    return None
+            notification_id = new_id("ntf")
             session.add(
                 self._record_cls(
                     notification_id=notification_id,
@@ -3449,6 +3485,7 @@ class NotificationRepository:
                     urgency=urgency,
                     status="SENT" if channel == "inapp" else "PENDING",
                     trace_id=trace_id,
+                    dedupe_key=dedupe_key,
                     created_at=datetime.now(timezone.utc),
                 )
             )

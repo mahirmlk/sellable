@@ -89,23 +89,26 @@ def merchant_notifications_for(event) -> list[dict[str, object]]:
 
 def notify_for_event(event, *, notification_repo=None, webhook_dispatcher=None) -> list[str]:
     """Persist merchant feed entries and fan out to matching subscriptions.
-    Returns created notification ids. Idempotent per event only when the
-    caller dedupes — the bus delivers at-least-once, so redelivery may
-    duplicate feed rows (keyed per event for triage)."""
+    Returns created notification ids. Feed rows are idempotent per (event,
+    rule) via a dedupe key, so at-least-once bus redelivery never
+    duplicates the merchant feed."""
     created: list[str] = []
     if notification_repo is not None:
-        for rule in merchant_notifications_for(event):
-            created.append(
-                notification_repo.create(
-                    merchant_id=event.merchant_id,
-                    channel="inapp",
-                    event_type=event.event_type,
-                    title=str(rule["title"]),
-                    body=str(rule["body"]),
-                    urgency=str(rule["urgency"]),
-                    trace_id=event.trace_id,
-                )
+        for index, rule in enumerate(merchant_notifications_for(event)):
+            # One feed row per (event, rule): bus redelivery of the same
+            # event never duplicates the merchant notification feed.
+            notification_id = notification_repo.create(
+                merchant_id=event.merchant_id,
+                channel="inapp",
+                event_type=event.event_type,
+                title=str(rule["title"]),
+                body=str(rule["body"]),
+                urgency=str(rule["urgency"]),
+                trace_id=event.trace_id,
+                dedupe_key=f"{event.event_id}:{index}:{rule['urgency']}",
             )
+            if notification_id is not None:
+                created.append(notification_id)
     if webhook_dispatcher is not None and event.event_type in SUBSCRIBABLE_EVENTS:
         webhook_dispatcher.dispatch(event)
     return created

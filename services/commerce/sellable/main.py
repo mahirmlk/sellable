@@ -652,13 +652,28 @@ def ucp_well_known(request: Request) -> dict[str, object]:
 @app.get("/agent/profile", tags=["protocol-discovery"])
 @limiter.exempt
 def agent_profile() -> dict[str, object]:
-    """Merchant agent profile: the two platform agents and versions."""
+    """Merchant agent profile: the two platform agents, versions, and the
+    §32.3 access tier each agent's trust evidence supports."""
     from agents.runtime.versions import VersionRegistry, seed_registry
+    from sellable.trust import AgentAccessTier, derive_access_tier
 
     versions = seed_registry(VersionRegistry(), commerce_core.policy)
+    agents = []
+    for version in versions.all():
+        entry = version.as_dict()
+        tier = AgentAccessTier.PUBLIC_DISCOVERY
+        try:
+            assessment = commerce_core.trust_service.agent_assessment(
+                version.agent_id, commerce_core.merchant_scope
+            )
+            tier = derive_access_tier(assessment, agent_type="SELLABLE_INTERNAL_AGENT")
+        except Exception:  # noqa: BLE001 — discovery degrades, never fails
+            pass
+        entry["access_tier"] = tier.value
+        agents.append(entry)
     return {
         "merchant_id": commerce_core.merchant_scope,
-        "agents": [version.as_dict() for version in versions.all()],
+        "agents": agents,
     }
 
 
@@ -837,10 +852,18 @@ def identity_me(
         raise HTTPException(status_code=404, detail=str(error)) from error
     if link.status.value != "LINKED":
         raise HTTPException(status_code=404, detail="No linked identity")
+    core = commerce
+    level = identity_service.resolve_identity_level(
+        core.merchant_scope,
+        link.customer_id,
+        identity_repo=core.identity_repo,
+        delegation_repo=core.delegation_repo,
+    )
     return {
         "customer_id": link.customer_id,
         "agent_id": link.agent_id,
         "scopes": list(link.scopes),
+        "identity_level": level.value,
         "expires_at": link.expires_at.isoformat(),
     }
 

@@ -34,6 +34,11 @@ FAILED_PAYMENTS_STEP_UP = 2
 FAILED_PAYMENTS_BLOCK = 4
 FAILED_AUTH_STEP_UP = 3
 PAYMENT_TESTING_COUNT = 3
+
+#: §24.4 promotion-abuse detection: redemptions by one customer inside
+#: the caller's window (24h) at or above this count step the transaction
+#: up and raise a PROMOTION_ABUSE fraud flag.
+PROMOTION_ABUSE_REDEMPTIONS = 5
 PAYMENT_TESTING_MAX_PAISE = 2_000
 PAYMENT_TESTING_WINDOW = timedelta(minutes=30)
 
@@ -86,6 +91,7 @@ class RiskService:
         trust_tier: TrustTier | None = None,
         approval_threshold_paise: int | None = None,
         max_order_paise: int | None = None,
+        promotion_redemptions_recent: int = 0,
         trace_id: str | None = None,
         now: datetime | None = None,
     ) -> RiskAssessment:
@@ -134,6 +140,16 @@ class RiskService:
                 self._flag(
                     merchant_id, FraudKind.PAYMENT_TESTING, subject_id,
                     {"small_orders_in_window": len(small_recent)}, trace_id,
+                )
+
+            # Promotion abuse (§24.4): a burst of redeemed promotions by one
+            # customer is the classic agent-channel coupon-farming pattern.
+            # The count is computed by the caller over a bounded window.
+            if promotion_redemptions_recent >= PROMOTION_ABUSE_REDEMPTIONS:
+                triggered.append((RiskLevel.STEP_UP_AUTH, "PROMOTION_VELOCITY_HIGH"))
+                self._flag(
+                    merchant_id, FraudKind.PROMOTION_ABUSE, subject_id,
+                    {"redemptions_in_window": promotion_redemptions_recent}, trace_id,
                 )
 
             failed_payments = self._ledger_action_count(
