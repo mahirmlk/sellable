@@ -612,6 +612,10 @@ class CommerceCore:
             },
             reasoning_summary="Evaluated transaction risk before authorization.",
             policy_refs=[f"RISK.{reason}" for reason in assessment.reasons[:5]],
+            resource_type="checkout",
+            resource_id=checkout_id,
+            risk_ref=assessment.decision_id,
+            reason_code=assessment.level.value,
         )
         if assessment.level is RiskLevel.BLOCK:
             self.checkout_service.reject(checkout_id, self.merchant_scope)
@@ -829,6 +833,8 @@ class CommerceCore:
             output={"outcome": outcome, "reason_code": decision.reason_code},
             reasoning_summary=f"Gateway resolved delegation for {route}: {outcome}.",
             policy_refs=decision.matched_policies,
+            authorization_ref=decision.decision_id,
+            reason_code=decision.reason_code,
         )
         return decision
 
@@ -1515,6 +1521,10 @@ class CommerceCore:
                     },
                     reasoning_summary="Resolved the customer delegation for the checkout order.",
                     policy_refs=auth_decision.matched_policies,
+                    resource_type="order",
+                    resource_id=None,
+                    authorization_ref=auth_decision.decision_id,
+                    reason_code=auth_decision.reason_code,
                 )
                 if auth_decision.outcome is AuthorizationOutcome.DENY:
                     self._record_trust_outcome(
@@ -1663,6 +1673,10 @@ class CommerceCore:
             output={"verdict": decision.verdict, "reason_code": decision.reason_code},
             reasoning_summary=decision.reasoning_summary,
             policy_refs=decision.policy_refs,
+            resource_type="cart",
+            resource_id=cart.mandate_id,
+            reason_code=decision.reason_code,
+            agent_id=intent.buyer_agent_id,
         )
         return decision
 
@@ -1721,6 +1735,10 @@ class CommerceCore:
                         "Resolved the customer delegation before touching commerce state."
                     ),
                     policy_refs=decision.matched_policies,
+                    resource_type="order",
+                    authorization_ref=decision.decision_id,
+                    reason_code=decision.reason_code,
+                    agent_id=intent.buyer_agent_id,
                 )
                 if decision.outcome is AuthorizationOutcome.DENY:
                     self._record_trust_outcome(
@@ -2290,6 +2308,14 @@ class CommerceCore:
         policy_refs: list[str] | None = None,
         outcome_effect: dict[str, object] | None = None,
         provider_ref: str | None = None,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        agent_version: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        risk_ref: str | None = None,
+        authorization_ref: str | None = None,
+        reason_code: str | None = None,
     ) -> None:
         self.ledger.append(
             LedgerEvent(
@@ -2303,6 +2329,14 @@ class CommerceCore:
                 policy_refs=policy_refs or [],
                 outcome_effect=outcome_effect,
                 provider_ref=provider_ref,
+                customer_id=customer_id,
+                agent_id=agent_id,
+                agent_version=agent_version,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                risk_ref=risk_ref,
+                authorization_ref=authorization_ref,
+                reason_code=reason_code,
             )
         )
 

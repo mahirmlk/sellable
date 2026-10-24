@@ -371,6 +371,18 @@ class CustomerServiceAgent:
     ) -> CSDecision:
         self.recorder.open_run(trace_id=trace_id, versions=self.versions)
         self.recorder.close_run(status="BLOCKED", outcome="DENIED")
+        # Ledger evidence like the seller agent records — safety metrics and
+        # replay must see CS guardrail blocks too (§29.2, §4.4).
+        try:
+            self.tools._record(
+                trace_id=trace_id,
+                action="cs.guardrail_blocked",
+                inputs={"blocks": guard_recorder.blocks},
+                output={"action": CSAction.DENIED.value},
+                explanation="Guardrail middleware blocked the customer-service run before tool use.",
+            )
+        except Exception:  # noqa: BLE001 — evidence is best-effort
+            pass
         return CSDecision(
             trace_id=trace_id,
             action=CSAction.DENIED,

@@ -1236,6 +1236,17 @@ class LedgerEvent(StrictModel):
     outcome_effect: dict[str, Any] | None = None
     provider_ref: str | None = Field(default=None, max_length=256)
     flags: list[str] = Field(default_factory=list)
+    # §28.2 attribution: who acted, on what resource, under which risk and
+    # authorization evidence, and why (reason code). Optional so historical
+    # call sites stay valid.
+    customer_id: str | None = Field(default=None, max_length=128)
+    agent_id: str | None = Field(default=None, max_length=128)
+    agent_version: str | None = Field(default=None, max_length=64)
+    resource_type: str | None = Field(default=None, max_length=64)
+    resource_id: str | None = Field(default=None, max_length=128)
+    risk_ref: str | None = Field(default=None, max_length=128)
+    authorization_ref: str | None = Field(default=None, max_length=128)
+    reason_code: str | None = Field(default=None, max_length=96)
 
 
 class ConsoleTransactionItem(StrictModel):

@@ -44,6 +44,16 @@ class LedgerEventRecord(Base):
     outcome_effect_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     provider_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
     flags_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    # §28.2 attribution columns (nullable for rows written before they
+    # existed; ``_migrate`` adds them to live databases).
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    risk_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    authorization_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(96), nullable=True)
 
 
 class OrderRecord(Base):
@@ -1180,12 +1190,49 @@ def _migrate_sqlite(engine) -> None:
                 )
 
 
+
+#: §28.2 ledger attribution columns added after the initial schema. Any
+#: missing column is added to a live database at startup, on every dialect,
+#: without dropping data.
+_LEDGER_ATTRIBUTION_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("customer_id", "VARCHAR(128)"),
+    ("agent_id", "VARCHAR(128)"),
+    ("agent_version", "VARCHAR(64)"),
+    ("resource_type", "VARCHAR(64)"),
+    ("resource_id", "VARCHAR(128)"),
+    ("risk_ref", "VARCHAR(128)"),
+    ("authorization_ref", "VARCHAR(128)"),
+    ("reason_code", "VARCHAR(96)"),
+)
+
+
+def _ensure_ledger_attribution_columns(engine) -> None:
+    """Add missing ledger_events attribution columns (SQLite + Postgres)."""
+    import logging
+
+    from sqlalchemy import inspect as sa_inspect, text
+
+    log = logging.getLogger("sellable.migrate")
+    try:
+        existing = {c["name"] for c in sa_inspect(engine).get_columns("ledger_events")}
+    except Exception:  # noqa: BLE001 — fresh databases get them from create_all
+        return
+    missing = [(name, ddl) for name, ddl in _LEDGER_ATTRIBUTION_COLUMNS if name not in existing]
+    if not missing:
+        return
+    with engine.begin() as connection:
+        for name, ddl in missing:
+            connection.execute(text(f"ALTER TABLE ledger_events ADD COLUMN {name} {ddl}"))
+            log.info("ledger_events: added column %s", name)
+
+
 def _migrate(engine) -> None:
     """Add columns introduced after the initial schema without dropping data."""
     import logging
 
     from sqlalchemy import text
 
+    _ensure_ledger_attribution_columns(engine)
     if engine.dialect.name == "sqlite":
         _migrate_sqlite(engine)
         return

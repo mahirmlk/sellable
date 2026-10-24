@@ -33,6 +33,14 @@ class LedgerRepository:
             outcome_effect_json=event.outcome_effect,
             provider_ref=event.provider_ref,
             flags_json=event.flags,
+            customer_id=event.customer_id,
+            agent_id=event.agent_id,
+            agent_version=event.agent_version,
+            resource_type=event.resource_type,
+            resource_id=event.resource_id,
+            risk_ref=event.risk_ref,
+            authorization_ref=event.authorization_ref,
+            reason_code=event.reason_code,
         )
         with Session(self._engine) as session:
             session.add(record)

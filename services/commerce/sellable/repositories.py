@@ -2793,6 +2793,36 @@ class ObservabilityRepository:
                 "tool_failures": sum(1 for t in tools if t.status != "OK"),
             }
 
+    def list_model_calls(self, merchant_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Model-level telemetry rows (§29.1), newest first, merchant-scoped
+        via the owning run."""
+        from sqlalchemy import select
+
+        with Session(self._engine) as session:
+            rows = session.scalars(
+                select(self._model_cls)
+                .where(self._model_cls.merchant_id == merchant_id)
+                .order_by(self._model_cls.created_at.desc())
+                .limit(limit)
+            ).all()
+            return [
+                {
+                    "call_id": r.call_id,
+                    "run_id": r.run_id,
+                    "provider": r.provider,
+                    "model": r.model,
+                    "input_tokens": r.input_tokens,
+                    "output_tokens": r.output_tokens,
+                    "estimated_cost_usd": r.estimated_cost_usd,
+                    "latency_ms": r.latency_ms,
+                    "finish_reason": r.finish_reason,
+                    "error": r.error,
+                    "retry_count": r.retry_count,
+                    "fallback_used": r.fallback_used,
+                }
+                for r in rows
+            ]
+
     def list_runs(self, merchant_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         """Recent agent runs for operations triage, newest first."""
         with Session(self._engine) as session:
