@@ -109,6 +109,12 @@ class Settings:
 
     # Payment provider selection: razorpay (default) | stripe | simulated.
     payment_provider: str = "razorpay"
+
+    # Background maintenance worker (§46.1): drains the durable outbox and
+    # runs cart/checkout/session expiry sweeps. On by default in production;
+    # SELLABLE_MAINTENANCE_WORKER=0|1 overrides explicitly (tests off).
+    maintenance_worker: bool | None = None
+    maintenance_interval_seconds: int = 60
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
 
@@ -156,6 +162,13 @@ class Settings:
         """
         return self.environment in ("development", "test")
 
+    @property
+    def maintenance_worker_enabled(self) -> bool:
+        """Explicit env flag wins; otherwise on in production only."""
+        if self.maintenance_worker is not None:
+            return self.maintenance_worker
+        return not self.is_dev_environment
+
     # CORS
     cors_origins: tuple[str, ...] = (
         "https://sellable.shop",
@@ -202,6 +215,12 @@ class Settings:
             admin_api_key=os.getenv("SELLABLE_ADMIN_API_KEY"),
             acp_enabled=os.getenv("SELLABLE_ACP_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            maintenance_worker=(
+                None
+                if os.getenv("SELLABLE_MAINTENANCE_WORKER") is None
+                else os.getenv("SELLABLE_MAINTENANCE_WORKER", "").lower()
+                in ("1", "true", "yes")
+            ),
             cors_origins=_parse_cors_origins(os.getenv("CORS_ORIGINS"))
             or (
                 ("https://sellable.shop", "https://www.sellable.shop")

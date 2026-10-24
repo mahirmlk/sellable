@@ -45,9 +45,10 @@ def test_datasets_registered() -> None:
         "cs-support-v1",
         "adversarial-v1",
         "invariants-v1",
+        "seller-conversation-v1",
     }
     total = sum(len(spec.cases) for spec in SUITES.values())
-    assert total == 7 + 5 + 5 + 12 + 6
+    assert total == 7 + 5 + 5 + 15 + 6 + 3
 
 
 def test_sync_is_idempotent(eval_env) -> None:
@@ -55,8 +56,8 @@ def test_sync_is_idempotent(eval_env) -> None:
     first = harness.sync_all()
     second = harness.sync_all()
     assert first == second
-    assert len(repo.list_suites()) == 5
-    assert len(repo.cases_for_suite("adversarial-v1")) == 12
+    assert len(repo.list_suites()) == 6
+    assert len(repo.cases_for_suite("adversarial-v1")) == 15
 
 
 def test_full_battery_passes_on_current_code(eval_env) -> None:
@@ -64,7 +65,7 @@ def test_full_battery_passes_on_current_code(eval_env) -> None:
     reports = [harness.run_suite(factory, suite_id) for suite_id in SUITES]
     for report in reports:
         assert report.failed == 0, (report.suite_id, [r.case_id for r in report.results if not r.passed])
-    assert sum(r.passed for r in reports) == 35
+    assert sum(r.passed for r in reports) == 41
     # Persistence round-trips.
     for report in reports:
         stored = repo.results_for_run(report.run_id)

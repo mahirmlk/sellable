@@ -296,25 +296,14 @@ class SellerTools:
     def recommend(
         self, *, product: Product, trace_id: str, limit: int = 3
     ) -> list[Product]:
-        """Deterministic recommendations (§7.1, §19): merchant-curated
-        relationships first, then same-category items. A service-backed
-        engine (co-purchase/semantic) plugs in here without changing agent
-        semantics; the agent only presents what tools return."""
-        candidates: list[Product] = []
-        seen = {product.sku}
-        upsell_sku = product.attributes.get("upsell_sku")
-        if isinstance(upsell_sku, str) and upsell_sku not in seen:
-            try:
-                candidates.append(self.commerce.catalog.get(upsell_sku))
-                seen.add(upsell_sku)
-            except UnknownSkuError:
-                pass
-        for item in self.commerce.catalog.search("", {product.category}):
-            if item.sku not in seen:
-                candidates.append(item)
-                seen.add(item.sku)
-            if len(candidates) >= limit:
-                break
+        """Deterministic recommendations via the separate recommendation
+        service (§7.1, §19.3): merchant-curated chains, category breadth,
+        then the §19.4 safety filter (in stock, merchant-allowed
+        categories). The agent only presents what the service returns."""
+        from sellable.recommendations import RecommendationService
+
+        service = RecommendationService(self.commerce.catalog, policy=self.commerce.policy)
+        candidates = service.for_product(product.sku, limit=limit)
         self._note_tool("recommendations.get")
         self._record(
             trace_id=trace_id,

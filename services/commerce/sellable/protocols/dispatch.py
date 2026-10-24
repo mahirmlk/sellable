@@ -96,26 +96,14 @@ def lookup_product(core, sessions, ctx: ProtocolContext, *, sku: str):
 
 def get_recommendations(core, sessions, ctx: ProtocolContext, *, sku: str, limit: int = 3):
     require_capability(sessions, core, ctx, "recommendations.get")
-    product = lookup_product(core, sessions, ctx, sku=sku)
-    # Same deterministic rule as the seller recommendations tool
-    # (merchant-curated chain, then category); the recommendation engine
-    # plugs in here without changing protocol semantics.
-    candidates = []
-    seen = {product.sku}
-    upsell_sku = product.attributes.get("upsell_sku")
-    if isinstance(upsell_sku, str) and upsell_sku not in seen:
-        try:
-            candidates.append(core.catalog.get(upsell_sku))
-            seen.add(upsell_sku)
-        except Exception:  # noqa: BLE001 — dangling curation never breaks discovery
-            pass
-    for item in core.catalog.search("", {product.category}):
-        if item.sku not in seen:
-            candidates.append(item)
-            seen.add(item.sku)
-        if len(candidates) >= max(limit, 1):
-            break
-    return candidates
+    lookup_product(core, sessions, ctx, sku=sku)
+    # The separate deterministic recommendation service (§19.3) owns
+    # candidate generation and the §19.4 safety filter (availability,
+    # merchant category policy); the protocol layer only forwards.
+    from sellable.recommendations import RecommendationService
+
+    service = RecommendationService(core.catalog, policy=core.policy)
+    return service.for_product(sku, limit=max(limit, 1), customer_id=ctx.customer_id)
 
 
 # ------------------------------------------------------------------

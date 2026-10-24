@@ -179,7 +179,63 @@ def _assert_no_demo_key_configured() -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Background maintenance worker (§46.1): the durable outbox must drain and
+# carts/checkouts/sessions must expire even with no inbound traffic. A
+# daemon thread is enough while the deployment stays single-process
+# (enforced at startup); a queue worker can replace it without changing
+# the touched interfaces.
+# ---------------------------------------------------------------------------
+
+_MAINTENANCE_STOP = threading.Event()
+
+
+def _maintenance_tick() -> None:
+    from sellable.event_bus import drain_once
+
+    _drain_bus_best_effort()
+    merchants = MerchantRepository().list_all(limit=1000)
+    for record in merchants:
+        merchant_id = record.merchant_id
+        try:
+            core = registry.get(merchant_id)
+            core.cart_service.expire_due(merchant_id)
+            core.checkout_service.expire_due(merchant_id)
+            session_service.expire_due(merchant_id)
+        except Exception as error:  # noqa: BLE001 — sweeps never kill the worker
+            logger.warning("Maintenance sweep failed for %s: %s", merchant_id, error)
+
+
+def _maintenance_loop() -> None:
+    interval = max(10, settings.maintenance_interval_seconds)
+    # Initial delay: let startup finish and keep test databases quiet.
+    if _MAINTENANCE_STOP.wait(interval):
+        return
+    while not _MAINTENANCE_STOP.is_set():
+        try:
+            _maintenance_tick()
+        except Exception as error:  # noqa: BLE001 — the worker survives anything
+            logger.warning("Maintenance tick failed: %s", error)
+        if _MAINTENANCE_STOP.wait(interval):
+            return
+
+
+def _start_maintenance_worker() -> None:
+    if not settings.maintenance_worker_enabled:
+        logger.info("Maintenance worker disabled (env=%s)", settings.environment)
+        return
+    thread = threading.Thread(
+        target=_maintenance_loop, name="sellable-maintenance", daemon=True
+    )
+    thread.start()
+    logger.info(
+        "Maintenance worker started (interval=%ss)", settings.maintenance_interval_seconds
+    )
+
+
+
 @asynccontextmanager
+
 async def lifespan(_: FastAPI):
     logger.info("Starting SELLABLE Commerce Core")
     _assert_single_worker()
@@ -193,7 +249,12 @@ async def lifespan(_: FastAPI):
         warm_jwks_cache()
     except Exception as exc:  # noqa: BLE001 — warm must never break startup
         logger.debug("JWKS warm skipped: %s", exc)
+    try:
+        _start_maintenance_worker()
+    except Exception as exc:  # noqa: BLE001 — worker must never break startup
+        logger.warning("Maintenance worker failed to start: %s", exc)
     yield
+    _MAINTENANCE_STOP.set()
     logger.info("Shutting down SELLABLE Commerce Core")
 
 
@@ -1222,6 +1283,64 @@ def commerce_support_create(
         summary=str(body["summary"]), order_id=body.get("order_id"),
         category=str(body.get("category") or "other"),
     )
+
+@app.post("/console/evals/gates/check", tags=["console"])
+@limiter.limit("10/minute")
+def eval_gates_check(
+    request: Request,
+    body: dict,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """Apply the §30.6 regression gates to the latest recorded run of each
+    requested suite (default: the P0-bearing suites). Gates were previously
+    defined but wired to nothing; this is the release-check surface."""
+    from evals.datasets.v1 import SUITES
+    from evals.regression.gates import check_gates
+    from evals.runner.harness import CaseReport, SuiteReport
+    from sellable.repositories import EvaluationRepository
+
+    repo = EvaluationRepository()
+    suite_ids = body.get("suite_ids") or [
+        "seller-safety-v1",
+        "adversarial-v1",
+        "invariants-v1",
+    ]
+    reports: list[SuiteReport] = []
+    per_suite: dict[str, object] = {}
+    for suite_id in suite_ids:
+        if suite_id not in SUITES:
+            raise HTTPException(status_code=400, detail=f"Unknown suite: {suite_id}")
+        run = repo.latest_run_for_suite(suite_id)
+        if run is None:
+            per_suite[suite_id] = {"run_id": None, "note": "no recorded run; run the suite first"}
+            continue
+        cases = {c["case_id"]: c for c in repo.cases_for_suite(suite_id)}
+        report = SuiteReport(suite_id=suite_id, run_id=run["run_id"])
+        for result in repo.results_for_run(run["run_id"]):
+            case_meta = cases.get(result["case_id"], {})
+            report.results.append(
+                CaseReport(
+                    case_id=result["case_id"],
+                    category=case_meta.get("category", "commerce"),
+                    severity=case_meta.get("severity", "P1"),
+                    passed=bool(result["passed"]),
+                    score_bps=int(result.get("score_bps") or 0),
+                    duration_ms=int(result.get("duration_ms") or 0),
+                    error=result.get("error"),
+                )
+            )
+        reports.append(report)
+        per_suite[suite_id] = {"run_id": run["run_id"], "results": len(report.results)}
+    if not reports:
+        return {"gates_passed": False, "failures": ["no recorded eval runs"], "metrics": {}, "suites": per_suite}
+    gate_report = check_gates(reports)
+    return {
+        "gates_passed": gate_report.passed,
+        "failures": gate_report.failures,
+        "metrics": gate_report.metrics,
+        "suites": per_suite,
+    }
+
 
 @app.get("/agents/status", tags=["console"])
 @limiter.limit("60/minute")
