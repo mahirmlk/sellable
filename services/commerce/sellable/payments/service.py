@@ -70,6 +70,8 @@ class PaymentService:
             failure_threshold=5,
             cooldown_seconds=30.0,
         )
+        # Webhook settlement serialization (single-process invariant).
+        self._settlement_lock = threading.Lock()
         self._core_resolver = core_resolver
         # Guards start_payment / retry_payment check-and-set so concurrent
         # calls cannot mint two live provider links for one order.
@@ -165,7 +167,7 @@ class PaymentService:
                 if order.provider_link_id in self._local_order_by_link_id:
                     self._local_order_by_link_id[order.provider_link_id] = order_id
                 return self._rebuild_attempt(order)
-            consented_order = core.consume_consent(consent_id, order_id=order_id)
+            core.consume_consent(consent_id, order_id=order_id)
             pending_order = core.mark_payment_pending(order_id)
             self._core_by_order_id[order_id] = core
             return self._create_provider_attempt(order_id, pending_order.trace_id, core)
@@ -331,7 +333,19 @@ class PaymentService:
         ``extra_flags`` marks synthetic provenance (e.g. ``["simulated"]``) on
         the resulting ledger events so demo money is never narrated as
         verified provider money.
+
+        Settlement is serialized per process: the delivery claim is PK-atomic
+        across processes (Postgres), but concurrent in-process deliveries of
+        the same event must not interleave claim-check-then-settle windows.
+        The single-worker deployment invariant makes the process lock the
+        whole story.
         """
+        with self._settlement_lock:
+            return self._handle_webhook_locked(body, signature, extra_flags)
+
+    def _handle_webhook_locked(
+        self, body: bytes, signature: str | None, extra_flags: list[str] | None = None
+    ) -> PaymentAttempt:
         self.rail.verify_webhook(body, signature)
         try:
             payload = json.loads(body)

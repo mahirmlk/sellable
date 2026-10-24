@@ -69,7 +69,7 @@ from sellable.contracts import (
 from sellable.checkout import CheckoutHoldError
 from sellable.core import CommerceCore, IdempotencyReuseError
 from sellable.delegations import OperationScope
-from sellable.contracts import AgentProfile, utc_now
+from sellable.contracts import utc_now
 from sellable.protocols import a2a, dispatch, mcp, ucp
 from sellable.protocols.capabilities import build_merchant_profile
 from sellable.protocols.dispatch import ProtocolContext, ProtocolError

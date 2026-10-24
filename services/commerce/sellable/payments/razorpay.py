@@ -183,7 +183,7 @@ class RazorpayAdapter:
                 return resource.create(payload)
             except BadRequestError as error:
                 raise RazorpayRequestError("Razorpay rejected the request", retryable=False) from error
-            except (GatewayError, ServerError) as error:
+            except (GatewayError, ServerError):
                 last_error = RazorpayRequestError(
                     f"Razorpay could not complete the request (attempt {attempt + 1})",
                     retryable=True,

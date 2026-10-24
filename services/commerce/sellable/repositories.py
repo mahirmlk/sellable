@@ -171,7 +171,6 @@ class AgentApiKeyRepository:
 
 class OrderRepository:
     def __init__(self, engine: object | None = None) -> None:
-        from sqlalchemy import Engine
         self._engine = engine or make_engine()
 
     def save(self, order: Order) -> None:
@@ -993,7 +992,6 @@ class BuyerMissionRepository:
 
 class ConsentRepository:
     def __init__(self, engine: object | None = None) -> None:
-        from sqlalchemy import Engine
         self._engine = engine or make_engine()
 
     def save(self, consent: Consent) -> None:

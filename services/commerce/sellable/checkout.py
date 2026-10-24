@@ -209,7 +209,7 @@ class CheckoutService:
                 categories=self._line_categories(checkout.lines),
             )
             if decision.outcome is AuthorizationOutcome.DENY:
-                rejected = self._move(checkout, CheckoutStatus.REJECTED, "checkout.rejected")
+                self._move(checkout, CheckoutStatus.REJECTED, "checkout.rejected")
                 raise CheckoutError(
                     f"delegation rejected checkout: {decision.reason_code}"
                 ) from None

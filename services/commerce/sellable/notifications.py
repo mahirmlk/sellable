@@ -12,7 +12,11 @@ import hmac
 import json
 import logging
 import urllib.request
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:  # pragma: no cover — annotation-only
+    from sellable.resilience import CircuitBreaker
 
 
 logger = logging.getLogger("sellable.notifications")
@@ -185,11 +189,6 @@ def post_json(
 
 class WebhookDispatcher:
     """Signed outbound deliveries with attempt logging (target §36.2)."""
-
-    def __init__(self, webhook_repo, *, post_fn=None, max_attempts: int = 3) -> None:
-        self._webhooks = webhook_repo
-        self._post = post_fn or post_json
-        self._max_attempts = max_attempts
 
     def __init__(self, webhooks, *, post_fn=None, max_attempts: int = 3) -> None:
         self._webhooks = webhooks

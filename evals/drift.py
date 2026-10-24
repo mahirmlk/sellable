@@ -117,7 +117,6 @@ def collect_production_stats(
             fraud_flags += 1
 
     overview = analytics_repo.overview(merchant_id, since=since)
-    orders_paid = overview.get("orders_paid", 0)
     return {
         "tool_error_rate": (tool_failures / tool_calls) if tool_calls else 0.0,
         "policy_denial_rate": (policy_denied / policy_total) if policy_total else 0.0,

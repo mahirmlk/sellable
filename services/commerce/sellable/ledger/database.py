@@ -1093,12 +1093,29 @@ def _build_engine(config: Settings = settings):
             if str(parent) not in ("", "."):
                 Path(parent).mkdir(parents=True, exist_ok=True)
         connect_args: dict[str, object] = {"check_same_thread": False}
+        is_sqlite = True
     elif "pooler.supabase.com" in config.database_url or "pgbouncer=true" in config.database_url:
         # Supabase pooler (PgBouncer transaction mode) does not support prepared statements
         connect_args = {"prepare_threshold": None}
     else:
         connect_args = {}
-    return create_engine(config.database_url, connect_args=connect_args, pool_pre_ping=True)
+        is_sqlite = False
+    engine = create_engine(config.database_url, connect_args=connect_args, pool_pre_ping=True)
+    if is_sqlite:
+        # Concurrent writers (request threadpool + the maintenance worker)
+        # need SQLite's busy handler: without it the loser of a write lock
+        # fails immediately with "database is locked" instead of waiting.
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - env-specific
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA busy_timeout = 5000")
+            if ":memory:" not in config.database_url:
+                cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.close()
+
+    return engine
 
 
 def _migrate_sqlite(engine) -> None:
