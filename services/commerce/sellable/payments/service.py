@@ -421,6 +421,29 @@ class PaymentService:
                     flags=flags,
                 )
                 return attempt
+            provider_currency = (
+                payment.get("currency") or link_entity.get("currency")
+            )
+            if provider_currency is not None and str(provider_currency) != "INR":
+                # §45 payment invariants: currency must match. The platform
+                # settles INR only; a foreign-currency capture never settles.
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.currency_mismatch",
+                    inputs={"event": event_name, "provider_payment_id": provider_payment_id},
+                    output={
+                        "provider_currency": str(provider_currency),
+                        "expected_currency": "INR",
+                    },
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        "The captured currency does not match the platform "
+                        "currency; the order was not settled." + provenance_note
+                    ),
+                    flags=flags,
+                )
+                return attempt
             if local_order.status is OrderStatus.PAID:
                 # Already settled: redelivery, or payment_link.paid racing
                 # payment.captured for the same settlement. A second DISTINCT
@@ -677,6 +700,27 @@ class PaymentService:
                     explanation=(
                         "The Stripe captured amount does not match the local order "
                         "amount (or is missing); the order was not settled."
+                    ),
+                    actor=LedgerActor.STRIPE,
+                )
+                return attempt
+            event_currency = entity.get("currency")
+            if event_currency is not None and str(event_currency).upper() != "INR":
+                # §45 payment invariants: currency must match (Stripe reports
+                # it lowercase); a foreign-currency intent never settles.
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.currency_mismatch",
+                    inputs={"event": event_type, "provider_payment_id": provider_payment_id},
+                    output={
+                        "provider_currency": str(event_currency),
+                        "expected_currency": "INR",
+                    },
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        "The Stripe captured currency does not match the platform "
+                        "currency; the order was not settled."
                     ),
                     actor=LedgerActor.STRIPE,
                 )

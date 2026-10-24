@@ -1752,6 +1752,23 @@ def commerce_order_timeline(
     }
 
 
+@app.get("/orders/{order_id}/receipt", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_order_receipt(
+    request: Request,
+    order_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    """Normalized §25.3 payment receipt for a settled order: provider state
+    bound to authorization, risk, and trace evidence."""
+    try:
+        receipt = core.payment_receipt(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return receipt.model_dump(mode="json")
+
+
 @app.post("/orders/{order_id}/cancel-request", tags=["protocol-commerce"])
 @limiter.limit("30/minute")
 def commerce_order_cancel_request(

@@ -85,14 +85,21 @@ class AgentGateway:
             "name": self.merchant_name,
             "merchant_id": self.commerce.policy.merchant_id,
             "protocol_version": "0.1",
+            # Capability ids follow the §15 capability catalog (singular
+            # nouns) so discovery, negotiation, and dispatch agree on one
+            # vocabulary. consent.request is the legacy /agent/* surface
+            # name; the canonical flow is checkout.authorize → orders.create.
             "capabilities": [
                 "catalog.search",
-                "catalog.get",
-                "quote.create",
-                "quote.negotiate",
-                "consent.request",
+                "catalog.lookup",
+                "recommendations.get",
+                "quotes.create",
+                "quotes.negotiate",
+                "cart.write",
+                "checkout.create",
+                "checkout.authorize",
                 "orders.create",
-                "orders.status",
+                "orders.read",
             ],
             "discovery": {
                 "catalog": "/catalog.ai.json",

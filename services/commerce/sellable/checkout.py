@@ -8,8 +8,9 @@ inventory, live delegation) and appended to the checkout event log.
 Once AUTHORIZED the price snapshot is hash-bound: any material drift must
 cancel and restart, never silently re-price (§14.5).
 
-Risk evaluation is a recorded pass-through until the Phase 3 risk engine
-lands; the hook point (``review_risk`` + ``risk_reference``) is stable.
+Risk evaluation runs through the deterministic ``RiskService`` at
+``checkout_authorize`` (BLOCK rejects, REQUIRE_* holds); the hook point
+(``review_risk`` + ``risk_reference``) is stable.
 Promotion redemptions are recorded only at completion, so priced-but-
 abandoned checkouts never consume promotion budget.
 """

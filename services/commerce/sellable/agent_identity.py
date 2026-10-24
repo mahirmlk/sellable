@@ -3,7 +3,7 @@
 Phase 1a: pure, transport-safe contracts only — no persistence, no network.
 Identity answers *who is this agent*; reputation answers *how has it
 behaved*. Reputation is a risk signal, never the sole authorization
-mechanism (§13.3). Persistence and credential issuance arrive in Phase 1b.
+mechanism (§13.3). Persistence lives in ``AgentIdentityRepository``; issuance flows through ``/agents/register`` and the sandbox.
 """
 
 from __future__ import annotations
