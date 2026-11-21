@@ -46,7 +46,7 @@ def _suffix_url(url: str | None, suffix: str) -> str | None:
 def _parse_cors_origins(raw: str | None) -> tuple[str, ...]:
     """Parse the ``CORS_ORIGINS`` environment value into a tuple of origins.
 
-    Accepts several real-world formats so a mis-typed Railway variable cannot
+    Accepts several real-world formats so a mis-typed deployment variable cannot
     silently break every browser request:
 
     - comma-separated: ``https://a.example,https://b.example``
