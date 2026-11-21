@@ -59,6 +59,14 @@ python -m evals.runner
 | `RAZORPAY_KEY_ID` | Yes | Razorpay test-mode key ID |
 | `RAZORPAY_KEY_SECRET` | Yes | Razorpay test-mode key secret |
 | `RAZORPAY_WEBHOOK_SECRET` | Yes | Webhook signing secret |
+| `PAYMENT_PROVIDER` | No | `razorpay` by default; `razorpay` and `stripe` adapters are sandbox/test-only |
+| `STRIPE_SECRET_KEY` | If Stripe selected | Stripe test-mode secret key; live keys are rejected |
+| `STRIPE_WEBHOOK_SECRET` | If Stripe selected | Stripe test-mode webhook signing secret |
+| `SHIPPING_WEBHOOK_SECRET` | No | Shared secret for inbound carrier status webhooks |
+| `SMTP_HOST`, `SMTP_PORT` | No | Optional email relay; STARTTLS certificate verification is required |
+| `SMTP_FROM`, `SMTP_RECIPIENTS` | No | Sender and comma-separated recipients for urgent notification emails |
+| `SELLABLE_MAINTENANCE_WORKER` | No | Override production maintenance worker (`1` or `0`); defaults on in production |
+| `SELLABLE_DEFAULT_PLAN` | No | Platform billing override; valid values are `FREE`, `GROWTH`, or `SCALE` |
 | `BUYER_AGENT_API_KEY_HASH` | Yes (prod) | SHA-256 hashes of agent API keys |
 | `BUYER_AGENT_HMAC_SECRET` | Yes (prod) | HMAC request-signing secret |
 | `SELLABLE_ACP_ENABLED` | No | `1`/`true`/`yes` exposes the ACP scaffold (`/acp/*`); default off. No partner placement implied |
@@ -95,7 +103,7 @@ redirects are disabled so integration credentials and webhook signatures are
 not forwarded to another host. Local HTTP integrations remain available only
 in `development` and `test` environments.
 
-The first production release must run one Railway replica. Consent consumption
+The first production release must run one Railway replica. Keep `WEB_CONCURRENCY` and `UVICORN_WORKERS` unset or set to `1`; startup rejects multiple workers while consent and payment-attempt transitions remain process-local. Consent consumption
 and payment-attempt serialization still depend on process-local locks; the app
 rejects multiple workers but cannot detect multiple replicas. Do not scale the
 service horizontally until those transitions are backed by atomic database
