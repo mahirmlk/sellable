@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 
 const isDevelopment = process.env.NODE_ENV === "development";
 
+if (process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_AGENT_KEY?.trim()) {
+  throw new Error(
+    "NEXT_PUBLIC_AGENT_KEY is browser-exposed and must be unset in production builds."
+  );
+}
+
 const nextConfig: NextConfig = {
   // Pin the monorepo app root so an unrelated lockfile in the parent user
   // directory cannot change Turbopack's workspace or output-tracing roots.
