@@ -99,7 +99,7 @@ jobs:
         run: npm ci
 
       - name: Generate Cloudflare environment types
-        run: npx wrangler types --path .wrangler/types.d.ts
+        run: mkdir -p .wrangler && npx wrangler types --path .wrangler/types.d.ts
 
       - name: Check Worker syntax
         run: node --check cloudflare/worker.js
