@@ -18,6 +18,12 @@ def test_private_literal_addresses_are_rejected_in_production() -> None:
         validate_outbound_url("https://127.0.0.1/hook")
 
 
+@pytest.mark.parametrize("address", ["224.0.0.1", "ff02::1"])
+def test_multicast_literal_addresses_are_rejected_in_production(address: str) -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        validate_outbound_url(f"https://{address}/hook")
+
+
 def test_development_can_use_local_http_targets() -> None:
     validate_outbound_url(
         "http://127.0.0.1:8080/hook",
