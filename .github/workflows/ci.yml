@@ -91,6 +91,9 @@ jobs:
       - name: Install deployment tooling
         run: npm ci
 
+      - name: Generate Cloudflare environment types
+        run: npx wrangler types --path .wrangler/types.d.ts
+
       - name: Check Worker syntax
         run: node --check cloudflare/worker.js
 
