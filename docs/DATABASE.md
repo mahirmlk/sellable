@@ -39,6 +39,9 @@ PostgreSQL, startup also enables RLS on backend-owned tables, revokes Data API
 access from `PUBLIC`, `anon`, and `authenticated`, and removes their default
 table/sequence privileges for future tables. The console uses Supabase Auth
 only and fetches commerce data through the backend API.
+Production startup also fails if it cannot create the unique order idempotency
+and active checkout-session indexes; clean duplicate legacy rows before retrying
+the deployment. Development and test databases retain warning-only behavior.
 
 ```python
 # config.py
