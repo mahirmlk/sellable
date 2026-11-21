@@ -141,6 +141,8 @@ git push origin main
 
 `railway.json` uses the Dockerfile builder with a `/ready` healthcheck that
 includes database, outbox, and active payment-provider configuration checks.
+The container binds to Railway's injected `PORT` and uses `8000` only as a
+local fallback; its Docker health check probes the same port.
 Railway has deprecated this legacy config format and documents a hard cutoff of
 December 1, 2026. Migrate it to `.railway/railway.ts` and verify the plan while
 linked to the correct Railway project, environment, and backend service before
