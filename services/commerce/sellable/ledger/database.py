@@ -1397,7 +1397,8 @@ def _migrate(engine, *, require_invariants: bool = False) -> None:
     except Exception as error:  # noqa: BLE001 — legacy duplicate rows may block the index
         if require_invariants:
             raise RuntimeError(
-                "Production startup requires a unique order idempotency index; "
+                "Production startup could not establish the unique order idempotency "
+                f"index ({type(error).__name__}); check database permissions and "
                 "resolve duplicate merchant/idempotency keys before restarting."
             ) from None
         logging.getLogger("sellable.migrate").warning(
@@ -1415,8 +1416,9 @@ def _migrate(engine, *, require_invariants: bool = False) -> None:
     except Exception as error:  # noqa: BLE001 — legacy duplicate rows may block the index
         if require_invariants:
             raise RuntimeError(
-                "Production startup requires the active checkout-session unique index; "
-                "resolve duplicate active sessions before restarting."
+                "Production startup could not establish the active checkout-session "
+                f"unique index ({type(error).__name__}); check database permissions "
+                "and resolve duplicate active sessions before restarting."
             ) from None
         logging.getLogger("sellable.migrate").warning(
             "Skipping active-session unique index (%s)", type(error).__name__
