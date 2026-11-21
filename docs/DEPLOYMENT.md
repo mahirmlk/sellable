@@ -2,46 +2,32 @@
 
 ## Live Production Topology
 
-The buildathon demo runs on three managed services. The frontend points to the
-Railway backend (no localhost dependency in production).
+The frontend is hosted on Vercel. The backend is a Dockerized FastAPI service
+running in Cloudflare Containers, reached through a Cloudflare Worker and one
+stable Durable Object instance. Supabase provides PostgreSQL and merchant auth.
+Payments remain in sandbox/test mode.
 
 | Service | Provider | Purpose | URL |
 |---------|----------|---------|-----|
 | Merchant Console | Vercel | Next.js frontend | `https://sellable.shop` |
-| Commerce Core | Railway | FastAPI backend | `https://api.sellable.shop` |
+| Commerce Core | Cloudflare Workers + Containers | FastAPI backend, one container instance | `https://api.sellable.shop` (after custom-domain setup) |
 | Postgres + Auth | Supabase | Database + merchant login | project `cptkhacsfmycjxxbufkx` |
 | Payments | Razorpay | Test-mode payment rail | — |
 
-Razorpay webhooks point at the Railway backend:
+Razorpay webhooks point at the Cloudflare backend:
 `https://api.sellable.shop/webhooks/razorpay`
 (subscribed to `payment.captured` and `payment.failed`).
+
+The Cloudflare Durable Object scheduling policy is currently documented as
+public beta. This setup deliberately addresses one fixed Durable Object name
+and starts one backend container; it does not autoscale. The Python service
+still depends on process-local consent and payment-attempt locks. Confirm that
+Containers and this beta scheduling policy are enabled for the Cloudflare
+account before production traffic is moved.
 
 ---
 
 ## Local Development
-
-```bash
-# Install
-python -m pip install -e ".[dev]"
-
-# Configure
-cp .env.example .env
-# Edit .env with Razorpay test credentials, LLM key, Supabase values
-
-# Run backend
-python -m uvicorn sellable.main:app --reload
-
-# Run frontend
-cd apps/merchant-console
-npm install
-npm run dev
-
-# Test
-python -m pytest
-python -m evals.runner
-```
-
----
 
 ## Environment Variables
 
@@ -140,30 +126,92 @@ LLM_API_KEY=sk-...   # OpenCode Zen key
 
 ## Deployment
 
-### Backend — Railway
+### Backend — Cloudflare Workers + Containers
 
-The repo is linked to Railway (project `sellable`, service `backend`). Pushing
-to `main` auto-deploys via the Dockerfile:
+The Wrangler configuration at the repository root builds the existing
+`Dockerfile` and deploys a Cloudflare Worker that forwards API traffic to a
+single Durable Object-managed Container. The Container listens on port 8000,
+uses `/ready` before accepting requests, and receives only an explicit
+allowlist of backend settings and secrets. A five-minute Worker cron heartbeat
+keeps the in-process maintenance worker alive. Production requests must use
+HTTPS; the Worker forwards only Cloudflare's client IP, never a caller-supplied
+`X-Forwarded-For` value.
+
+Containers need outbound internet for Supabase, payment/LLM providers, SMTP,
+and merchant-configured integrations. The application-level outbound guard
+still blocks private, loopback, link-local, reserved, and multicast targets for
+merchant-configured HTTP integrations and does not follow redirects.
+
+#### Local Cloudflare development
+
+Install Node.js 24, npm, and Docker. Copy `.dev.vars.example` to the ignored
+`.dev.vars`, then start the Worker and Container:
 
 ```bash
-git push origin main
+npm ci
+npm run cf:dev
 ```
 
-`railway.json` uses the Dockerfile builder with a `/ready` healthcheck that
-includes database, outbox, and active payment-provider configuration checks.
-The container binds to Railway's injected `PORT` and uses `8000` only as a
-local fallback; its Docker health check probes the same port.
-Railway has deprecated this legacy config format and documents a hard cutoff of
-December 1, 2026. Migrate it to `.railway/railway.ts` and verify the plan while
-linked to the correct Railway project, environment, and backend service before
-that date.
+The local vars file uses development mode and SQLite. Use the existing
+`python -m uvicorn sellable.main:app --reload` command for ordinary backend
+work that does not require the Cloudflare proxy.
+
+#### Configure and deploy production
+
+1. Confirm the Cloudflare account has Containers and the Durable Object
+   Container API enabled. Configure the Worker custom domain
+   `api.sellable.shop` in the Cloudflare zone after reviewing the deployment.
+2. Configure `CORS_ORIGINS` in `wrangler.jsonc` to the exact live Vercel
+   frontend origins.
+3. Store credentials as Worker secrets; do not put them in `wrangler.jsonc`,
+   `.dev.vars`, or the frontend bundle. At minimum, configure:
+
+   ```bash
+   npx wrangler secret put DATABASE_URL
+   npx wrangler secret put SUPABASE_URL
+   npx wrangler secret put SUPABASE_ANON_KEY
+   npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+   npx wrangler secret put BUYER_AGENT_API_KEY_HASH
+   npx wrangler secret put BUYER_AGENT_HMAC_SECRET
+   npx wrangler secret put RAZORPAY_KEY_ID
+   npx wrangler secret put RAZORPAY_KEY_SECRET
+   npx wrangler secret put RAZORPAY_WEBHOOK_SECRET
+   ```
+
+   Set optional secrets only when their feature is enabled, such as
+   `SUPABASE_JWT_SECRET`, `LLM_API_KEY` or provider-specific LLM keys,
+   `SHIPPING_WEBHOOK_SECRET`, `SELLABLE_ADMIN_API_KEY`, and SMTP settings.
+   `DATABASE_URL` must use PostgreSQL with `sslmode=require` or stronger.
+   Payment credentials must be sandbox/test credentials.
+4. Authenticate Wrangler, then deploy from the repository root:
+
+   ```bash
+   npx wrangler login
+   npx wrangler whoami
+   npm run cf:deploy
+   ```
+
+   Wrangler builds the Docker image and Worker. Verify the Worker health and
+   readiness routes, Container status, cron execution, and database logs before
+   switching production traffic.
+5. After the Cloudflare API URL is healthy, update the Vercel
+   `NEXT_PUBLIC_API_URL` environment variable and redeploy the frontend.
+   Update the Razorpay test webhook URL to the new backend address.
+
+The Worker currently exposes a `workers.dev` hostname. Bind the production
+custom domain in the Cloudflare dashboard (or add a reviewed route to
+`wrangler.jsonc`) before setting Vercel and Razorpay to
+`https://api.sellable.shop`.
+
+The Container uses Cloudflare's `standard-1` profile as an initial capacity
+setting. Review Cloudflare's current account pricing and observed memory/CPU
+before production traffic; adjust the profile deliberately.
 
 ### Frontend — Vercel
 
 Vercel projects (monorepo):
 
 - `merchant-console` — Root Directory: `apps/merchant-console`, framework Next.js
-- `commerce` — Root Directory: `services/commerce` (legacy Python backend)
 
 Set the frontend env vars in Vercel:
 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
@@ -214,9 +262,9 @@ not a production launch approval; use the deployment constraints and release
 gates above for the current candidate.
 
 - [x] Frontend production build passes (Vercel)
-- [x] Backend starts in production config (Railway, Docker)
+- [ ] Cloudflare Worker + Container deployment verified in the target account
 - [x] Database schema applied (Supabase, auto-init)
-- [x] Environment variables configured (Railway + Vercel)
+- [ ] Cloudflare Worker secrets and Vercel frontend variables configured
 - [x] Supabase Auth works (merchant login)
 - [x] Agent authentication works (API key + HMAC)
 - [x] Real LLM enabled (OpenCode Zen `deepseek-v4-flash`)
@@ -224,7 +272,7 @@ gates above for the current candidate.
 - [x] Buyer Agent works (A2A loop)
 - [x] Agent Gateway works (agents.json / llms.txt / catalog.ai.json)
 - [x] Razorpay Test Mode works
-- [x] Public webhook works (Railway)
+- [ ] Razorpay test webhook works against the Cloudflare backend
 - [x] Webhook signature verification works
 - [x] Duplicate webhook protection works
 - [x] Successful payment works
