@@ -104,6 +104,7 @@ def send_email_for_event(event, rule: dict[str, object], settings=None) -> bool:
     the in-app feed and webhook channels are the delivery truth; email is
     an additive attention channel. Returns True when handed to the relay."""
     import smtplib
+    import ssl
     from email.message import EmailMessage
 
     from sellable.config import settings as default_settings
@@ -128,11 +129,11 @@ def send_email_for_event(event, rule: dict[str, object], settings=None) -> bool:
     message.set_content(detail)
     try:
         with smtplib.SMTP(str(cfg.smtp_host), int(cfg.smtp_port), timeout=10) as smtp:
-            smtp.starttls()
+            smtp.starttls(context=ssl.create_default_context())
             smtp.send_message(message)
         return True
     except Exception as error:  # noqa: BLE001 — email never breaks commerce
-        logger.warning("Email notification failed: %s", error)
+        logger.warning("Email notification failed (%s)", type(error).__name__)
         return False
 
 def notify_for_event(event, *, notification_repo=None, webhook_dispatcher=None) -> list[str]:
