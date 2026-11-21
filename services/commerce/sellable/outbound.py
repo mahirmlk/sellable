@@ -11,6 +11,11 @@ from functools import partial
 from urllib.parse import urlsplit
 
 
+def _is_public_unicast(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Only permit globally reachable unicast destinations for production egress."""
+    return address.is_global and not address.is_multicast
+
+
 def _resolve_target(
     url: str, *, allow_private: bool, resolve: bool = True
 ) -> tuple[str, int, list[tuple]]:
@@ -36,7 +41,7 @@ def _resolve_target(
     except ValueError:
         literal = None
     if literal is not None:
-        if not allow_private and not literal.is_global:
+        if not allow_private and not _is_public_unicast(literal):
             raise ValueError("private, loopback, and reserved outbound addresses are blocked")
         family = socket.AF_INET6 if literal.version == 6 else socket.AF_INET
         sockaddr = (host, port, 0, 0) if family == socket.AF_INET6 else (host, port)
@@ -51,7 +56,9 @@ def _resolve_target(
         if not addresses:
             raise ValueError("outbound hostname has no addresses")
         if not allow_private and any(
-            not ipaddress.ip_address(address[4][0].split("%", 1)[0]).is_global
+            not _is_public_unicast(
+                ipaddress.ip_address(address[4][0].split("%", 1)[0])
+            )
             for address in addresses
         ):
             raise ValueError("private, loopback, and reserved outbound addresses are blocked")
