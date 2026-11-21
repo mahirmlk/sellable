@@ -95,6 +95,8 @@ and sequence privileges from Supabase's `anon`, `authenticated`, and `PUBLIC`
 roles, including default privileges for new tables. Browser clients use
 Supabase Auth only; business data is served by the authenticated backend API.
 The backend database owner and server-only service role retain their access.
+Production startup also fails closed if required order-idempotency or active-session
+unique indexes cannot be created; resolve duplicate legacy rows before deployment.
 
 Merchant-configured REST connectors and webhook subscriptions may only call
 public HTTPS destinations in production. Private, loopback, link-local, and
