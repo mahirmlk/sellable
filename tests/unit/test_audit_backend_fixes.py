@@ -286,7 +286,7 @@ def test_health_production_hides_origins_and_environment(
         "settings",
         Settings(
             environment="production",
-            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
             supabase_url="https://example.supabase.co",
             supabase_anon_key="anon-test-key",
             supabase_service_role_key="service-test-key",
@@ -320,7 +320,7 @@ def test_production_startup_guard_requires_explicit_cors(monkeypatch) -> None:
         "settings",
         Settings(
             environment="production",
-            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
         ),
     )
     monkeypatch.delenv("CORS_ORIGINS", raising=False)
@@ -340,7 +340,7 @@ def test_production_startup_guard_requires_exact_https_origins(
         "settings",
         Settings(
             environment="production",
-            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
         ),
     )
     monkeypatch.setenv("CORS_ORIGINS", origin)
@@ -355,7 +355,7 @@ def test_production_startup_guard_requires_strong_agent_auth(monkeypatch) -> Non
         "settings",
         Settings(
             environment="production",
-            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
             supabase_url="https://example.supabase.co",
             supabase_anon_key="anon-test-key",
             supabase_service_role_key="service-test-key",
