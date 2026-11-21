@@ -26,6 +26,33 @@ from sellable.payments.razorpay import (
 logger = logging.getLogger("sellable.payments")
 
 
+_PAYMENT_FAILURE_CODES = frozenset(
+    {
+        "authentication_required",
+        "card_declined",
+        "do_not_honor",
+        "expired_card",
+        "incorrect_cvc",
+        "insufficient_funds",
+        "payment_cancelled",
+        "processing_error",
+    }
+)
+
+
+def _failure_reason_code(event_name: str, *provider_codes: object) -> str:
+    """Return a safe, stable category; never expose provider error prose."""
+    if event_name in ("payment_link.cancelled", "checkout.session.async_payment_failed"):
+        return "payment_cancelled"
+    for value in provider_codes:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in _PAYMENT_FAILURE_CODES:
+            return normalized
+    return "payment_failed"
+
+
 class UnknownProviderOrderError(ValueError):
     pass
 
@@ -420,6 +447,7 @@ class PaymentService:
             else ""
         )
 
+        failure_reason_code: str | None = None
         if event_name in ("payment.captured", "payment_link.paid"):
             try:
                 raw_amount = payment.get("amount")
@@ -537,6 +565,11 @@ class PaymentService:
                 + provenance_note
             )
         else:  # payment.failed / payment_link.cancelled
+            failure_reason_code = _failure_reason_code(
+                event_name,
+                payment.get("error_code"),
+                payment.get("error_reason"),
+            )
             reason = (
                 str(payment.get("error_description") or "")
                 or (
@@ -577,7 +610,7 @@ class PaymentService:
                 update={
                     "provider_payment_id": provider_payment_id,
                     "status": PaymentStatus.FAILED,
-                    "failure_reason": reason,
+                    "failure_reason": failure_reason_code,
                 }
             )
             explanation = (
@@ -591,7 +624,11 @@ class PaymentService:
             trace_id=local_order.trace_id,
             action="webhook.reconciled",
             inputs={"event": event_name, "provider_order_id": attempt.provider_order_id},
-            output={"order_id": local_order_id, "status": updated_attempt.status},
+            output={
+                "order_id": local_order_id,
+                "status": updated_attempt.status,
+                **({"failure_reason": failure_reason_code} if failure_reason_code else {}),
+            },
             provider_ref=provider_payment_id,
             explanation=explanation,
             flags=flags,
@@ -708,6 +745,7 @@ class PaymentService:
                 self._attempt_by_order_id[local_order.order_id] = attempt
             return attempt
 
+        failure_reason_code: str | None = None
         if event_type == "payment_intent.succeeded":
             if (
                 provider_payment_id is None
@@ -810,8 +848,14 @@ class PaymentService:
             )
             explanation = "Verified Stripe payment webhook and settled the local order."
         else:  # payment_intent.payment_failed
+            last_error = entity.get("last_payment_error") or {}
+            failure_reason_code = _failure_reason_code(
+                event_type,
+                last_error.get("decline_code"),
+                last_error.get("code"),
+            )
             reason = (
-                str((entity.get("last_payment_error") or {}).get("message") or "")
+                str(last_error.get("message") or "")
                 or "Stripe reported a failed payment"
             )
             if local_order.status is OrderStatus.PAYMENT_FAILED:
@@ -846,7 +890,7 @@ class PaymentService:
                 update={
                     "provider_payment_id": provider_payment_id,
                     "status": PaymentStatus.FAILED,
-                    "failure_reason": reason,
+                    "failure_reason": failure_reason_code,
                 }
             )
             explanation = "Verified Stripe payment failure webhook and recorded the explicit failure state."
@@ -857,7 +901,11 @@ class PaymentService:
             trace_id=local_order.trace_id,
             action="webhook.reconciled",
             inputs={"event": event_type, "provider_order_id": attempt.provider_order_id},
-            output={"order_id": local_order.order_id, "status": updated_attempt.status},
+            output={
+                "order_id": local_order.order_id,
+                "status": updated_attempt.status,
+                **({"failure_reason": failure_reason_code} if failure_reason_code else {}),
+            },
             provider_ref=provider_payment_id,
             explanation=explanation,
             actor=LedgerActor.STRIPE,

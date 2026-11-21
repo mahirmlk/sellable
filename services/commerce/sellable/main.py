@@ -3681,6 +3681,7 @@ def _summarize_order(
     payment_order_id: str | None = None
     payment_status: str | None = None
     payment_id: str | None = None
+    failure_reason: str | None = None
 
     for e in events:
         output = e.output_json or {}
@@ -3704,6 +3705,9 @@ def _summarize_order(
         elif e.action in ("webhook.reconciled", "payment.captured", "payment.failed"):
             payment_status = output.get("status") or payment_status
             payment_id = e.provider_ref or payment_id
+            candidate_reason = output.get("failure_reason")
+            if isinstance(candidate_reason, str):
+                failure_reason = candidate_reason
         elif e.action == "order.paid":
             payment_status = payment_status or "CAPTURED"
             payment_id = e.provider_ref or payment_id
@@ -3714,6 +3718,8 @@ def _summarize_order(
         payment_status = "CAPTURED"
     if payment_status is None and status in ("PAYMENT_FAILED", "ABORTED", "REFUNDED"):
         payment_status = "FAILED"
+    if status == "PAYMENT_FAILED" and failure_reason is None:
+        failure_reason = "payment_failed"
 
     # Display vocabulary: the Consent record enum uses USED, but every
     # order/transaction summary surfaces the same state as CONSUMED (the
@@ -3772,6 +3778,7 @@ def _summarize_order(
         "payment_status": payment_status,
         "payment_order_id": payment_order_id,
         "payment_id": payment_id,
+        "failure_reason": failure_reason,
     }
 
 

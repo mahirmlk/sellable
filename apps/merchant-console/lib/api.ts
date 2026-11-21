@@ -113,6 +113,7 @@ export interface ConsoleTransaction {
   payment_order_id?: string | null;
   payment_id?: string | null;
   payment_url?: string | null;
+  failure_reason?: string | null;
 }
 
 // --- Checkout sessions (durable chat state; the order stays authoritative) ---

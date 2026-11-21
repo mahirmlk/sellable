@@ -539,11 +539,11 @@ class TaxBreakdown(StrictModel):
 
     @model_validator(mode="after")
     def totals_match_lines(self) -> "TaxBreakdown":
-        if self.cgst_total_paise != sum(l.cgst_amount_paise for l in self.lines):
+        if self.cgst_total_paise != sum(line.cgst_amount_paise for line in self.lines):
             raise ValueError("cgst total must match lines")
-        if self.sgst_total_paise != sum(l.sgst_amount_paise for l in self.lines):
+        if self.sgst_total_paise != sum(line.sgst_amount_paise for line in self.lines):
             raise ValueError("sgst total must match lines")
-        if self.igst_total_paise != sum(l.igst_amount_paise for l in self.lines):
+        if self.igst_total_paise != sum(line.igst_amount_paise for line in self.lines):
             raise ValueError("igst total must match lines")
         if self.tax_total_paise != (
             self.cgst_total_paise + self.sgst_total_paise + self.igst_total_paise
@@ -1274,6 +1274,9 @@ class ConsoleTransactionItem(StrictModel):
     payment_order_id: str | None = None
     payment_id: str | None = None
     payment_url: str | None = None
+    # Safe, stable provider failure category; raw provider error text stays
+    # in the audit explanation and is not exposed as an API field.
+    failure_reason: str | None = None
 
 
 class ConsoleTransactionDetail(ConsoleTransactionItem):

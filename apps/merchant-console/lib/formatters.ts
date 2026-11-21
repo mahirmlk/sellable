@@ -6,6 +6,23 @@ export function formatPaiseDecimal(paise: number): string {
   return `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+const PAYMENT_FAILURE_LABELS: Record<string, string> = {
+  authentication_required: "Additional payment verification was not completed.",
+  card_declined: "The payment method was declined. Try another method.",
+  do_not_honor: "The payment method was declined. Try another method.",
+  expired_card: "The card has expired. Try another payment method.",
+  incorrect_cvc: "The card verification code was not accepted.",
+  insufficient_funds: "The payment method did not have enough available funds.",
+  payment_cancelled: "The payment was cancelled before completion.",
+  payment_failed: "The payment provider could not complete this payment.",
+  processing_error: "The payment provider could not process this payment. Try again later.",
+};
+
+export function paymentFailureLabel(code: string | null | undefined): string | null {
+  if (!code) return null;
+  return PAYMENT_FAILURE_LABELS[code] ?? PAYMENT_FAILURE_LABELS.payment_failed;
+}
+
 export function formatTimeAgo(dateStr: string): string {
   const now = new Date();
   const then = new Date(dateStr);

@@ -16,7 +16,7 @@ import { RotateCcw, ExternalLink, PackageCheck, Copy, Download } from "lucide-re
 import { Breadcrumbs } from "@/components/dashboard/breadcrumbs";
 import { StatusBadge, PolicyBadge } from "@/components/dashboard/status-badge";
 import { MoneyValue } from "@/components/dashboard/money-value";
-import { formatPaise, formatDateTime, formatTimestamp } from "@/lib/formatters";
+import { formatPaise, formatDateTime, formatTimestamp, paymentFailureLabel } from "@/lib/formatters";
 import {
   getConsoleApprovals,
   getConsoleTransactionDetail,
@@ -310,12 +310,7 @@ export default function TransactionDetailPage() {
         ? "APPROVED"
         : null;
   const buyerLabel = tx.buyer.type === "human" ? "Human" : "AI Buyer";
-  // `failure_reason` is part of the PaymentAttemptPayload contract. The order
-  // detail only carries it when a failed payment attempt reported one — read
-  // it defensively and render only when the field actually exists (never invented).
-  const rawFailureReason = (detail as { failure_reason?: unknown }).failure_reason;
-  const failureReason =
-    typeof rawFailureReason === "string" && rawFailureReason.length > 0 ? rawFailureReason : null;
+  const failureReason = paymentFailureLabel(detail.failure_reason);
   // Partial-refund amount: rupees input converted to paise. Valid when > 0
   // and <= the full order amount; the confirm button is disabled otherwise.
   const refundParsed = parseFloat(refundAmountRupees);
