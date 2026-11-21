@@ -78,6 +78,9 @@ bare `"*"`/`"null"` values are rejected at startup. The built-in localhost
 defaults in `config.py` exist for local development only. Production startup
 fails when `CORS_ORIGINS` is omitted, and it also refuses SQLite so a copied
 example configuration cannot silently use an ephemeral container database.
+The production `DATABASE_URL` must also set `sslmode=require` or a stronger
+certificate-verifying mode (`verify-ca` or `verify-full`) to prevent a
+plaintext fallback for PostgreSQL connections.
 
 At startup, the backend enables RLS on its PostgreSQL tables and revokes table
 and sequence privileges from Supabase's `anon`, `authenticated`, and `PUBLIC`
