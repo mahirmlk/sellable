@@ -610,7 +610,7 @@ class PaymentService:
                 update={
                     "provider_payment_id": provider_payment_id,
                     "status": PaymentStatus.FAILED,
-                    "failure_reason": failure_reason_code,
+                    "failure_reason": reason,
                 }
             )
             explanation = (
@@ -890,7 +890,7 @@ class PaymentService:
                 update={
                     "provider_payment_id": provider_payment_id,
                     "status": PaymentStatus.FAILED,
-                    "failure_reason": failure_reason_code,
+                    "failure_reason": reason,
                 }
             )
             explanation = "Verified Stripe payment failure webhook and recorded the explicit failure state."
