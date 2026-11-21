@@ -25,6 +25,12 @@ still depends on process-local consent and payment-attempt locks. Confirm that
 Containers and this beta scheduling policy are enabled for the Cloudflare
 account before production traffic is moved.
 
+Cloudflare documents that the Durable Object scheduling policy grants
+processes root-equivalent Linux capabilities regardless of the Docker
+`USER`. The image's `appuser` setting therefore does not provide a privilege
+boundary in this policy. The backend does not execute arbitrary generated code;
+keep it that way and do not treat this Container as an untrusted-code sandbox.
+
 ---
 
 ## Local Development
@@ -201,7 +207,9 @@ work that does not require the Cloudflare proxy.
 The Worker currently exposes a `workers.dev` hostname. Bind the production
 custom domain in the Cloudflare dashboard (or add a reviewed route to
 `wrangler.jsonc`) before setting Vercel and Razorpay to
-`https://api.sellable.shop`.
+`https://api.sellable.shop`. Retire or disable any old Vercel project that
+served the Python backend after the Cloudflare API has passed health checks;
+keep the Merchant Console project live.
 
 The Container uses Cloudflare's `standard-1` profile as an initial capacity
 setting. Review Cloudflare's current account pricing and observed memory/CPU
