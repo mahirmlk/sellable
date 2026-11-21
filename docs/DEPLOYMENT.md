@@ -75,9 +75,29 @@ use local SQLite for demo work, or configure Supabase on both sides.
 **Production CORS is mandatory, not optional.** `CORS_ORIGINS` must list the
 exact frontend origin(s) (e.g. `https://sellable.shop,https://www.sellable.shop`);
 bare `"*"`/`"null"` values are rejected at startup. The built-in localhost
-defaults in `config.py` exist for local development only — a production deploy
-that omits `CORS_ORIGINS` either breaks browser calls or silently trusts
-localhost with credentials, so every prod deploy checklist must confirm it.
+defaults in `config.py` exist for local development only. Production startup
+fails when `CORS_ORIGINS` is omitted, and it also refuses SQLite so a copied
+example configuration cannot silently use an ephemeral container database.
+
+At startup, the backend enables RLS on its PostgreSQL tables and revokes table
+and sequence privileges from Supabase's `anon`, `authenticated`, and `PUBLIC`
+roles, including default privileges for new tables. Browser clients use
+Supabase Auth only; business data is served by the authenticated backend API.
+The backend database owner and server-only service role retain their access.
+
+Merchant-configured REST connectors and webhook subscriptions may only call
+public HTTPS destinations in production. Private, loopback, link-local, and
+reserved addresses are blocked after DNS resolution and again at connect time;
+redirects are disabled so integration credentials and webhook signatures are
+not forwarded to another host. Local HTTP integrations remain available only
+in `development` and `test` environments.
+
+The first production release must run one Railway replica. Consent consumption
+and payment-attempt serialization still depend on process-local locks; the app
+rejects multiple workers but cannot detect multiple replicas. Do not scale the
+service horizontally until those transitions are backed by atomic database
+operations. Payment adapters remain test-mode only, so live-money launch is
+blocked pending a separately approved provider implementation.
 
 ---
 
@@ -116,7 +136,12 @@ to `main` auto-deploys via the Dockerfile:
 git push origin main
 ```
 
-`railway.json` uses the Dockerfile builder with a `/health` healthcheck.
+`railway.json` uses the Dockerfile builder with a `/ready` healthcheck that
+includes database, outbox, and active payment-provider configuration checks.
+Railway has deprecated this legacy config format and documents a hard cutoff of
+December 1, 2026. Migrate it to `.railway/railway.ts` and verify the plan while
+linked to the correct Railway project, environment, and backend service before
+that date.
 
 ### Frontend — Vercel
 
@@ -127,7 +152,8 @@ Vercel projects (monorepo):
 
 Set the frontend env vars in Vercel:
 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
-`NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_AGENT_KEY`.
+and `NEXT_PUBLIC_SITE_URL`. Leave `NEXT_PUBLIC_AGENT_KEY` unset in production;
+it is only for local demo builds and is embedded in browser JavaScript.
 
 Supabase Auth must allow the console as a redirect target: set the project
 Site URL to the console origin and add `{site}/auth/callback` (plus
@@ -166,7 +192,11 @@ network boundary even though auth gates still apply.
 
 ---
 
-## Production Checklist
+## Historical Demo Verification Checklist
+
+The checked items below record prior demo and sandbox verification. They are
+not a production launch approval; use the deployment constraints and release
+gates above for the current candidate.
 
 - [x] Frontend production build passes (Vercel)
 - [x] Backend starts in production config (Railway, Docker)

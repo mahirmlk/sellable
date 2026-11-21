@@ -30,11 +30,14 @@ def build_provider(config, name: str | None = None):
 
     selected = (name or getattr(config, "payment_provider", None) or "razorpay").lower()
     if selected == "stripe":
-        from sellable.payments.stripe import StripeAdapter
-
         return StripeAdapter(config)
     if selected == "simulated":
+        if not getattr(config, "is_dev_environment", False):
+            raise ValueError("simulated payments are only available in development and test")
         return SimulatedPaymentAdapter()
+    if selected != "razorpay":
+        raise ValueError(f"unsupported payment provider: {selected}")
+
     from sellable.payments.razorpay import RazorpayAdapter
 
     return RazorpayAdapter(config)

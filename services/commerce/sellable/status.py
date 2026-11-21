@@ -17,7 +17,6 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -51,8 +50,8 @@ def _run_llm_probe(provider: str, adapter: Any) -> None:
     try:
         adapter.probe(timeout=20)
     except Exception as exc:  # noqa: BLE001 - status reporting must never raise
-        error_detail = str(exc)[:300]
-        logger.warning("LLM probe failed for provider=%s: %s", provider, error_detail)
+        error_detail = type(exc).__name__
+        logger.warning("LLM probe failed for provider=%s (%s)", provider, error_detail)
     with _llm_probe_lock:
         _llm_probe_cache[provider] = (time.time(), error_detail)
 
@@ -102,11 +101,7 @@ def _llm_status(adapter: Any, init_error: str | None = None) -> dict[str, object
             "state": "ERROR",
             "mode": "scripted",
             "reason": "LLM adapter failed to initialize",
-            "detail": (
-                f"The configured LLM adapter could not be constructed: {init_error}"
-                if init_error
-                else "The configured LLM adapter could not be constructed."
-            ),
+            "detail": "The configured LLM adapter could not be constructed.",
         }
 
     probe_error = _cached_llm_probe(provider)
@@ -126,7 +121,7 @@ def _llm_status(adapter: Any, init_error: str | None = None) -> dict[str, object
             "state": "ERROR",
             "mode": "live",
             "reason": "LLM connection check failed",
-            "detail": probe_error,
+            "detail": "LLM provider connectivity check failed.",
         }
 
     return {
@@ -203,8 +198,12 @@ def _gateway_status(gateway: Any) -> dict[str, object]:
             "detail": f"Agent Gateway manifest OK ({endpoint_count} endpoints, {product_count} catalog products).",
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Gateway health check failed: %s", exc)
-        return {"status": "error", "state": "ERROR", "detail": f"Agent Gateway check failed: {exc}"}
+        logger.warning("Gateway health check failed (%s)", type(exc).__name__)
+        return {
+            "status": "error",
+            "state": "ERROR",
+            "detail": "Agent Gateway check failed.",
+        }
 
 
 def _policy_status(commerce: Any) -> dict[str, object]:
@@ -234,8 +233,12 @@ def _policy_status(commerce: Any) -> dict[str, object]:
             "detail": "Policy Engine functions load and merchant policy is configured (deterministic, LLM-independent).",
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Policy health check failed: %s", exc)
-        return {"status": "error", "state": "ERROR", "detail": f"Policy Engine check failed: {exc}"}
+        logger.warning("Policy health check failed (%s)", type(exc).__name__)
+        return {
+            "status": "error",
+            "state": "ERROR",
+            "detail": "Policy Engine check failed.",
+        }
 
 
 def _ledger_status(ledger: Any) -> dict[str, object]:
@@ -257,8 +260,12 @@ def _ledger_status(ledger: Any) -> dict[str, object]:
             "detail": f"Ledger can read the database ({total} events).",
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Ledger health check failed: %s", exc)
-        return {"status": "error", "state": "ERROR", "detail": f"Ledger database read failed: {exc}"}
+        logger.warning("Ledger health check failed (%s)", type(exc).__name__)
+        return {
+            "status": "error",
+            "state": "ERROR",
+            "detail": "Ledger database read failed.",
+        }
 
 
 def _webhook_last_verified_at(ledger: Any) -> str | None:

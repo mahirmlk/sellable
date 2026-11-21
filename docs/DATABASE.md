@@ -34,7 +34,11 @@ On startup, `initialise_database()` creates all tables if they don't exist and
 runs a lightweight migration that adds columns introduced after the initial
 schema (e.g. `orders.requires_approval`, `orders.provider_link_id`,
 `consents.merchant_id`, the `(merchant_id, idempotency_key)` uniqueness
-indexes) without dropping existing data — on both SQLite and Postgres.
+indexes) without dropping existing data — on both SQLite and Postgres. On
+PostgreSQL, startup also enables RLS on backend-owned tables, revokes Data API
+access from `PUBLIC`, `anon`, and `authenticated`, and removes their default
+table/sequence privileges for future tables. The console uses Supabase Auth
+only and fetches commerce data through the backend API.
 
 ```python
 # config.py

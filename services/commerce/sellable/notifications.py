@@ -13,7 +13,6 @@ import json
 import logging
 import urllib.request
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 if TYPE_CHECKING:  # pragma: no cover — annotation-only
     from sellable.resilience import CircuitBreaker
@@ -174,6 +173,9 @@ def post_json(
     url: str, payload: dict[str, object], headers: dict[str, str], *, timeout: int = 10
 ) -> int:
     """POST JSON, returning the HTTP status. stdlib only (no new deps)."""
+    from sellable.config import settings
+    from sellable.outbound import open_outbound
+
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -181,7 +183,12 @@ def post_json(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_outbound(
+            request,
+            timeout=timeout,
+            allow_private=settings.is_dev_environment,
+            require_https=not settings.is_dev_environment,
+        ) as response:
             return int(response.status or 200)
     except Exception as error:  # noqa: BLE001 — delivery failure is data
         raise RuntimeError(f"webhook delivery failed: {error}") from error
@@ -239,7 +246,6 @@ class WebhookDispatcher:
         """Best-effort SKIPPED_CIRCUIT_OPEN row so triage sees the gap."""
         try:
             from sellable.contracts import new_id
-            from sellable.repositories import WebhookRepository
 
             self._webhooks.log_dispatch(
                 dispatch_id=new_id("whd"),

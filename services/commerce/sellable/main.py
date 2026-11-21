@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ import secrets
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,7 +34,7 @@ from agents.runtime.versions import CUSTOMER_SERVICE_AGENT_ID, SELLER_AGENT_ID
 from agents.seller.intent import TurnKind, classify_buyer_message
 from sellable.auth import AgentApiKey, get_agent_api_key, get_agent_api_key_signed
 from sellable.buyer_missions import BuyerMissionService, UnknownBuyerMissionError
-from sellable.config import settings
+from sellable.config import _parse_cors_origins, settings
 from sellable.contracts import (
     AgentProfile,
     BuyerMission,
@@ -90,6 +92,7 @@ from sellable.merchant_auth import (
     get_merchant_session,
 )
 from sellable.middleware import RequestBodyCaptureMiddleware
+from sellable.tracing import trace_middleware
 from sellable.payments.razorpay import (
     InvalidWebhookSignatureError,
     RazorpayAdapter,
@@ -125,7 +128,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sellable")
 
-limiter = Limiter(key_func=get_remote_address)
+class TypedLimiter(Limiter):
+    """Preserve endpoint annotations when SlowAPI wraps route functions.
+
+    FastAPI evaluates postponed annotations using the wrapped function's
+    globals. SlowAPI's wrapper lives in its own module, so Pydantic request
+    models can otherwise be misclassified as query parameters. An evaluated
+    signature keeps request bodies and dependency types intact.
+    """
+
+    def limit(self, *args, **kwargs):
+        apply_limit = super().limit(*args, **kwargs)
+
+        def decorate(endpoint):
+            wrapped = apply_limit(endpoint)
+            try:
+                wrapped.__signature__ = inspect.signature(endpoint, eval_str=True)
+            except (NameError, TypeError, ValueError):
+                # Leave the original signature path in place for dynamically
+                # generated endpoints whose annotations cannot be evaluated.
+                pass
+            return wrapped
+
+        return decorate
+
+
+limiter = TypedLimiter(key_func=get_remote_address)
 
 
 def _assert_single_worker() -> None:
@@ -179,6 +207,64 @@ def _assert_no_demo_key_configured() -> None:
         )
 
 
+def _assert_production_configuration() -> None:
+    """Reject configuration that would make a production deploy unsafe.
+
+    SQLite is suitable for a local demo, but the container filesystem is not a
+    durable system of record and the application has single-process money
+    invariants. Production therefore requires Postgres and an explicit browser
+    origin allowlist instead of silently accepting the development defaults.
+    """
+    if settings.is_dev_environment:
+        return
+
+    if not settings.database_url.lower().startswith("postgresql+psycopg://"):
+        raise RuntimeError(
+            "Production requires a PostgreSQL DATABASE_URL using the installed "
+            "psycopg driver; SQLite is only supported for development and tests."
+        )
+    cors_origins = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
+    if not cors_origins:
+        raise RuntimeError(
+            "Production requires CORS_ORIGINS with explicit trusted frontend origins."
+        )
+    for origin in cors_origins:
+        try:
+            parsed_origin = urlsplit(origin)
+            _ = parsed_origin.port  # validate malformed ports
+        except ValueError as error:
+            raise RuntimeError("Production CORS_ORIGINS contains an invalid origin.") from error
+        if (
+            parsed_origin.scheme != "https"
+            or not parsed_origin.hostname
+            or parsed_origin.username is not None
+            or parsed_origin.password is not None
+            or parsed_origin.path not in ("", "/")
+            or parsed_origin.query
+            or parsed_origin.fragment
+            or parsed_origin.hostname.startswith("*.")
+        ):
+            raise RuntimeError(
+                "Production CORS_ORIGINS must contain exact HTTPS origins without paths or wildcards."
+            )
+    if not settings.supabase_url or not settings.supabase_url.startswith("https://"):
+        raise RuntimeError("Production requires an HTTPS SUPABASE_URL.")
+    if not settings.supabase_anon_key or not settings.supabase_service_role_key:
+        raise RuntimeError(
+            "Production requires SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY."
+        )
+    if not settings.agent_api_key_hashes:
+        raise RuntimeError("Production requires BUYER_AGENT_API_KEY_HASH entries.")
+    if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in settings.agent_api_key_hashes):
+        raise RuntimeError(
+            "Every BUYER_AGENT_API_KEY_HASH entry must be a lowercase SHA-256 hex digest."
+        )
+    if not settings.agent_hmac_secret or len(settings.agent_hmac_secret.encode("utf-8")) < 32:
+        raise RuntimeError(
+            "Production requires BUYER_AGENT_HMAC_SECRET with at least 32 UTF-8 bytes."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Background maintenance worker (§46.1): the durable outbox must drain and
 # carts/checkouts/sessions must expire even with no inbound traffic. A
@@ -191,8 +277,6 @@ _MAINTENANCE_STOP = threading.Event()
 
 
 def _maintenance_tick() -> None:
-    from sellable.event_bus import drain_once
-
     _drain_bus_best_effort()
     merchants = MerchantRepository().list_all(limit=1000)
     for record in merchants:
@@ -240,6 +324,7 @@ async def lifespan(_: FastAPI):
     logger.info("Starting SELLABLE Commerce Core")
     _assert_single_worker()
     _assert_no_demo_key_configured()
+    _assert_production_configuration()
     initialise_database()
     logger.info("Database initialized")
     # Non-blocking JWKS warm: daemon thread only, startup never waits on it.
@@ -252,7 +337,7 @@ async def lifespan(_: FastAPI):
     try:
         _start_maintenance_worker()
     except Exception as exc:  # noqa: BLE001 — worker must never break startup
-        logger.warning("Maintenance worker failed to start: %s", exc)
+        logger.warning("Maintenance worker failed to start (%s)", type(exc).__name__)
     yield
     _MAINTENANCE_STOP.set()
     logger.info("Shutting down SELLABLE Commerce Core")
@@ -279,8 +364,6 @@ app.add_middleware(
 )
 
 app.add_middleware(RequestBodyCaptureMiddleware)
-
-from sellable.tracing import trace_middleware
 
 app.middleware("http")(trace_middleware)
 
@@ -326,7 +409,7 @@ def _make_llm() -> tuple[object | None, str | None]:
     try:
         return get_llm(), None
     except Exception as exc:
-        logger.error("LLM adapter initialization failed: %s", exc)
+        logger.error("LLM adapter initialization failed (%s)", type(exc).__name__)
         return None, str(exc)
 
 
@@ -342,6 +425,11 @@ def _agent_recorder(core: CommerceCore, agent_id: str):
 _seller_llm, _llm_init_error = _make_llm()
 
 # Create tables and the real demo-merchant records before wiring components.
+# Enforce the single-process money invariant and production storage/origin
+# settings before any database is opened; this module initializes repositories
+# during import for the current runtime.
+_assert_single_worker()
+_assert_production_configuration()
 initialise_database()
 registry = MerchantRegistry()
 registry.ensure_demo_merchant()
@@ -2102,7 +2190,7 @@ def _drain_bus_best_effort(*, merchant_id: str | None = None) -> None:
 
         drain_once(_build_bus(), merchant_id=merchant_id)
     except Exception as exc:  # noqa: BLE001 — drains never break webhooks
-        logger.warning("Event bus drain failed: %s", exc)
+        logger.warning("Event bus drain failed (%s)", type(exc).__name__)
 
 
 @app.post(
@@ -2579,6 +2667,7 @@ def console_webhook_subscribe(
     import secrets as _secrets
 
     from sellable.notifications import SUBSCRIBABLE_EVENTS
+    from sellable.outbound import validate_outbound_url
     from sellable.repositories import WebhookRepository
 
     url = body.get("url")
@@ -2592,6 +2681,15 @@ def console_webhook_subscribe(
         )
     if not events:
         raise HTTPException(status_code=400, detail="At least one event is required")
+    try:
+        validate_outbound_url(
+            str(url),
+            allow_private=settings.is_dev_environment,
+            require_https=not settings.is_dev_environment,
+            resolve=not settings.is_dev_environment,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     secret = _secrets.token_urlsafe(32)
     try:
         subscription = WebhookRepository().create_subscription(
@@ -2682,7 +2780,7 @@ def console_commerce_metrics(
     days: int = 30,
 ) -> dict:
     from sellable.metrics import commerce_metrics
-    from sellable.repositories import AnalyticsRepository, PromotionRepository
+    from sellable.repositories import AnalyticsRepository
 
     core = merchant_core(session)
     return commerce_metrics(
@@ -2703,30 +2801,32 @@ def readiness() -> dict:
     checks: dict[str, object] = {}
     ready = True
     try:
-        pending = OutboxRepository().pending_count()
-        dead = OutboxRepository().dead_letter_count()
-        checks["outbox"] = {"pending": pending, "dead_lettered": dead}
+        OutboxRepository().pending_count()
+        OutboxRepository().dead_letter_count()
+        checks["outbox"] = {"status": "ok"}
     except Exception as error:  # noqa: BLE001 — readiness reports, never crashes
         ready = False
-        checks["outbox"] = {"error": str(error)[:200]}
+        logger.warning("Readiness outbox check failed (%s)", type(error).__name__)
+        checks["outbox"] = {"status": "unavailable"}
     try:
-        checks["payments"] = {
-            "provider": getattr(settings, "payment_provider", "razorpay"),
-            "razorpay_configured": settings.razorpay_is_configured,
-            "stripe_configured": bool(settings.stripe_secret_key),
-        }
+        from sellable.payments import provider_is_valid
+
+        payment_ready = provider_is_valid(settings)
+        checks["payments"] = {"status": "ok" if payment_ready else "unavailable"}
+        ready = ready and payment_ready
     except Exception as error:  # noqa: BLE001
         ready = False
-        checks["payments"] = {"error": str(error)[:200]}
+        logger.warning("Readiness payments check failed (%s)", type(error).__name__)
+        checks["payments"] = {"status": "unavailable"}
     try:
         from sellable.repositories import MerchantRepository
 
-        checks["database"] = {
-            "merchants": len(MerchantRepository().list_all(limit=5))
-        }
+        MerchantRepository().list_all(limit=1)
+        checks["database"] = {"status": "ok"}
     except Exception as error:  # noqa: BLE001
         ready = False
-        checks["database"] = {"error": str(error)[:200]}
+        logger.warning("Readiness database check failed (%s)", type(error).__name__)
+        checks["database"] = {"status": "unavailable"}
     status_code = 200 if ready else 503
     return JSONResponse(status_code=status_code, content={"ready": ready, "checks": checks})
 
@@ -2912,6 +3012,7 @@ def console_connector_register(
     x_trace_id: str | None = Header(default=None),
 ) -> dict:
     from sellable.connectors.base import ConnectorConfig
+    from sellable.outbound import validate_outbound_url
 
     for field_name in ("connector_id", "provider"):
         if not body.get(field_name):
@@ -2933,6 +3034,12 @@ def console_connector_register(
             field_map=dict(body.get("field_map") or {}),
             timeout_seconds=int(body.get("timeout_seconds") or 15),
             active=True,
+        )
+        validate_outbound_url(
+            f"{config.base_url.rstrip('/')}{config.products_path}",
+            allow_private=settings.is_dev_environment,
+            require_https=not settings.is_dev_environment,
+            resolve=not settings.is_dev_environment,
         )
         return core.connector_register(
             config, trace_id=resolve_trace_id(x_trace_id)
@@ -3559,7 +3666,6 @@ def _summarize_order(
     dead consent as ISSUED — the exact bug behind the stale START PAYMENT
     button and the "Consent is not available for use" 409 loop.
     """
-    order_id = getattr(order, "order_id")
     status = getattr(order, "status")
 
     items: list[dict[str, object]] = []
@@ -4026,7 +4132,7 @@ def console_approve_order(
             )
             mission_id = mission_row.mission_id if mission_row else None
         except Exception as exc:  # noqa: BLE001 — pointer refresh is additive
-            logger.warning("Buyer mission approval refresh failed: %s", exc)
+            logger.warning("Buyer mission approval refresh failed (%s)", type(exc).__name__)
         return {
             "status": "approved",
             "order_id": order_id,
@@ -4491,7 +4597,7 @@ def console_onboarding(
                 db.query(MerchantUserRecord).filter_by(auth_user_id=user.auth_user_id).first()
             )
     except Exception as exc:
-        logger.error("Onboarding membership check failed: %s", exc)
+        logger.error("Onboarding membership check failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Database error during onboarding") from exc
     if existing is not None:
         raise HTTPException(
@@ -4515,7 +4621,7 @@ def console_onboarding(
             )
             db.commit()
     except Exception as exc:
-        logger.error("Onboarding membership write failed: %s", exc)
+        logger.error("Onboarding membership write failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Could not link merchant membership") from exc
     record = MerchantRepository().get(merchant_id)
     return {
@@ -4570,7 +4676,7 @@ def _with_mission_id(
             merchant_id=merchant_id, mission=mission, result=result
         )
     except Exception as exc:  # noqa: BLE001 — mission persistence is additive
-        logger.warning("Buyer mission persistence failed: %s", exc)
+        logger.warning("Buyer mission persistence failed (%s)", type(exc).__name__)
         return result
     if mission_id:
         result = result.model_copy(update={"mission_id": mission_id})

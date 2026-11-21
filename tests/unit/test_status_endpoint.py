@@ -106,3 +106,31 @@ def test_status_buyer_agent_unconfigured_when_auth_missing(
     response = client.get("/agents/status", headers=DEMO_H)
     assert response.status_code == 200
     assert response.json()["buyer_agent"]["state"] == "UNCONFIGURED"
+
+
+def test_status_does_not_return_provider_exception_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        status_module,
+        "settings",
+        _fake_settings(
+            llm_provider="openai",
+            llm_model="gpt-test",
+            llm_is_configured=True,
+        ),
+    )
+    status_module._llm_probe_cache.pop("openai", None)
+
+    class FailingProvider:
+        def probe(self, *, timeout: int) -> None:
+            raise RuntimeError("api_key=private-provider-secret")
+
+    adapter = FailingProvider()
+    status_module._run_llm_probe("openai", adapter)
+    result = status_module._llm_status(adapter)
+
+    assert result["state"] == "ERROR"
+    assert result["detail"] == "LLM provider connectivity check failed."
+    assert "private-provider-secret" not in str(result)
+    status_module._llm_probe_cache.pop("openai", None)

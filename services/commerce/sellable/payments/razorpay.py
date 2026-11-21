@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import razorpay
+import requests
 from razorpay.errors import BadRequestError, GatewayError, ServerError, SignatureVerificationError
 
 from sellable.config import Settings
@@ -23,6 +24,14 @@ class RazorpayRequestError(RuntimeError):
 
 class InvalidWebhookSignatureError(ValueError):
     pass
+
+
+class _ProviderTimeoutSession(requests.Session):
+    """Give every SDK request a finite timeout, including SDK-owned calls."""
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", 15)
+        return super().request(method, url, **kwargs)
 
 
 class ProviderOrder(StrictModel):
@@ -168,7 +177,8 @@ class RazorpayAdapter:
     def _sdk_client(self) -> Any:
         if self._client is None:
             self._client = razorpay.Client(
-                auth=(self.config.razorpay_key_id, self.config.razorpay_key_secret)
+                auth=(self.config.razorpay_key_id, self.config.razorpay_key_secret),
+                session=_ProviderTimeoutSession(),
             )
             self._client.set_app_details({"title": "SELLABLE", "version": "0.1.0"})
         return self._client

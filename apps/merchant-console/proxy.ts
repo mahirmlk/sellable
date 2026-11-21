@@ -1,10 +1,10 @@
 import { type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
-// Session gate for the merchant console (UPDATE.md Milestone A).
-// Public marketing pages are untouched; only auth + dashboard routes run
-// through Supabase session refresh / demo-cookie routing.
-export async function middleware(request: NextRequest) {
+// Session gate for the merchant console (UPDATE.md Milestone A). Public
+// marketing pages are untouched; only auth + dashboard routes run through
+// Supabase session refresh / demo-cookie routing.
+export async function proxy(request: NextRequest) {
   return await updateSession(request);
 }
 

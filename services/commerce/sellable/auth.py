@@ -125,7 +125,10 @@ def _lookup_issued_key(key_hash: str):
             _issued_key_repo = AgentApiKeyRepository()
         except Exception as error:  # noqa: BLE001 — degrade to env keys
             _issued_key_failed_at = time.time()
-            logger.warning("Agent key store unavailable; env keys only: %s", error)
+            logger.warning(
+                "Agent key store unavailable; env keys only (%s)",
+                type(error).__name__,
+            )
     if _issued_key_repo is None:
         return None
     try:
@@ -133,7 +136,7 @@ def _lookup_issued_key(key_hash: str):
     except Exception as error:  # noqa: BLE001 — degrade to env keys
         _issued_key_repo = None
         _issued_key_failed_at = time.time()
-        logger.warning("Agent key lookup failed; env keys only: %s", error)
+        logger.warning("Agent key lookup failed; env keys only (%s)", type(error).__name__)
         return None
     if record is not None:
         _issued_key_repo.touch_last_used(record.key_id)
@@ -234,13 +237,19 @@ def _resolve_signed_request(
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(status_code=401, detail="Invalid request signature")
 
-    if not _replay_guard.consume(agent_id, nonce):
+    # The persistent claim is the production replay boundary: process memory
+    # cannot protect across restarts or replicas. Claim durably before the
+    # local fast-path so production never accepts a signed write on a memory-
+    # only guarantee when storage is unavailable.
+    nonce_claim = _claim_nonce_persistently(agent_id, nonce)
+    if nonce_claim is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Signed request replay protection is temporarily unavailable",
+        )
+    if not nonce_claim:
         raise HTTPException(status_code=401, detail="Replayed request nonce")
-    # Persistent claim: the in-memory guard above stops same-process replays,
-    # but it is wiped by every restart/redeploy and is per-replica. The DB
-    # claim closes both holes; a DB outage degrades to memory-only (logged)
-    # rather than rejecting all signed traffic.
-    if not _claim_nonce_persistently(agent_id, nonce):
+    if not _replay_guard.consume(agent_id, nonce):
         raise HTTPException(status_code=401, detail="Replayed request nonce")
 
     return AgentApiKey(
@@ -259,8 +268,12 @@ _nonce_repo: object | None = None
 _nonce_repo_failed_at: float = 0.0
 
 
-def _claim_nonce_persistently(agent_id: str, nonce: str) -> bool:
-    """Claim (agent_id, nonce) in the database. True unless seen before."""
+def _claim_nonce_persistently(agent_id: str, nonce: str) -> bool | None:
+    """Return True for a new nonce, False for replay, None when unavailable.
+
+    Memory-only fallback is permitted in development; production callers can
+    distinguish store outages from replay attempts and fail closed.
+    """
     global _nonce_repo, _nonce_repo_failed_at
     if _nonce_repo is None and time.time() - _nonce_repo_failed_at > 60:
         try:
@@ -269,16 +282,18 @@ def _claim_nonce_persistently(agent_id: str, nonce: str) -> bool:
             _nonce_repo = NonceRepository()
         except Exception as error:
             _nonce_repo_failed_at = time.time()
-            logger.warning("Nonce store unavailable; replay guard is memory-only: %s", error)
+            logger.warning(
+                "Nonce store unavailable (%s)", type(error).__name__
+            )
     if _nonce_repo is None:
-        return True
+        return True if settings.is_dev_environment else None
     try:
         return _nonce_repo.claim(agent_id, nonce)
     except Exception as error:
         _nonce_repo = None
         _nonce_repo_failed_at = time.time()
-        logger.warning("Nonce claim failed; replay guard is memory-only: %s", error)
-        return True
+        logger.warning("Nonce claim failed (%s)", type(error).__name__)
+        return True if settings.is_dev_environment else None
 
 
 def get_agent_api_key(

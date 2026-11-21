@@ -8,7 +8,14 @@ body is replayed to the downstream application unchanged.
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any
+
+
+# Current write APIs only need small JSON payloads (the largest persisted
+# checkout snapshot is separately capped at 256 KiB). Keep a little room for
+# protocol metadata while bounding memory consumed before route validation.
+MAX_REQUEST_BODY_BYTES = 1_048_576
 
 
 class RequestBodyCaptureMiddleware:
@@ -21,12 +28,33 @@ class RequestBodyCaptureMiddleware:
             return
 
         chunks: list[bytes] = []
+        body_size = 0
         more_body = True
         while more_body:
             message = await receive()
             if message["type"] == "http.disconnect":
                 return
-            chunks.append(message.get("body", b""))
+            chunk = message.get("body", b"")
+            body_size += len(chunk)
+            if body_size > MAX_REQUEST_BODY_BYTES:
+                response_body = json.dumps(
+                    {"detail": f"Request body exceeds {MAX_REQUEST_BODY_BYTES} bytes"}
+                ).encode("utf-8")
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 413,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(response_body)).encode("ascii")),
+                        ],
+                    }
+                )
+                await send(
+                    {"type": "http.response.body", "body": response_body}
+                )
+                return
+            chunks.append(chunk)
             more_body = message.get("more_body", False)
         body = b"".join(chunks)
 

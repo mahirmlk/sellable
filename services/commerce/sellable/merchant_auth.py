@@ -228,7 +228,10 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str, str | None]:
                 name, _ = _merchant_record(record.merchant_id)
                 return record.merchant_id, record.role, name
     except Exception as db_err:
-        logger.warning("Direct database check for merchant_users failed: %s", db_err)
+        logger.warning(
+            "Direct database check for merchant_users failed (%s)",
+            type(db_err).__name__,
+        )
 
     # Step 2: Fallback to PostgREST HTTP query with service-role key
     if settings.supabase_url and settings.supabase_service_role_key:
@@ -251,7 +254,10 @@ def _resolve_merchant(auth_user_id: str) -> tuple[str, str, str | None]:
                     name, _ = _merchant_record(merchant_id)
                     return merchant_id, str(rows[0].get("role", "operator")), name
         except Exception as http_err:
-            logger.warning("PostgREST merchant resolution failed: %s", http_err)
+            logger.warning(
+                "PostgREST merchant resolution failed (%s)",
+                type(http_err).__name__,
+            )
 
     raise HTTPException(
         status_code=403,

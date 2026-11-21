@@ -8,7 +8,17 @@ from typing import Any
 
 import threading
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, UniqueConstraint, create_engine
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    create_engine,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from sellable.config import Settings, settings
@@ -1407,3 +1417,74 @@ def initialise_database(config: Settings = settings) -> None:
     engine = make_engine(config)
     Base.metadata.create_all(engine)
     _migrate(engine)
+    _harden_supabase_data_api(engine)
+
+
+def _harden_supabase_data_api(engine) -> None:
+    """Block direct Supabase Data API access to backend-owned commerce tables.
+
+    The console uses Supabase Auth but loads business data through this API.
+    Revoke browser roles' table/sequence privileges and enable RLS as defense
+    in depth; the backend's database owner and server-only service role retain
+    their existing access. Repeat after schema creation and revoke default
+    privileges so future SQLAlchemy tables inherit the same boundary.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+
+    preparer = engine.dialect.identifier_preparer
+    api_roles = {"PUBLIC"}
+    with engine.begin() as connection:
+        existing_roles = set(
+            connection.execute(
+                text("SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated')")
+            ).scalars()
+        )
+        api_roles.update(existing_roles)
+        roles_sql = ", ".join(
+            "PUBLIC" if role == "PUBLIC" else preparer.quote(role)
+            for role in sorted(api_roles)
+        )
+
+        for table in Base.metadata.sorted_tables:
+            qualified_table = (
+                f"{preparer.quote('public')}.{preparer.quote(table.name)}"
+            )
+            connection.execute(
+                text(f"ALTER TABLE {qualified_table} ENABLE ROW LEVEL SECURITY")
+            )
+            connection.execute(
+                text(
+                    f"REVOKE ALL PRIVILEGES ON TABLE {qualified_table} "
+                    f"FROM {roles_sql}"
+                )
+            )
+            for column in table.columns:
+                if not (column.primary_key and column.autoincrement is True):
+                    continue
+                sequence_name = connection.execute(
+                    text("SELECT pg_get_serial_sequence(:table_name, :column_name)"),
+                    {
+                        "table_name": f"public.{table.name}",
+                        "column_name": column.name,
+                    },
+                ).scalar_one_or_none()
+                if sequence_name:
+                    schema_name, name = sequence_name.split(".", 1)
+                    qualified_sequence = (
+                        f"{preparer.quote(schema_name)}.{preparer.quote(name)}"
+                    )
+                    connection.execute(
+                        text(
+                            f"REVOKE ALL PRIVILEGES ON SEQUENCE {qualified_sequence} "
+                            f"FROM {roles_sql}"
+                        )
+                    )
+
+        for object_type in ("TABLES", "SEQUENCES"):
+            connection.execute(
+                text(
+                    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+                    f"REVOKE ALL PRIVILEGES ON {object_type} FROM {roles_sql}"
+                )
+            )
