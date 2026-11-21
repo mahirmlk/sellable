@@ -97,7 +97,7 @@ redirects are disabled so integration credentials and webhook signatures are
 not forwarded to another host. Local HTTP integrations remain available only
 in `development` and `test` environments.
 
-The first production release must run one Railway replica. Keep `WEB_CONCURRENCY` and `UVICORN_WORKERS` unset or set to `1`; startup rejects multiple workers while consent and payment-attempt transitions remain process-local. Consent consumption
+The first production release must run one Cloudflare Container instance. Keep `WEB_CONCURRENCY` and `UVICORN_WORKERS` unset or set to `1`; startup rejects multiple workers while consent and payment-attempt transitions remain process-local. Consent consumption
 and payment-attempt serialization still depend on process-local locks; the app
 rejects multiple workers but cannot detect multiple replicas. Do not scale the
 service horizontally until those transitions are backed by atomic database
