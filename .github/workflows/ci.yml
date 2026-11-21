@@ -88,6 +88,13 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Verify deployment lockfiles
+        run: |
+          test -f package.json
+          test -f package-lock.json
+          git ls-files --error-unmatch package.json package-lock.json
+          node -e "const p = require('./package.json'); const l = require('./package-lock.json'); if (l.lockfileVersion < 1 || p.name !== l.name) process.exit(1)"
+
       - name: Install deployment tooling
         run: npm ci
 
