@@ -52,6 +52,8 @@ node_modules/
 *.tsbuildinfo
 next-env.d.ts
 .vercel
+.wrangler/
+.dev.vars
 
 # Binary / large vendor artifacts (download separately, see tools/zrok/README.md)
 tools/zrok/*.exe
