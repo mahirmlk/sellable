@@ -25,7 +25,7 @@ metadata also use the current dashboard theme settings.
 
 The toast system does not offer undo. Refunds, access revocation, and approval decisions are treated
 as irreversible operations and use explicit confirmation. Other baseline gaps, including incomplete
-table coverage on some routes, URL-persistent filters, and the Railway config-as-code migration,
+table coverage on some routes, URL-persistent filters, and the Cloudflare Container deployment and target-account smoke verification,
 still need a fresh scoped review before launch. This report does not claim those are resolved.
 
 ---
