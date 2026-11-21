@@ -227,7 +227,6 @@ export default function ChatPageInner() {
   const [categories, setCategories] = useState<string[]>(["accessories", "gifting", "snacks"]);
   const [upsellOn, setUpsellOn] = useState(true);
   const [decision, setDecision] = useState<SellerDecisionPayload | null>(null);
-  const [intent, setIntent] = useState<IntentMandate | null>(null);
   const [order, setOrder] = useState<OrderCreateResult | null>(null);
   const [consent, setConsent] = useState<ConsentInfo | null>(null);
   const [payment, setPayment] = useState<PaymentAttemptPayload | null>(null);
@@ -314,7 +313,6 @@ export default function ChatPageInner() {
     setBudgetMsg(null);
     setMessages([]);
     setDecision(null);
-    setIntent(null);
     setOrder(null);
     setConsent(null);
     setPayment(null);
@@ -585,7 +583,7 @@ export default function ChatPageInner() {
       // action retries.
       setSyncState("error");
     }
-  }, [checkoutSessionId, messages, decision, order, budgetPaise, phase, readOnly, refreshHistory, router]);
+  }, [checkoutSessionId, messages, decision, order, budgetPaise, readOnly, refreshHistory, router]);
 
   useEffect(() => {
     void persistSession();
@@ -983,7 +981,6 @@ export default function ChatPageInner() {
       setBusy(true);
       try {
         const i = buildIntent(message);
-        setIntent(i);
         const result = await consoleSellerRespond({
           message,
           intent: i,
@@ -1122,7 +1119,6 @@ export default function ChatPageInner() {
       // honored: the stored intent was minted when the quote was requested
       // and would otherwise carry a stale budget ceiling to order creation.
       const freshIntent = buildIntent(sessionMessageRef.current);
-      setIntent(freshIntent);
       // Checkout must re-evaluate the SAME negotiated quote the seller
       // returned. The in-session offer lives in offerRef; after a restore
       // it is reconstructed deterministically from the persisted cart
