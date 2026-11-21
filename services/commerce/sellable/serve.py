@@ -16,7 +16,18 @@ def main() -> None:
     if not 1 <= port <= 65535:
         raise SystemExit("PORT must be an integer from 1 to 65535")
 
-    uvicorn.run("sellable.main:app", host="0.0.0.0", port=port)
+    trust_proxy_headers = os.getenv("TRUST_PROXY_HEADERS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    uvicorn.run(
+        "sellable.main:app",
+        host="0.0.0.0",
+        port=port,
+        proxy_headers=trust_proxy_headers,
+        forwarded_allow_ips="*" if trust_proxy_headers else "127.0.0.1",
+    )
 
 
 if __name__ == "__main__":
