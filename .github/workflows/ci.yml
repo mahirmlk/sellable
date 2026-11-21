@@ -98,10 +98,8 @@ jobs:
       - name: Install deployment tooling
         run: npm ci
 
-      - name: Report deployment tooling advisories
-        run: |
-          npm audit --json > npm-audit.json || true
-          node -e "const a = require('./npm-audit.json'); for (const [name, item] of Object.entries(a.vulnerabilities || {})) console.log(JSON.stringify({name, severity: item.severity, range: item.range, fixAvailable: item.fixAvailable, via: item.via.map(v => typeof v === 'string' ? v : v.title)}))"
+      - name: Audit deployment dependencies
+        run: npm audit --audit-level=high
 
       - name: Generate Cloudflare environment types
         run: mkdir -p .wrangler && npx wrangler types --path .wrangler/types.d.ts
