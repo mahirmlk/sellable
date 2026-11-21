@@ -18,6 +18,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.engine import make_url
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -222,6 +223,12 @@ def _assert_production_configuration() -> None:
         raise RuntimeError(
             "Production requires a PostgreSQL DATABASE_URL using the installed "
             "psycopg driver; SQLite is only supported for development and tests."
+        )
+    database_sslmode = make_url(settings.database_url).query.get("sslmode")
+    if database_sslmode not in ("require", "verify-ca", "verify-full"):
+        raise RuntimeError(
+            "Production DATABASE_URL must require TLS with sslmode=require, "
+            "verify-ca, or verify-full."
         )
     cors_origins = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
     if not cors_origins:
