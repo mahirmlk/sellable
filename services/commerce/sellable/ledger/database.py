@@ -1265,7 +1265,7 @@ def _ensure_ledger_attribution_columns(engine) -> None:
                 log.info("%s: added column %s", table, name)
 
 
-def _migrate(engine) -> None:
+def _migrate(engine, *, require_invariants: bool = False) -> None:
     """Add columns introduced after the initial schema without dropping data."""
     import logging
 
@@ -1385,18 +1385,23 @@ def _migrate(engine) -> None:
                 "UPDATE ledger_events SET merchant_id = 'mrc_demo_store' WHERE merchant_id IS NULL"
             ))
 
-    # Separate transaction: pre-existing duplicate keys must not roll back
-    # the column migrations above — worst case the core in-memory guard
-    # remains the only protection and a warning is logged.
+    # Separate transactions: duplicate legacy data must not roll back the
+    # schema migrations above. Production startup fails closed if either
+    # required uniqueness invariant cannot be established.
     try:
         with engine.begin() as connection:
             connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_merchant_idempotency "
                 "ON orders (merchant_id, idempotency_key)"
             ))
-    except Exception as error:  # noqa: BLE001 — startup must survive legacy data
+    except Exception as error:  # noqa: BLE001 — legacy duplicate rows may block the index
+        if require_invariants:
+            raise RuntimeError(
+                "Production startup requires a unique order idempotency index; "
+                "resolve duplicate merchant/idempotency keys before restarting."
+            ) from None
         logging.getLogger("sellable.migrate").warning(
-            "Skipping orders idempotency unique index: %s", error
+            "Skipping orders idempotency unique index (%s)", type(error).__name__
         )
 
     # Same tolerance for the single-ACTIVE-session invariant.
@@ -1407,16 +1412,26 @@ def _migrate(engine) -> None:
                 "ON checkout_sessions (merchant_id, buyer_ref) "
                 "WHERE status = 'ACTIVE'"
             ))
-    except Exception as error:  # noqa: BLE001 — startup must survive legacy data
+    except Exception as error:  # noqa: BLE001 — legacy duplicate rows may block the index
+        if require_invariants:
+            raise RuntimeError(
+                "Production startup requires the active checkout-session unique index; "
+                "resolve duplicate active sessions before restarting."
+            ) from None
         logging.getLogger("sellable.migrate").warning(
-            "Skipping active-session unique index: %s", error
+            "Skipping active-session unique index (%s)", type(error).__name__
         )
 
 
 def initialise_database(config: Settings = settings) -> None:
     engine = make_engine(config)
     Base.metadata.create_all(engine)
-    _migrate(engine)
+    _migrate(
+        engine,
+        require_invariants=(
+            not config.is_dev_environment and engine.dialect.name == "postgresql"
+        ),
+    )
     _harden_supabase_data_api(engine)
 
 
