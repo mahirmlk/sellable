@@ -367,6 +367,38 @@ def test_a2a_bridge(commerce_core: CommerceCore) -> None:
         app.dependency_overrides.clear()
 
 
+def test_a2a_task_uses_authenticated_merchant_core(commerce_core, monkeypatch):
+    from sellable.main import app, get_scoped_commerce_signed
+    from sellable.protocols import a2a
+
+    class TenantCore:
+        merchant_scope = "mrc_tenant_scope"
+
+        def __getattr__(self, name):
+            return getattr(commerce_core, name)
+
+    captured = {}
+
+    def handle_task(seller_agent, _service_agent, _ctx, *, actor, input):
+        captured["merchant_id"] = seller_agent.commerce.merchant_scope
+        return {"actor": actor, "merchant_id": captured["merchant_id"]}
+
+    monkeypatch.setattr(a2a, "handle_task", handle_task)
+    client = _client(commerce_core)
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: TenantCore()
+    try:
+        response = client.post(
+            "/a2a/tasks",
+            json={"actor": "seller", "input": {}},
+            headers=H,
+        )
+        assert response.status_code == 200, response.text
+        assert captured["merchant_id"] == "mrc_tenant_scope"
+        assert response.json()["merchant_id"] == "mrc_tenant_scope"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_ucp_negotiate(commerce_core: CommerceCore) -> None:
     from sellable.main import app
 
