@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import razorpay
+import requests
 from razorpay.errors import BadRequestError, GatewayError, ServerError, SignatureVerificationError
 
 from sellable.config import Settings
@@ -23,6 +25,14 @@ class RazorpayRequestError(RuntimeError):
 
 class InvalidWebhookSignatureError(ValueError):
     pass
+
+
+class _ProviderTimeoutSession(requests.Session):
+    """Give every SDK request a finite timeout, including SDK-owned calls."""
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", 15)
+        return super().request(method, url, **kwargs)
 
 
 class ProviderOrder(StrictModel):
@@ -103,7 +113,12 @@ class RazorpayAdapter:
         )
 
     def refund(
-        self, payment_id: str, amount_paise: int, *, notes: dict[str, str] | None = None
+        self,
+        payment_id: str,
+        amount_paise: int,
+        *,
+        notes: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
     ) -> ProviderRefund:
         """Refund a captured payment through Razorpay (test mode only).
 
@@ -114,11 +129,22 @@ class RazorpayAdapter:
         self.validate_configuration()
         if amount_paise <= 0:
             raise RazorpayRequestError("Refund amount must be positive", retryable=False)
-        payload: dict[str, Any] = {"amount": amount_paise}
+        payload: dict[str, Any] = {}
         if notes:
             payload["notes"] = notes
+        headers = None
+        if idempotency_key:
+            # Razorpay requires an opaque, stable request key. Hash arbitrary
+            # caller keys so the provider header is always valid and bounded.
+            digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+            headers = {"X-Refund-Idempotency": f"rfnd_{digest}"}
         try:
-            response = self._sdk_client.payment.refund(payment_id, payload)
+            # The Python SDK signature is refund(payment_id, amount, data=...).
+            # Passing payload as the second positional argument nests the
+            # amount field and produces an invalid provider request.
+            response = self._sdk_client.payment.refund(
+                payment_id, amount_paise, data=payload, **({"headers": headers} if headers else {})
+            )
         except BadRequestError as error:
             raise RazorpayRequestError(
                 f"Razorpay rejected the refund: {error}", retryable=False
@@ -127,12 +153,23 @@ class RazorpayAdapter:
             raise RazorpayRequestError(
                 f"Razorpay could not complete the refund: {error}", retryable=True
             ) from error
+        except requests.exceptions.RequestException as error:
+            raise RazorpayRequestError(
+                "Razorpay refund response was unavailable", retryable=True
+            ) from error
+        status = response.get("status")
+        if status not in {"pending", "processed", "failed"}:
+            raise RazorpayRequestError("Razorpay returned an unknown refund status", retryable=True)
+        if response.get("amount", amount_paise) != amount_paise:
+            raise RazorpayRequestError("Razorpay returned a different refund amount", retryable=False)
+        if response.get("currency", "INR") != "INR":
+            raise RazorpayRequestError("Razorpay returned an unexpected refund currency", retryable=False)
         return ProviderRefund(
             provider_refund_id=response["id"],
             provider_payment_id=payment_id,
             amount_paise=response.get("amount", amount_paise),
             currency=response.get("currency", "INR"),
-            status=response.get("status", "processed"),
+            status=status,
         )
 
     def cancel_payment_link(self, link_id: str) -> None:
@@ -168,7 +205,8 @@ class RazorpayAdapter:
     def _sdk_client(self) -> Any:
         if self._client is None:
             self._client = razorpay.Client(
-                auth=(self.config.razorpay_key_id, self.config.razorpay_key_secret)
+                auth=(self.config.razorpay_key_id, self.config.razorpay_key_secret),
+                session=_ProviderTimeoutSession(),
             )
             self._client.set_app_details({"title": "SELLABLE", "version": "0.1.0"})
         return self._client
@@ -183,7 +221,7 @@ class RazorpayAdapter:
                 return resource.create(payload)
             except BadRequestError as error:
                 raise RazorpayRequestError("Razorpay rejected the request", retryable=False) from error
-            except (GatewayError, ServerError) as error:
+            except (GatewayError, ServerError):
                 last_error = RazorpayRequestError(
                     f"Razorpay could not complete the request (attempt {attempt + 1})",
                     retryable=True,
@@ -201,3 +239,4 @@ class RazorpayAdapter:
     def _ensure_webhook_configuration(self) -> None:
         if not self.config.razorpay_is_configured:
             raise RazorpayConfigurationError("Razorpay webhook secret is not configured")
+
