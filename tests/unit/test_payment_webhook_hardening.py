@@ -77,20 +77,35 @@ class FakeRazorpayRefunds:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.fail_next = False
+        self.fail_retryably = False
+        self.status = "processed"
 
-    def refund(self, payment_id: str, data: dict[str, object]) -> dict[str, object]:
+    def refund(
+        self,
+        payment_id: str,
+        amount: int,
+        *,
+        data: dict[str, object] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
         from razorpay.errors import BadRequestError
 
-        self.calls.append((payment_id, data))
+        payload = {"amount": amount, **(data or {})}
+        if headers:
+            payload["_headers"] = headers
+        self.calls.append((payment_id, payload))
+        if self.fail_retryably:
+            self.fail_retryably = False
+            raise RazorpayRequestError("simulated ambiguous timeout", retryable=True)
         if self.fail_next:
             self.fail_next = False
             raise BadRequestError("refund failed in test mode")
         return {
             "id": f"rfnd_test_{len(self.calls):04d}",
             "payment_id": payment_id,
-            "amount": data["amount"],
+            "amount": amount,
             "currency": "INR",
-            "status": "processed",
+            "status": self.status,
         }
 
 
@@ -641,6 +656,62 @@ def test_refund_is_idempotent_per_key(core_and_engine) -> None:
 
     assert first["refund_id"] == second["refund_id"]
     assert len(client.payment.calls) == 1
+
+
+def test_refund_retry_after_ambiguous_failure_reuses_provider_key(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_retry", "idem_hardening_rf_02_retry")
+    refunds, client = refund_service_for(core, engine)
+    client.payment.fail_retryably = True
+    key = "idem_hardening_rfk_retry_01"
+
+    with pytest.raises(RazorpayRequestError):
+        refunds.initiate_refund(order_id=order.order_id, reason="retry", idempotency_key=key)
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+    result = refunds.initiate_refund(order_id=order.order_id, reason="retry", idempotency_key=key)
+
+    assert result["refund_status"] == "processed"
+    assert len(client.payment.calls) == 2
+    assert client.payment.calls[0][1]["_headers"] == client.payment.calls[1][1]["_headers"]
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
+
+
+def test_refund_key_cannot_be_reused_for_different_request(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_key", "idem_hardening_rf_02_key")
+    refunds, client = refund_service_for(core, engine)
+    key = "idem_hardening_rfk_reuse_01"
+    refunds.initiate_refund(order_id=order.order_id, reason="original", idempotency_key=key)
+
+    with pytest.raises(ValueError, match="different refund request"):
+        refunds.initiate_refund(order_id=order.order_id, reason="changed", idempotency_key=key)
+    assert len(client.payment.calls) == 1
+
+
+def test_pending_provider_refund_does_not_settle_order(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_pending", "idem_hardening_rf_02_pending")
+    refunds, client = refund_service_for(core, engine)
+    client.payment.status = "pending"
+
+    result = refunds.initiate_refund(order_id=order.order_id, reason="pending provider result")
+
+    assert result["refund_status"] == "initiated"
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+
+def test_refunds_cannot_exceed_order_total_and_final_partial_closes_order(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf3_balance", "idem_hardening_rf_03_balance")
+    refunds, _ = refund_service_for(core, engine)
+
+    refunds.initiate_refund(order_id=order.order_id, reason="first", amount_paise=50_000)
+    with pytest.raises(ValueError, match="remaining refundable balance"):
+        refunds.initiate_refund(order_id=order.order_id, reason="too much", amount_paise=20_000)
+
+    refunds.initiate_refund(order_id=order.order_id, reason="final balance", amount_paise=19_900)
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
 
 
 def test_partial_refund_keeps_order_paid(core_and_engine) -> None:
