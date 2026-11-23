@@ -194,9 +194,16 @@ class PaymentService:
                 if order.provider_link_id in self._local_order_by_link_id:
                     self._local_order_by_link_id[order.provider_link_id] = order_id
                 return self._rebuild_attempt(order)
+            self._core_by_order_id[order_id] = core
+            if order.status is OrderStatus.PAYMENT_PENDING:
+                # Consent was already consumed before the prior provider call.
+                # Reconcile by the stable order reference, then create only if
+                # the provider confirms that no matching link exists.
+                return self._create_provider_attempt(
+                    order_id, order.trace_id, core, reconcile_first=True
+                )
             core.consume_consent(consent_id, order_id=order_id)
             pending_order = core.mark_payment_pending(order_id)
-            self._core_by_order_id[order_id] = core
             return self._create_provider_attempt(order_id, pending_order.trace_id, core)
 
     def cancel_provider_link(
