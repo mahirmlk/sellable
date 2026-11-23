@@ -325,6 +325,52 @@ def test_mcp_bridge(commerce_core: CommerceCore) -> None:
         app.dependency_overrides.clear()
 
 
+def test_agent_payment_routes_pass_authenticated_core_after_restart(commerce_core):
+    from sellable.contracts import PaymentAttempt
+    from sellable.main import app, get_payment_service
+
+    order_id = "ord_restart_tenant"
+    attempt = PaymentAttempt(
+        order_id=order_id,
+        provider_order_id="plink_restart_tenant",
+        idempotency_key="idem_restart_tenant_0001",
+    )
+
+    class RestartedPaymentService:
+        def __init__(self):
+            self.calls = []
+
+        def start_payment(self, **kwargs):
+            self.calls.append(("start", kwargs.get("commerce")))
+            return attempt
+
+        def retry_payment(self, **kwargs):
+            self.calls.append(("retry", kwargs.get("commerce")))
+            return attempt
+
+    payments = RestartedPaymentService()
+    client = _client(commerce_core)
+    app.dependency_overrides[get_payment_service] = lambda: payments
+    try:
+        started = client.post(
+            f"/orders/{order_id}/payment",
+            json={"consent_id": "cns_restart"},
+            headers=H,
+        )
+        retried = client.post(
+            f"/orders/{order_id}/payment/retry",
+            headers=H,
+        )
+        assert started.status_code == 200, started.text
+        assert retried.status_code == 200, retried.text
+        assert payments.calls == [
+            ("start", commerce_core),
+            ("retry", commerce_core),
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_a2a_bridge(commerce_core: CommerceCore) -> None:
     from sellable.main import app
 
