@@ -164,6 +164,16 @@ def test_readiness_reports_evidence_and_blockers(isolated_env, monkeypatch):
         _clear(main_module.app)
 
 
+def test_production_configuration_rejects_disabled_maintenance_worker(monkeypatch):
+    original = main_module.settings
+    main_module.settings = Settings(environment="production", maintenance_worker=False)
+    try:
+        with pytest.raises(RuntimeError, match="requires the maintenance worker"):
+            main_module._assert_production_configuration()
+    finally:
+        main_module.settings = original
+
+
 def test_production_readiness_fails_without_required_maintenance_worker(
     isolated_env, monkeypatch
 ):
