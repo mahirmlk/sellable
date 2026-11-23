@@ -3181,7 +3181,7 @@ def agent_quote_create(
     request: Request,
     body: SellerRequest,
     commerce: CommerceCore = Depends(get_scoped_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
 ) -> SellerDecision:
@@ -3206,7 +3206,7 @@ def agent_quote_negotiate(
     request: Request,
     body: SellerRequest,
     commerce: CommerceCore = Depends(get_scoped_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
 ) -> SellerDecision:
