@@ -35,6 +35,13 @@ keep it that way and do not treat this Container as an untrusted-code sandbox.
 
 ## Local Development
 
+Install the locked development dependencies from the repository root:
+
+```bash
+python -m pip install --require-hashes -r requirements/runtime.txt -r requirements/dev.txt
+python -m pip install --no-deps --no-build-isolation -e .
+```
+
 ## Environment Variables
 
 | Variable | Required | Description |
