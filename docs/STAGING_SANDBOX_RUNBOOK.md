@@ -58,7 +58,7 @@ https://<staging-worker-host>/webhooks/razorpay
 
 Use the same webhook secret as the staging Worker's `RAZORPAY_WEBHOOK_SECRET`. Subscribe to `payment.captured` and `payment.failed`. Confirm the webhook URL is the staging Worker host, not the production API.
 
-Use Razorpay's current [test credentials and payment methods guide](https://razorpay.com/docs/payments/payments/test-card-upi-details/) for checkout values. Never use a live-mode key or a real payment method.
+Use Razorpay's current [test credentials and payment methods guide](https://hdfcbank-collectnow-docs.razorpay.com/payments/payment-gateway/android-integration/standard/integration-steps/) for checkout values. Never use a live-mode key or a real payment method.
 
 ## Reproduce the sandbox flow
 
