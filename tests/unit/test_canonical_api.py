@@ -369,17 +369,29 @@ def test_a2a_bridge(commerce_core: CommerceCore) -> None:
 
 def test_legacy_agent_catalog_uses_authenticated_merchant_key(commerce_core, monkeypatch):
     from sellable import main as main_module
-    from sellable.agents.seller import SellerAgent
-    from sellable.gateway import AgentGateway
+    from sellable.auth import AgentApiKey, get_agent_api_key
     from sellable.main import app
 
+    class TenantCore:
+        merchant_scope = "mrc_tenant_scope"
+
+        def __getattr__(self, name):
+            return getattr(commerce_core, name)
+
+    tenant_core = TenantCore()
     seen = []
 
-    def gateway_for_key(api_key):
-        seen.append(api_key.merchant_id)
-        return AgentGateway(commerce_core, SellerAgent(commerce_core))
+    def core_for_merchant(merchant_id):
+        seen.append(merchant_id)
+        return tenant_core
 
-    monkeypatch.setattr(main_module, "_agent_gateway_for_key", gateway_for_key)
+    monkeypatch.setattr(main_module.registry, "get", core_for_merchant)
+    app.dependency_overrides[get_agent_api_key] = lambda: AgentApiKey(
+        key_id="key_tenant",
+        merchant_id="mrc_tenant_scope",
+        buyer_agent_id="buyer_tenant",
+        auth_method="api_key",
+    )
     client = _client(commerce_core)
     try:
         response = client.post(
@@ -388,7 +400,7 @@ def test_legacy_agent_catalog_uses_authenticated_merchant_key(commerce_core, mon
             headers=H,
         )
         assert response.status_code == 200, response.text
-        assert seen == [commerce_core.merchant_scope]
+        assert seen and set(seen) == {"mrc_tenant_scope"}
     finally:
         app.dependency_overrides.clear()
 
