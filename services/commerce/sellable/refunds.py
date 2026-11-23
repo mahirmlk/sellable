@@ -109,7 +109,7 @@ class RefundService:
                 total = sum(
                     item.amount_paise
                     for item in repo.for_order(order.merchant_id, order.order_id)
-                    if item.status is not RefundStatus.FAILED
+                    if item.status is RefundStatus.PROCESSED
                 )
                 self._settle_processed_refund(
                     core, order, existing.provider_refund_id,
@@ -197,7 +197,7 @@ class RefundService:
         total_refunded = sum(
             item.amount_paise
             for item in repo.for_order(order.merchant_id, order.order_id)
-            if item.status is not RefundStatus.FAILED
+            if item.status is RefundStatus.PROCESSED
         )
         self._settle_processed_refund(
             core,
