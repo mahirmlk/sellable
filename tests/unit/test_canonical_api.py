@@ -367,6 +367,32 @@ def test_a2a_bridge(commerce_core: CommerceCore) -> None:
         app.dependency_overrides.clear()
 
 
+def test_legacy_agent_catalog_uses_authenticated_merchant_key(commerce_core, monkeypatch):
+    from sellable import main as main_module
+    from sellable.agents.seller import SellerAgent
+    from sellable.gateway import AgentGateway
+    from sellable.main import app
+
+    seen = []
+
+    def gateway_for_key(api_key):
+        seen.append(api_key.merchant_id)
+        return AgentGateway(commerce_core, SellerAgent(commerce_core))
+
+    monkeypatch.setattr(main_module, "_agent_gateway_for_key", gateway_for_key)
+    client = _client(commerce_core)
+    try:
+        response = client.post(
+            "/agent/catalog.get",
+            json={"sku": "AUDIO-CASE-01"},
+            headers=H,
+        )
+        assert response.status_code == 200, response.text
+        assert seen == [commerce_core.merchant_scope]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_a2a_task_uses_authenticated_merchant_core(commerce_core, monkeypatch):
     from sellable.main import app, get_scoped_commerce_signed
     from sellable.protocols import a2a
