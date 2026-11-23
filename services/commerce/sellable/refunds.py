@@ -73,43 +73,76 @@ class RefundService:
         # REFUNDED (checking status first would 400 every legitimate retry).
         existing = repo.for_idempotency_key(order.merchant_id, key)
         if existing is not None:
-            return self._present(existing, order_trace=order.trace_id)
+            if (
+                existing.order_id != order.order_id
+                or existing.amount_paise != amount
+                or existing.reason != reason
+            ):
+                raise ValueError("Idempotency key was already used for a different refund request")
+            if existing.status is RefundStatus.PROCESSED:
+                total = sum(
+                    item.amount_paise
+                    for item in repo.for_order(order.merchant_id, order.order_id)
+                    if item.status is not RefundStatus.FAILED
+                )
+                self._settle_processed_refund(
+                    core, order, existing.provider_refund_id,
+                    partial=total < order.amount_paise,
+                )
+                return self._present(existing, order_trace=order.trace_id)
+            if existing.status is RefundStatus.FAILED:
+                return self._present(existing, order_trace=order.trace_id)
+            record = existing
+        else:
+            record = None
         if order.status not in (OrderStatus.PAID, OrderStatus.FULFILLED):
-            raise ValueError(
-                f"Refund requires a PAID or FULFILLED order; current status is {order.status}"
-            )
+            if record is None:
+                raise ValueError(
+                    f"Refund requires a PAID or FULFILLED order; current status is {order.status}"
+                )
 
         payment_id = core.ledger.last_provider_ref(order.trace_id, action="order.paid")
         if payment_id is None:
             raise ValueError(
                 "No captured provider payment is recorded for this order; cannot refund"
             )
-        record = Refund(
-            merchant_id=order.merchant_id,
-            order_id=order.order_id,
-            amount_paise=amount,
-            provider_payment_id=payment_id,
-            reason=reason,
-            status=RefundStatus.PENDING,
-            idempotency_key=key,
+        prior_refunds = repo.for_order(order.merchant_id, order.order_id)
+        already_refunded = sum(
+            item.amount_paise
+            for item in prior_refunds
+            if item.status is not RefundStatus.FAILED
+            and (record is None or item.refund_id != record.refund_id)
         )
-        repo.save(record)
+        if already_refunded + amount > order.amount_paise:
+            raise ValueError("Refund amount exceeds the order's remaining refundable balance")
+        if record is None:
+            record = Refund(
+                merchant_id=order.merchant_id,
+                order_id=order.order_id,
+                amount_paise=amount,
+                provider_payment_id=payment_id,
+                reason=reason,
+                status=RefundStatus.PENDING,
+                idempotency_key=key,
+            )
+            repo.save(record)
 
         try:
             provider_refund = self.rail.refund(
                 payment_id,
                 amount,
                 notes={"local_order_id": order.order_id, "trace_id": order.trace_id},
+                idempotency_key=key,
             )
         except RazorpayRequestError as error:
-            failed = record.model_copy(update={"status": RefundStatus.FAILED})
-            repo.save(failed)
+            status = RefundStatus.PENDING if error.retryable else RefundStatus.FAILED
+            repo.save(record.model_copy(update={"status": status}))
             core.ledger.append(
                 LedgerEvent(
                     trace_id=trace_id or order.trace_id,
                     merchant_id=order.merchant_id,
                     actor=LedgerActor.COMMERCE_CORE,
-                    action="refund.failed",
+                    action="refund.retryable_failure" if error.retryable else "refund.failed",
                     inputs={
                         "order_id": order_id,
                         "amount_paise": amount,
@@ -125,37 +158,52 @@ class RefundService:
         settled = record.model_copy(
             update={
                 "provider_refund_id": provider_refund.provider_refund_id,
-                "status": RefundStatus.PROCESSED,
+                "status": {
+                    "pending": RefundStatus.PENDING,
+                    "processed": RefundStatus.PROCESSED,
+                    "failed": RefundStatus.FAILED,
+                }[provider_refund.status],
             }
         )
         repo.save(settled)
-        partial = amount < order.amount_paise
+        if settled.status is not RefundStatus.PROCESSED:
+            return self._present(settled, order_trace=order.trace_id)
+        total_refunded = sum(
+            item.amount_paise
+            for item in repo.for_order(order.merchant_id, order.order_id)
+            if item.status is not RefundStatus.FAILED
+        )
+        self._settle_processed_refund(
+            core,
+            order,
+            provider_refund.provider_refund_id,
+            partial=total_refunded < order.amount_paise,
+        )
+        return self._present(settled, order_trace=order.trace_id)
+
+    @staticmethod
+    def _settle_processed_refund(
+        core: CommerceCore, order, provider_refund_id: str | None, *, partial: bool
+    ) -> None:
+        if not provider_refund_id:
+            return
+        events = core.ledger.for_trace(order.trace_id, merchant_id=order.merchant_id)
+        if any(
+            event.provider_ref == provider_refund_id
+            and event.action in {"refund.settled", "refund.partial_settled"}
+            for event in events
+        ):
+            return
         try:
             core.mark_refunded(
-                order_id,
-                provider_ref=provider_refund.provider_refund_id,
+                order.order_id,
+                provider_ref=provider_refund_id,
                 partial=partial,
             )
         except InvalidOrderTransitionError as error:
-            core.ledger.append(
-                LedgerEvent(
-                    trace_id=trace_id or order.trace_id,
-                    merchant_id=order.merchant_id,
-                    actor=LedgerActor.COMMERCE_CORE,
-                    action="refund.unexpected_state",
-                    inputs={"order_id": order_id, "order_status": order.status},
-                    output={"settled": False},
-                    reasoning_summary=(
-                        "The provider refund succeeded but the order could not "
-                        "transition; manual reconciliation required."
-                    ),
-                    provider_ref=provider_refund.provider_refund_id,
-                )
-            )
             raise UnexpectedOrderStateError(
-                f"Order {order_id} in {order.status} cannot record the refund"
+                f"Order {order.order_id} in {order.status} cannot record the refund"
             ) from error
-        return self._present(settled, order_trace=order.trace_id)
 
     @staticmethod
     def _present(refund: Refund, *, order_trace: str) -> dict[str, object]:
@@ -171,3 +219,4 @@ class RefundService:
             "reason": refund.reason,
             "trace_id": order_trace,
         }
+
