@@ -93,7 +93,7 @@ def test_all_adapters_satisfy_the_protocol() -> None:
 
 
 def test_factory_selection() -> None:
-    config = SimpleNamespace(payment_provider="stripe")
+    config = SimpleNamespace(payment_provider="stripe", is_dev_environment=True)
     assert isinstance(build_provider(config), StripeAdapter)
     assert build_provider(SimpleNamespace()).provider_name == "razorpay"
     assert build_provider(Settings(environment="development", payment_provider="simulated")).provider_name == (
