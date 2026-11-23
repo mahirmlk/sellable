@@ -63,9 +63,9 @@ Use Razorpay's current [test credentials and payment methods guide](https://hdfc
 ## Reproduce the sandbox flow
 
 1. Open the Vercel staging console and sign in with a staging Supabase test user.
-2. Complete merchant onboarding, create a test product, and publish the catalog. Confirm the product appears in the staging catalog endpoint.
+2. Complete merchant onboarding, create a test product, and publish the catalog. Record the returned merchant ID and confirm the product appears at `/catalog.ai.json?merchant=<merchant_id>`.
 3. Issue a merchant-scoped API key in the console. Give the staging external agent that key and the staging HMAC signing secret through a secret manager.
-4. From a separate external-agent process, fetch `/.well-known/ucp`, `/.well-known/agents.json`, and `/catalog.ai.json`; negotiate capabilities, discover the product, and create a cart.
+4. From a separate external-agent process, fetch `/.well-known/ucp?merchant=<merchant_id>`, `/.well-known/agents.json?merchant=<merchant_id>`, and `/catalog.ai.json?merchant=<merchant_id>`; negotiate capabilities using the merchant-scoped key, discover the product, and create a cart.
 5. Have the agent request checkout authorization and an order using stable idempotency keys. A human must review the exact merchant, item, amount, and spend mandate and issue single-use consent. Start payment only with that consent.
 6. Open the returned Razorpay payment URL and complete checkout using Razorpay Test Mode values. Do not treat a browser return URL as proof of payment.
 7. Wait for the signed `payment.captured` webhook. Confirm the staging order is `PAID`, then fetch `GET /orders/{order_id}/receipt` with the merchant-scoped agent key. The receipt must include the provider reference, amount, authorization reference, and trace ID.
