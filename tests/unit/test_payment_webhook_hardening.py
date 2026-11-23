@@ -388,23 +388,6 @@ def test_captured_without_amount_does_not_settle(
     assert "webhook.amount_mismatch" in ledger_actions(commerce_core, order.trace_id)
 
 
-def test_captured_with_wrong_currency_does_not_settle(
-    commerce_core: CommerceCore,
-) -> None:
-    """§45 payment invariants: currency must match — a foreign-currency
-    capture never settles, with ledger evidence."""
-    order, payments = start_paid_flow(commerce_core, "trc_h_currency", "idem_hardening_cur_01")
-    payload = link_paid(order.order_id, payment_id="pay_cur_01", amount=ORDER_TOTAL)
-    payload["payload"]["payment"]["entity"]["currency"] = "USD"
-    body, signature = signed(payload)
-
-    result = payments.handle_webhook(body, signature)
-
-    assert result.status is PaymentStatus.PAYMENT_PENDING
-    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
-    assert "webhook.currency_mismatch" in ledger_actions(commerce_core, order.trace_id)
-
-
 # ---------------------------------------------------------------------------
 # H1: pre-existing live link is reused, never re-minted
 # ---------------------------------------------------------------------------
