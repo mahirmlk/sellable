@@ -7,6 +7,8 @@ requests return the existing refund record instead of refunding twice.
 
 from __future__ import annotations
 
+from threading import RLock
+
 from sellable.contracts import (
     LedgerActor,
     LedgerEvent,
@@ -33,6 +35,10 @@ class RefundService:
         self.commerce = commerce
         self.rail = rail
         self._refund_repo = refund_repo
+        # The initial production topology is one process/replica. Serialize
+        # refund balance checks and reservations inside that process so two
+        # concurrent partial refunds cannot both spend the same balance.
+        self._refund_lock = RLock()
 
     def _repo(self) -> RefundRepository:
         if self._refund_repo is None:
@@ -40,6 +46,26 @@ class RefundService:
         return self._refund_repo
 
     def initiate_refund(
+        self,
+        *,
+        order_id: str,
+        reason: str,
+        amount_paise: int | None = None,
+        idempotency_key: str | None = None,
+        trace_id: str | None = None,
+        commerce: CommerceCore | None = None,
+    ) -> dict[str, object]:
+        with self._refund_lock:
+            return self._initiate_refund(
+                order_id=order_id,
+                reason=reason,
+                amount_paise=amount_paise,
+                idempotency_key=idempotency_key,
+                trace_id=trace_id,
+                commerce=commerce,
+            )
+
+    def _initiate_refund(
         self,
         *,
         order_id: str,
@@ -132,7 +158,7 @@ class RefundService:
                 payment_id,
                 amount,
                 notes={"local_order_id": order.order_id, "trace_id": order.trace_id},
-                idempotency_key=key,
+                idempotency_key=f"sellable:{order.merchant_id}:{order.order_id}:{key}",
             )
         except RazorpayRequestError as error:
             status = RefundStatus.PENDING if error.retryable else RefundStatus.FAILED
