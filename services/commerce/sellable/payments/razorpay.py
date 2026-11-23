@@ -28,11 +28,24 @@ class InvalidWebhookSignatureError(ValueError):
 
 
 class _ProviderTimeoutSession(requests.Session):
-    """Give every SDK request a finite timeout, including SDK-owned calls."""
+    """Bound SDK calls and preserve pending refunds during idempotency conflicts."""
 
     def request(self, method, url, **kwargs):
         kwargs.setdefault("timeout", 15)
-        return super().request(method, url, **kwargs)
+        response = super().request(method, url, **kwargs)
+        headers = kwargs.get("headers") or {}
+        has_refund_idempotency = any(
+            str(name).lower() == "x-refund-idempotency" for name in headers
+        )
+        # Razorpay returns 409 while the original request with this key is
+        # still processing. Keep this as a retryable transport-level failure:
+        # the refund repository must continue reserving its balance.
+        if response.status_code == 409 and has_refund_idempotency:
+            raise requests.exceptions.HTTPError(
+                "Razorpay refund idempotency request is still processing",
+                response=response,
+            )
+        return response
 
 
 class ProviderOrder(StrictModel):
