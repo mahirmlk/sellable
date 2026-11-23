@@ -40,6 +40,12 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Action:** Review the entire diff by security boundary (auth/merchant isolation, database/RLS/indexes, payments and webhooks, outbound network, Worker/Container configuration, frontend session handling, dependency and CI changes). Resolve findings in small follow-up PRs.
 - **Acceptance:** No unresolved high-severity review findings; every prerequisite change has passing required CI before a maintainer merges it.
 
+### [P1-004] Scope legacy agent routes and discovery to the selected merchant
+- **Location:** `services/commerce/sellable/main.py:2115-2145,3140-3398`; `docs/STAGING_SANDBOX_RUNBOOK.md:65-73`
+- **Finding:** The A2A task handler and legacy `/agent/*` routes were wired to the global demo commerce core/gateway. The public agent manifest/catalog endpoints also had no merchant selector, so an external agent following the runbook could see the demo merchant instead of the newly onboarded staging merchant.
+- **Action:** Route authenticated agent reads/writes through the API key's merchant core, require signed requests for mutating quote flows, and let public discovery resolve a known merchant ID. Update the runbook URLs and keep a regression for each route family.
+- **Status:** Implemented as a focused draft in PR #22; PR #18's runbook now uses merchant-scoped discovery URLs. Review and merge the code before treating the runbook as executable evidence.
+
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
 ### [P2-001] Keep simulated behavior clearly labeled
