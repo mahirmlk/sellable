@@ -31,6 +31,9 @@ jobs:
           python -m pip install --require-hashes -r requirements/runtime.txt -r requirements/dev.txt
           python -m pip install --no-deps --no-build-isolation -e .
 
+      - name: Audit Python runtime dependencies
+        run: python -m pip_audit --requirement requirements/runtime.txt --disable-pip
+
       - name: Enforce single agent tree
         run: |
           test ! -d services/commerce/agents || (echo "ERROR: duplicate agents tree at services/commerce/agents — only top-level agents/ is canonical" && exit 1)
