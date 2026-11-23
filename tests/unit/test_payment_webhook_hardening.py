@@ -79,6 +79,8 @@ class FakeRazorpayRefunds:
         self.fail_next = False
         self.fail_retryably = False
         self.status = "processed"
+        self.statuses: list[str] = []
+        self.refund_ids_by_key: dict[str, str] = {}
 
     def refund(
         self,
@@ -100,12 +102,18 @@ class FakeRazorpayRefunds:
         if self.fail_next:
             self.fail_next = False
             raise BadRequestError("refund failed in test mode")
+        idempotency_key = (headers or {}).get("X-Refund-Idempotency")
+        refund_id = self.refund_ids_by_key.get(idempotency_key or "")
+        if refund_id is None:
+            refund_id = f"rfnd_test_{len(self.refund_ids_by_key) + 1:04d}"
+            if idempotency_key:
+                self.refund_ids_by_key[idempotency_key] = refund_id
         return {
-            "id": f"rfnd_test_{len(self.calls):04d}",
+            "id": refund_id,
             "payment_id": payment_id,
             "amount": amount,
             "currency": "INR",
-            "status": self.status,
+            "status": self.statuses.pop(0) if self.statuses else self.status,
         }
 
 
@@ -380,6 +388,23 @@ def test_captured_without_amount_does_not_settle(
     assert "webhook.amount_mismatch" in ledger_actions(commerce_core, order.trace_id)
 
 
+def test_captured_with_wrong_currency_does_not_settle(
+    commerce_core: CommerceCore,
+) -> None:
+    """§45 payment invariants: currency must match — a foreign-currency
+    capture never settles, with ledger evidence."""
+    order, payments = start_paid_flow(commerce_core, "trc_h_currency", "idem_hardening_cur_01")
+    payload = link_paid(order.order_id, payment_id="pay_cur_01", amount=ORDER_TOTAL)
+    payload["payload"]["payment"]["entity"]["currency"] = "USD"
+    body, signature = signed(payload)
+
+    result = payments.handle_webhook(body, signature)
+
+    assert result.status is PaymentStatus.PAYMENT_PENDING
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+    assert "webhook.currency_mismatch" in ledger_actions(commerce_core, order.trace_id)
+
+
 # ---------------------------------------------------------------------------
 # H1: pre-existing live link is reused, never re-minted
 # ---------------------------------------------------------------------------
@@ -631,6 +656,7 @@ def test_full_refund_calls_provider_and_settles(core_and_engine) -> None:
     payment_id, data = client.payment.calls[0]
     assert payment_id == f"pay_idem_hardening_rf_01"
     assert data["amount"] == ORDER_TOTAL
+    assert data["_headers"]["X-Refund-Idempotency"].startswith("rfnd_")
     assert result["provider_refund_id"] == "rfnd_test_0001"
     assert result["refund_status"] == "processed"
     assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
@@ -701,6 +727,20 @@ def test_pending_provider_refund_does_not_settle_order(core_and_engine) -> None:
     assert core.get_order(order.order_id).status is OrderStatus.PAID
 
 
+def test_partial_refund_keeps_order_paid(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf3", "idem_hardening_rf_03")
+    refunds, client = refund_service_for(core, engine)
+
+    result = refunds.initiate_refund(
+        order_id=order.order_id, reason="partial", amount_paise=9_900
+    )
+
+    assert result["amount_paise"] == 9_900
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+    assert "refund.partial_settled" in ledger_actions(core, order.trace_id)
+
+
 def test_refunds_cannot_exceed_order_total_and_final_partial_closes_order(core_and_engine) -> None:
     core, engine = core_and_engine
     order = settle_paid(core, "trc_h_rf3_balance", "idem_hardening_rf_03_balance")
@@ -714,18 +754,43 @@ def test_refunds_cannot_exceed_order_total_and_final_partial_closes_order(core_a
     assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
 
 
-def test_partial_refund_keeps_order_paid(core_and_engine) -> None:
+def test_pending_partial_reserves_balance_but_only_processed_refunds_close_order(
+    core_and_engine,
+) -> None:
     core, engine = core_and_engine
-    order = settle_paid(core, "trc_h_rf3", "idem_hardening_rf_03")
+    order = settle_paid(core, "trc_h_rf_pending_balance", "idem_hardening_rf_pending_balance")
     refunds, client = refund_service_for(core, engine)
+    client.payment.statuses = ["pending", "processed", "processed"]
+    first_key = "idem_hardening_pending_500_01"
+    second_key = "idem_hardening_processed_199_01"
 
-    result = refunds.initiate_refund(
-        order_id=order.order_id, reason="partial", amount_paise=9_900
+    first = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="first partial",
+        amount_paise=50_000,
+        idempotency_key=first_key,
     )
-
-    assert result["amount_paise"] == 9_900
+    assert first["refund_status"] == "initiated"
     assert core.get_order(order.order_id).status is OrderStatus.PAID
-    assert "refund.partial_settled" in ledger_actions(core, order.trace_id)
+
+    second = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="second partial",
+        amount_paise=19_900,
+        idempotency_key=second_key,
+    )
+    assert second["refund_status"] == "processed"
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+    retried_first = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="first partial",
+        amount_paise=50_000,
+        idempotency_key=first_key,
+    )
+    assert retried_first["refund_status"] == "processed"
+    assert retried_first["provider_refund_id"] == first["provider_refund_id"]
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
 
 
 def test_refund_rejects_unpaid_over_amount_and_missing_payment(
@@ -819,3 +884,4 @@ def test_cancel_provider_link_before_abort(core_and_engine) -> None:
         idempotency_key="idem_hardening_cxl_02",
     )
     assert payments.cancel_provider_link(unlinkable.order_id, commerce=core) is False
+
