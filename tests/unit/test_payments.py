@@ -16,8 +16,10 @@ from sellable.ledger.service import LedgerRepository
 from sellable.main import app, get_payment_service
 from sellable.payments.razorpay import (
     InvalidWebhookSignatureError,
+    ProviderPaymentLink,
     RazorpayAdapter,
     RazorpayConfigurationError,
+    RazorpayRequestError,
 )
 from sellable.payments.service import PaymentService
 
@@ -279,3 +281,55 @@ def test_payment_and_webhook_endpoints_use_the_verified_service_boundary(
     assert started.json()["status"] == "PAYMENT_PENDING"
     assert settled.status_code == 200
     assert settled.json()["status"] == "CAPTURED"
+
+
+def test_ambiguous_payment_link_create_recovers_after_service_restart(
+    commerce_core: CommerceCore,
+) -> None:
+    order, consent = create_consented_order(commerce_core)
+
+    class AmbiguousRazorpayAdapter(RazorpayAdapter):
+        def __init__(self) -> None:
+            super().__init__(razorpay_settings())
+            self.create_calls = 0
+            self.link_visible = False
+            self.link = ProviderPaymentLink(
+                provider_link_id="plink_recovered_0001",
+                short_url="https://rzp.io/i/recovered",
+                amount_paise=order.amount_paise,
+                currency="INR",
+                status="created",
+                provider_order_id="order_recovered_0001",
+            )
+
+        def create_payment_link(self, _order):
+            self.create_calls += 1
+            # The provider created a link but the response was lost.
+            raise RazorpayRequestError("provider response timed out", retryable=True)
+
+        def find_payment_link(self, _order):
+            return self.link if self.link_visible else None
+
+    rail = AmbiguousRazorpayAdapter()
+    first_service = PaymentService(commerce_core, rail)
+
+    with pytest.raises(RazorpayRequestError):
+        first_service.start_payment(
+            order_id=order.order_id, consent_id=consent.consent_id
+        )
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+
+    # A new process sees the provider's committed link by reference_id and
+    # persists it without trying to consume consent or create a second link.
+    rail.link_visible = True
+    restarted_service = PaymentService(commerce_core, rail)
+    recovered = restarted_service.start_payment(
+        order_id=order.order_id, consent_id=consent.consent_id
+    )
+
+    assert recovered.payment_url == "https://rzp.io/i/recovered"
+    assert rail.create_calls == 1
+    persisted = commerce_core.get_order(order.order_id)
+    assert persisted.status is OrderStatus.PAYMENT_PENDING
+    assert persisted.provider_link_id == "plink_recovered_0001"
+    assert persisted.provider_payment_url == "https://rzp.io/i/recovered"
