@@ -19,7 +19,7 @@ For Supabase/Postgres, set `DATABASE_URL` to a Postgres connection string and
 install the extra driver:
 
 ```bash
-pip install ".[postgres]"
+python -m pip install --require-hashes -r requirements/runtime.txt
 ```
 
 ```env
