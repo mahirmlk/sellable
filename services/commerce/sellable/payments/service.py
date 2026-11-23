@@ -288,35 +288,84 @@ class PaymentService:
                 )
                 raise
 
-    def _create_provider_attempt(self, order_id: str, trace_id: str, core: CommerceCore) -> PaymentAttempt:
+    def _find_provider_link(self, order: Order) -> Any | None:
+        finder = getattr(self.rail, "find_payment_link", None)
+        if not callable(finder):
+            return None
+        return self.provider_breaker.call(finder, order)
+
+    def _create_provider_attempt(
+        self,
+        order_id: str,
+        trace_id: str,
+        core: CommerceCore,
+        *,
+        reconcile_first: bool = False,
+    ) -> PaymentAttempt:
         pending_order = core.get_order(order_id)
+        recovered = False
         try:
-            # Human checkout uses a hosted Razorpay Payment Link (spec §10):
-            # the browser receives only a public short_url — no keys, no SDK,
-            # and the provider never confirms through the frontend.
-            provider_link = self.provider_breaker.call(
-                self.rail.create_payment_link, pending_order
+            provider_link = (
+                self._find_provider_link(pending_order) if reconcile_first else None
             )
+            recovered = provider_link is not None
+            if provider_link is None:
+                try:
+                    provider_link = self.provider_breaker.call(
+                        self.rail.create_payment_link, pending_order
+                    )
+                except RazorpayRequestError as create_error:
+                    # A timeout or duplicate-reference response can happen
+                    # after the provider committed the link. Query the stable
+                    # reference before treating the payment attempt as failed.
+                    try:
+                        provider_link = self._find_provider_link(pending_order)
+                    except RazorpayRequestError as lookup_error:
+                        raise RazorpayRequestError(
+                            "Payment-link creation outcome is uncertain; retry to reconcile it",
+                            retryable=True,
+                        ) from lookup_error
+                    if provider_link is None:
+                        raise create_error
+                    recovered = True
+
             if (
                 provider_link.amount_paise != pending_order.amount_paise
-                or provider_link.currency != "INR"
+                or provider_link.currency.upper() != "INR"
             ):
                 raise RazorpayRequestError(
                     "Razorpay response does not match the local order amount or currency"
                 )
         except RazorpayRequestError as error:
-            core.mark_payment_failed(order_id, reason=str(error))
-            self._record(
-                core=core,
-                trace_id=trace_id,
-                action="payment.failure_classified",
-                inputs={"order_id": order_id},
-                output={"retryable": error.retryable},
-                explanation=(
-                    "The provider request failed. A single bounded retry is available "
-                    "when the failure is retryable; otherwise the transaction aborts."
-                ),
-            )
+            if error.retryable:
+                # Do not move an ambiguous remote create into PAYMENT_FAILED:
+                # the link may be live and payable. A repeat start re-runs the
+                # provider lookup without consuming consent again.
+                self._record(
+                    core=core,
+                    trace_id=trace_id,
+                    action="payment.reconciliation_required",
+                    inputs={"order_id": order_id},
+                    output={"retryable": True, "order_status": "PAYMENT_PENDING"},
+                    explanation=(
+                        "The provider outcome could not be confirmed. The order "
+                        "stays pending so a repeat start can reconcile its stable "
+                        "provider reference before creating another link."
+                    ),
+                )
+            else:
+                core.mark_payment_failed(order_id, reason=str(error))
+                self._record(
+                    core=core,
+                    trace_id=trace_id,
+                    action="payment.failure_classified",
+                    inputs={"order_id": order_id},
+                    output={"retryable": False},
+                    explanation=(
+                        "The provider rejected the payment request. A single "
+                        "bounded retry is available after a verified failure."
+                    ),
+                )
             raise
 
         attempt = PaymentAttempt(
@@ -327,12 +376,8 @@ class PaymentService:
         )
         self._attempt_by_order_id[order_id] = attempt
         self._local_order_by_link_id[provider_link.provider_link_id] = order_id
-        # Razorpay creates an internal order for every payment link; mapping
-        # it lets payment.captured webhooks (which reference payment.order_id)
-        # resolve even when only the captured event arrives.
         if provider_link.provider_order_id:
             self._local_order_by_provider_order_id[provider_link.provider_order_id] = order_id
-        # Persisted references: webhook settlement must survive restarts.
         core.attach_provider_refs(
             order_id,
             link_id=provider_link.provider_link_id,
@@ -344,9 +389,18 @@ class PaymentService:
             trace_id=trace_id,
             action="payment.attempted",
             inputs={"order_id": order_id, "amount_paise": pending_order.amount_paise},
-            output={"provider_link_id": provider_link.provider_link_id, "payment_url": provider_link.short_url},
+            output={
+                "provider_link_id": provider_link.provider_link_id,
+                "payment_url": provider_link.short_url,
+                "recovered": recovered,
+            },
             provider_ref=provider_link.provider_link_id,
-            explanation="Created a Razorpay test-mode Payment Link after policy approval and consent.",
+            explanation=(
+                "Recovered the existing Razorpay test-mode Payment Link by its "
+                "unique order reference."
+                if recovered
+                else "Created a Razorpay test-mode Payment Link after policy approval and consent."
+            ),
         )
         return attempt
 
