@@ -224,7 +224,7 @@ class RazorpayAdapter:
             raise RazorpayRequestError(
                 f"Razorpay rejected the refund: {error}", retryable=False
             ) from error
-        except (GatewayError, ServerError) as error:
+        except (GatewayError, ServerError, requests.exceptions.RequestException) as error:
             raise RazorpayRequestError(
                 f"Razorpay could not complete the refund: {error}", retryable=True
             ) from error
