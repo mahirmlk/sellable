@@ -34,7 +34,6 @@ jobs:
           from pathlib import Path
 
           for name in ("runtime", "dev"):
-              encoded = base64.b64encode(Path("requirements") / f"{name}.txt").read_bytes()
               encoded = base64.b64encode((Path("requirements") / f"{name}.txt").read_bytes()).decode("ascii")
               print(f"LOCK:{name}:BEGIN")
               for offset in range(0, len(encoded), 8000):
