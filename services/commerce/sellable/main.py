@@ -619,6 +619,12 @@ def _cs_agent_for_key(api_key: AgentApiKey) -> CustomerServiceAgent:
     )
 
 
+def _agent_gateway_for_key(api_key: AgentApiKey) -> AgentGateway:
+    """Build a legacy agent gateway over the authenticated merchant's data."""
+    core = registry.get(api_key.merchant_id)
+    return AgentGateway(core, _seller_agent_for_key(api_key))
+
+
 def get_ledger() -> LedgerRepository:
     return commerce_core.ledger
 
@@ -3149,9 +3155,9 @@ def agent_catalog(gateway: AgentGateway = Depends(get_agent_gateway)) -> dict[st
 def agent_catalog_search(
     request: Request,
     body: CatalogSearchRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> list[Product]:
+    gateway = _agent_gateway_for_key(_api_key)
     return gateway.search_catalog(body)
 
 
@@ -3160,9 +3166,9 @@ def agent_catalog_search(
 def agent_catalog_get(
     request: Request,
     body: CatalogGetRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> Product:
+    gateway = _agent_gateway_for_key(_api_key)
     try:
         return gateway.get_catalog_item(body.sku)
     except ValueError as error:
@@ -3174,8 +3180,7 @@ def agent_catalog_get(
 def agent_quote_create(
     request: Request,
     body: SellerRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
@@ -3192,7 +3197,7 @@ def agent_quote_create(
         hold_status=403,
         agent_id=_api_key.buyer_agent_id,
     )
-    return gateway.create_quote(body, trace_id=trace_id)
+    return _agent_gateway_for_key(_api_key).create_quote(body, trace_id=trace_id)
 
 
 @app.post("/agent/quotes.negotiate", response_model=SellerDecision, tags=["agent-gateway"])
@@ -3200,8 +3205,7 @@ def agent_quote_create(
 def agent_quote_negotiate(
     request: Request,
     body: SellerRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
@@ -3217,7 +3221,7 @@ def agent_quote_negotiate(
         hold_status=403,
         agent_id=_api_key.buyer_agent_id,
     )
-    return gateway.create_quote(body, trace_id=trace_id)
+    return _agent_gateway_for_key(_api_key).create_quote(body, trace_id=trace_id)
 
 
 @app.post(
@@ -3247,7 +3251,7 @@ def buyer_run(
 def agent_consents_request(
     request: Request,
     body: ConsentRequest,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
@@ -3287,8 +3291,7 @@ def agent_consents_request(
 def agent_order_create(
     request: Request,
     body: OrderCreateRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
@@ -3322,7 +3325,7 @@ def agent_order_create(
             "replayed": True,
         }
 
-    decision = gateway.create_quote(
+    decision = _agent_gateway_for_key(_api_key).create_quote(
         SellerRequest(
             message=body.message,
             intent=body.intent,
@@ -3381,7 +3384,7 @@ def agent_order_create(
 def agent_order_status(
     request: Request,
     body: OrderStatusRequest,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
