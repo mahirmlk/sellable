@@ -2970,6 +2970,8 @@ async def stripe_webhook(
         StripeConfigurationError,
     )
 
+    if not settings.is_dev_environment:
+        raise HTTPException(status_code=404, detail="Not found")
     body = await request.body()
     try:
         payload = json.loads(body.decode("utf-8"))
