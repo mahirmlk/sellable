@@ -367,6 +367,38 @@ def test_a2a_bridge(commerce_core: CommerceCore) -> None:
         app.dependency_overrides.clear()
 
 
+def test_public_agent_discovery_can_select_merchant(commerce_core, monkeypatch):
+    from sellable import main as main_module
+    from sellable.main import app
+
+    class TenantCore:
+        merchant_scope = "mrc_tenant_scope"
+
+    seen = []
+
+    class PublicGateway:
+        def __init__(self, merchant_id):
+            self.merchant_id = merchant_id
+
+        def discovery_manifest(self):
+            return {"merchant_id": self.merchant_id}
+
+    def gateway_for_core(core):
+        seen.append(core.merchant_scope)
+        return PublicGateway(core.merchant_scope)
+
+    monkeypatch.setattr(main_module, "_discovery_core", lambda merchant: TenantCore())
+    monkeypatch.setattr(main_module, "_agent_gateway_for_core", gateway_for_core)
+    client = _client(commerce_core)
+    try:
+        response = client.get("/.well-known/agents.json?merchant=mrc_tenant_scope")
+        assert response.status_code == 200, response.text
+        assert response.json()["merchant_id"] == "mrc_tenant_scope"
+        assert seen == ["mrc_tenant_scope"]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_legacy_agent_catalog_uses_authenticated_merchant_key(commerce_core, monkeypatch):
     from sellable import main as main_module
     from sellable.auth import AgentApiKey, get_agent_api_key
