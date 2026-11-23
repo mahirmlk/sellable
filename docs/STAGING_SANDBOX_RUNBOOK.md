@@ -1,0 +1,94 @@
+# Staging Sandbox Runbook
+
+This runbook deploys the backend as a separate Cloudflare Worker and Container. It is for Razorpay **Test Mode** only. It must use an isolated Supabase staging project and must never point at production data. No production Worker or Vercel production variables are changed by these steps.
+
+The staging config is `wrangler.staging.jsonc`; its worker name and Durable Object namespace are separate from production. `SELLABLE_ENVIRONMENT=staging` keeps production security checks enabled while allowing only the test Razorpay key prefix.
+
+## Prerequisites
+
+- Cloudflare Containers and Durable Object scheduling are enabled for the account.
+- A disposable Supabase staging project with Auth enabled and a PostgreSQL pooler URL that uses TLS.
+- A Razorpay account with **Test Mode** enabled and a webhook endpoint reachable from Razorpay.
+- A Vercel preview or staging deployment configured against the staging API and staging Supabase project.
+- Node.js, npm, Docker, and Wrangler access from the deployer environment.
+
+The API needs the exact HTTPS origin for the staging console. Replace `https://staging.sellable.shop` in the staging config if the Vercel staging origin differs. Never add a wildcard or production origin to a staging allowlist.
+
+## Deploy the isolated backend
+
+From the repository root:
+
+```bash
+npm ci
+npx wrangler login
+npx wrangler whoami
+```
+
+Store staging-only credentials as secrets on the staging Worker. Do not use the production Supabase URL, production service-role key, or live payment keys.
+
+```bash
+npx wrangler secret put DATABASE_URL --config wrangler.staging.jsonc
+npx wrangler secret put SUPABASE_URL --config wrangler.staging.jsonc
+npx wrangler secret put SUPABASE_ANON_KEY --config wrangler.staging.jsonc
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY --config wrangler.staging.jsonc
+npx wrangler secret put BUYER_AGENT_API_KEY_HASH --config wrangler.staging.jsonc
+npx wrangler secret put BUYER_AGENT_HMAC_SECRET --config wrangler.staging.jsonc
+npx wrangler secret put RAZORPAY_KEY_ID --config wrangler.staging.jsonc
+npx wrangler secret put RAZORPAY_KEY_SECRET --config wrangler.staging.jsonc
+npx wrangler secret put RAZORPAY_WEBHOOK_SECRET --config wrangler.staging.jsonc
+```
+
+`RAZORPAY_KEY_ID` must start with `rzp_test_`. Generate the configured bootstrap agent key hash as lowercase SHA-256 hex of a random staging-only agent key. Keep both that plaintext key and the HMAC secret in the secret manager used by the external test agent; never put either in browser code or this repository.
+
+Deploy and record the generated staging Worker URL:
+
+```bash
+npm run cf:deploy:staging
+```
+
+Set the Vercel **preview/staging** environment's `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_SITE_URL` to staging values, then redeploy that preview. Do not edit the Vercel production environment as part of staging verification.
+
+## Configure Razorpay Test Mode
+
+In the Razorpay dashboard, explicitly select **Test Mode** and create a webhook for:
+
+```
+https://<staging-worker-host>/webhooks/razorpay
+```
+
+Use the same webhook secret as the staging Worker's `RAZORPAY_WEBHOOK_SECRET`. Subscribe to `payment.captured` and `payment.failed`. Confirm the webhook URL is the staging Worker host, not the production API.
+
+Use Razorpay's current [test credentials and payment methods guide](https://razorpay.com/docs/payments/payments/test-card-upi-details/) for checkout values. Never use a live-mode key or a real payment method.
+
+## Reproduce the sandbox flow
+
+1. Open the Vercel staging console and sign in with a staging Supabase test user.
+2. Complete merchant onboarding, create a test product, and publish the catalog. Confirm the product appears in the staging catalog endpoint.
+3. Issue a merchant-scoped API key in the console. Give the staging external agent that key and the staging HMAC signing secret through a secret manager.
+4. From a separate external-agent process, fetch `/.well-known/ucp`, `/.well-known/agents.json`, and `/catalog.ai.json`; negotiate capabilities, discover the product, and create a cart.
+5. Have the agent request checkout authorization and an order using stable idempotency keys. A human must review the exact merchant, item, amount, and spend mandate and issue single-use consent. Start payment only with that consent.
+6. Open the returned Razorpay payment URL and complete checkout using Razorpay Test Mode values. Do not treat a browser return URL as proof of payment.
+7. Wait for the signed `payment.captured` webhook. Confirm the staging order is `PAID`, then fetch `GET /orders/{order_id}/receipt` with the merchant-scoped agent key. The receipt must include the provider reference, amount, authorization reference, and trace ID.
+8. As the test merchant owner, issue a full refund with a stable `idempotency_key` through `POST /orders/{order_id}/refund`. Repeat the identical request once and confirm it returns the same local refund ID. Confirm Razorpay Test Mode shows one refund and the order becomes `REFUNDED`.
+9. Redeliver the payment webhook from Razorpay's dashboard. Confirm the order remains settled and the ledger has one payment settlement event.
+
+The committed CI tests and evals use fake providers and in-memory databases; they prove deterministic business rules, not Razorpay behavior. `tests/unit/test_external_agent_sandbox_flow.py` also uses a fake Razorpay rail. Only this staging procedure proves the provider boundary.
+
+## Monitor and recover
+
+- Check `GET /health`, `GET /ready`, and the staging merchant's onboarding readiness before checkout.
+- In Cloudflare, inspect Worker logs, Container status, scheduled heartbeat logs, and error rates. In Supabase, inspect staging database/Auth logs. In Razorpay Test Mode, inspect payment and webhook delivery attempts.
+- If checkout remains `PAYMENT_PENDING`, inspect Razorpay's Test Mode payment and webhook delivery records. Retry delivery after verifying the URL and secret. Never manually mark an order paid.
+- If a refund is `initiated`/pending, do not treat it as settled. Pending amounts remain reserved and the order remains `PAID` until provider status is processed. Automatic refund-webhook reconciliation is not implemented yet; record this as an unfinished path and do not use a pending refund as proof of completion.
+- Retry a request only with the same idempotency key and identical parameters. If provider state is ambiguous, inspect the provider's Test Mode record before attempting a different refund.
+- Roll back the staging Worker version if a deployment is unhealthy, then verify `/ready` and the webhook endpoint again. Keep staging database and provider records disposable and separate from production.
+
+## Release evidence checklist
+
+- [ ] Cloudflare staging Worker deployed and healthy.
+- [ ] Vercel staging console points only to staging API and Supabase.
+- [ ] Test merchant onboarded and catalog published.
+- [ ] External agent discovery, negotiation, consent, and payment completed.
+- [ ] Signed Razorpay test webhook verified; receipt checked.
+- [ ] Test refund processed; identical retry did not duplicate it.
+- [ ] Webhook replay did not duplicate payment settlement.
