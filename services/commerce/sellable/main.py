@@ -2128,7 +2128,7 @@ def a2a_card() -> dict[str, object]:
 def a2a_task(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None),
