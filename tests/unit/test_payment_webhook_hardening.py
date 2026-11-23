@@ -14,6 +14,7 @@ import json
 from datetime import timedelta
 
 import pytest
+import requests
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
@@ -32,12 +33,34 @@ from sellable.core import CommerceCore, IdempotencyReuseError
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
 from sellable.orders import InvalidOrderTransitionError
-from sellable.payments.razorpay import RazorpayAdapter, RazorpayRequestError
+from sellable.payments.razorpay import (
+    RazorpayAdapter,
+    RazorpayRequestError,
+    _ProviderTimeoutSession,
+)
 from sellable.payments.service import PaymentService, UnexpectedOrderStateError
 from sellable.refunds import RefundService
 from sellable.repositories import RefundRepository
 
 ORDER_TOTAL = 69_900
+
+
+def test_refund_idempotency_conflict_remains_retryable(monkeypatch) -> None:
+    response = requests.Response()
+    response.status_code = 409
+
+    def conflict_response(_session, _method, _url, **_kwargs):
+        return response
+
+    monkeypatch.setattr(requests.Session, "request", conflict_response)
+    session = _ProviderTimeoutSession()
+
+    with pytest.raises(requests.exceptions.HTTPError, match="still processing"):
+        session.request(
+            "POST",
+            "https://api.razorpay.com/v1/payments/pay_test/refund",
+            headers={"X-Refund-Idempotency": "rfnd_test_key"},
+        )
 
 
 def razorpay_settings() -> Settings:
