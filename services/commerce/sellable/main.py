@@ -621,8 +621,7 @@ def _cs_agent_for_key(api_key: AgentApiKey) -> CustomerServiceAgent:
 
 def _agent_gateway_for_key(api_key: AgentApiKey) -> AgentGateway:
     """Build a legacy agent gateway over the authenticated merchant's data."""
-    core = registry.get(api_key.merchant_id)
-    return AgentGateway(core, _seller_agent_for_key(api_key))
+    return _agent_gateway_for_core(registry.get(api_key.merchant_id))
 
 
 def get_ledger() -> LedgerRepository:
@@ -755,6 +754,17 @@ def _discovery_core(merchant: str | None) -> CommerceCore:
     if MerchantRepository().get(merchant) is None:
         raise HTTPException(status_code=404, detail="Unknown merchant")
     return registry.get(merchant)
+
+
+
+def _agent_gateway_for_core(core: CommerceCore) -> AgentGateway:
+    """Build a public discovery gateway from the selected merchant core."""
+    if core.merchant_scope == DEMO_MERCHANT_ID:
+        return agent_gateway
+    seller = SellerAgent(
+        core, llm=_seller_llm, recorder=_agent_recorder(core, SELLER_AGENT_ID)
+    )
+    return AgentGateway(core, seller)
 
 
 @app.get("/.well-known/ucp", tags=["protocol-ucp"])
@@ -3134,20 +3144,20 @@ def console_billing(
 
 @app.get("/.well-known/agents.json", tags=["agent-gateway"])
 @limiter.exempt
-def agent_manifest(gateway: AgentGateway = Depends(get_agent_gateway)) -> dict[str, object]:
-    return gateway.discovery_manifest()
+def agent_manifest(merchant: str | None = None) -> dict[str, object]:
+    return _agent_gateway_for_core(_discovery_core(merchant)).discovery_manifest()
 
 
 @app.get("/llms.txt", response_class=PlainTextResponse, tags=["agent-gateway"])
 @limiter.exempt
-def llms_instructions(gateway: AgentGateway = Depends(get_agent_gateway)) -> str:
-    return gateway.llms_instructions()
+def llms_instructions(merchant: str | None = None) -> str:
+    return _agent_gateway_for_core(_discovery_core(merchant)).llms_instructions()
 
 
 @app.get("/catalog.ai.json", tags=["agent-gateway"])
 @limiter.exempt
-def agent_catalog(gateway: AgentGateway = Depends(get_agent_gateway)) -> dict[str, object]:
-    return gateway.catalog_document()
+def agent_catalog(merchant: str | None = None) -> dict[str, object]:
+    return _agent_gateway_for_core(_discovery_core(merchant)).catalog_document()
 
 
 @app.post("/agent/catalog.search", response_model=list[Product], tags=["agent-gateway"])
