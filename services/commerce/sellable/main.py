@@ -219,6 +219,12 @@ def _assert_production_configuration() -> None:
     if settings.is_dev_environment:
         return
 
+    if not settings.maintenance_worker_enabled:
+        raise RuntimeError(
+            "Production requires the maintenance worker for durable outbox delivery "
+            "and checkout/session expiry."
+        )
+
     if not settings.database_url.lower().startswith("postgresql+psycopg://"):
         raise RuntimeError(
             "Production requires a PostgreSQL DATABASE_URL using the installed "
