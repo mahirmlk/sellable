@@ -277,14 +277,29 @@ class PaymentService:
             try:
                 return self._create_provider_attempt(order_id, pending_order.trace_id, core)
             except RazorpayRequestError as error:
-                core.mark_payment_failed(order_id, reason=str(error))
+                if not error.retryable:
+                    core.mark_payment_failed(order_id, reason=str(error))
                 self._record(
                     core=core,
                     trace_id=order.trace_id,
-                    action="retry.failed",
+                    action=(
+                        "retry.reconciliation_required"
+                        if error.retryable
+                        else "retry.failed"
+                    ),
                     inputs={"order_id": order_id, "attempt": retries + 1},
-                    output={"retryable": error.retryable},
-                    explanation="The bounded retry also failed; no duplicate settlement was created.",
+                    output={
+                        "retryable": error.retryable,
+                        "order_status": (
+                            "PAYMENT_PENDING" if error.retryable else "PAYMENT_FAILED"
+                        ),
+                    },
+                    explanation=(
+                        "The provider outcome is uncertain. The order remains pending "
+                        "so the next start can reconcile the existing link."
+                        if error.retryable
+                        else "The bounded retry failed; no duplicate settlement was created."
+                    ),
                 )
                 raise
 
