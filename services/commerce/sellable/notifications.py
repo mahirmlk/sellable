@@ -192,7 +192,9 @@ def post_json(
         ) as response:
             return int(response.status or 200)
     except Exception as error:  # noqa: BLE001 — delivery failure is data
-        raise RuntimeError(f"webhook delivery failed: {error}") from error
+        # URL-bearing transport errors can include merchant query tokens.
+        # Keep the persisted dispatch error intentionally generic.
+        raise RuntimeError("webhook delivery failed") from None
 
 
 class WebhookDispatcher:
@@ -299,7 +301,7 @@ class WebhookDispatcher:
                     break
                 last_error = f"HTTP {last_code}"
             except Exception as error:  # noqa: BLE001 — delivery failure is data
-                last_error = str(error)[:300]
+                last_error = f"delivery failed ({type(error).__name__})"
         self._webhooks.log_dispatch(
             dispatch_id=new_id("whd"),
             subscription_id=str(subscription["subscription_id"]),
