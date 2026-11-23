@@ -164,6 +164,24 @@ def test_readiness_reports_evidence_and_blockers(isolated_env, monkeypatch):
         _clear(main_module.app)
 
 
+def test_production_readiness_fails_without_required_maintenance_worker(
+    isolated_env, monkeypatch
+):
+    client, engine, registry = isolated_env
+    original = main_module.settings
+    main_module.settings = Settings(environment="production", maintenance_worker=True)
+    monkeypatch.setattr(main_module, "_MAINTENANCE_THREAD", None)
+    import sellable.payments as payments_module
+
+    monkeypatch.setattr(payments_module, "provider_is_valid", lambda _settings: True)
+    try:
+        response = client.get("/ready")
+        assert response.status_code == 503
+        assert response.json()["checks"]["maintenance_worker"]["status"] == "unavailable"
+    finally:
+        main_module.settings = original
+
+
 def test_readiness_flags_invalid_credentials(isolated_env, monkeypatch):
     client, engine, registry = isolated_env
     original = main_module.settings
