@@ -281,6 +281,14 @@ def _assert_production_configuration() -> None:
 # ---------------------------------------------------------------------------
 
 _MAINTENANCE_STOP = threading.Event()
+_MAINTENANCE_THREAD: threading.Thread | None = None
+
+
+def _maintenance_worker_is_ready() -> bool:
+    """The outbox and expiry sweeper is part of production readiness."""
+    if not settings.maintenance_worker_enabled:
+        return True
+    return _MAINTENANCE_THREAD is not None and _MAINTENANCE_THREAD.is_alive()
 
 
 def _maintenance_tick() -> None:
@@ -312,13 +320,20 @@ def _maintenance_loop() -> None:
 
 
 def _start_maintenance_worker() -> None:
+    global _MAINTENANCE_THREAD
     if not settings.maintenance_worker_enabled:
         logger.info("Maintenance worker disabled (env=%s)", settings.environment)
         return
+    if _MAINTENANCE_THREAD is not None and _MAINTENANCE_THREAD.is_alive():
+        return
+    _MAINTENANCE_STOP.clear()
     thread = threading.Thread(
         target=_maintenance_loop, name="sellable-maintenance", daemon=True
     )
     thread.start()
+    if not thread.is_alive():
+        raise RuntimeError("Maintenance worker thread did not start")
+    _MAINTENANCE_THREAD = thread
     logger.info(
         "Maintenance worker started (interval=%ss)", settings.maintenance_interval_seconds
     )
@@ -343,8 +358,10 @@ async def lifespan(_: FastAPI):
         logger.debug("JWKS warm skipped: %s", exc)
     try:
         _start_maintenance_worker()
-    except Exception as exc:  # noqa: BLE001 — worker must never break startup
-        logger.warning("Maintenance worker failed to start (%s)", type(exc).__name__)
+    except Exception as exc:  # noqa: BLE001 — required worker must fail closed
+        logger.error("Maintenance worker failed to start (%s)", type(exc).__name__)
+        if settings.maintenance_worker_enabled:
+            raise RuntimeError("Configured maintenance worker failed to start") from None
     yield
     _MAINTENANCE_STOP.set()
     logger.info("Shutting down SELLABLE Commerce Core")
@@ -2834,6 +2851,13 @@ def readiness() -> dict:
         ready = False
         logger.warning("Readiness database check failed (%s)", type(error).__name__)
         checks["database"] = {"status": "unavailable"}
+    maintenance_ready = _maintenance_worker_is_ready()
+    checks["maintenance_worker"] = {
+        "status": "ok" if maintenance_ready and settings.maintenance_worker_enabled
+        else "disabled" if maintenance_ready
+        else "unavailable"
+    }
+    ready = ready and maintenance_ready
     status_code = 200 if ready else 503
     return JSONResponse(status_code=status_code, content={"ready": ready, "checks": checks})
 
