@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from sellable.contracts import (
     CheckoutStatus,
     IntentMandate,
+    Order,
     OrderStatus,
     Promotion,
     PromotionType,
@@ -385,6 +386,25 @@ def test_stale_consent_stage_order_releases_its_stock_hold(
         for p in catalog_repo.list(commerce_core.merchant_scope)
         if p.sku == "AUDIO-CASE-01"
     ) == 1
+
+
+def test_payment_consent_fails_closed_without_inventory_reservation(
+    commerce_core: CommerceCore,
+) -> None:
+    order = Order(
+        trace_id=_trace(),
+        quote_id="legacy_quote",
+        buyer_agent_id="buyer_legacy",
+        merchant_id=commerce_core.merchant_scope,
+        amount_paise=5_000,
+        idempotency_key=f"idem_legacy_unreserved_{uuid4().hex}",
+    )
+    commerce_core.order_repo.save(order)
+    consent = commerce_core.issue_consent(order.order_id)
+
+    with pytest.raises(ValueError, match="inventory must be reserved"):
+        commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
+    assert commerce_core.consent_repo.get(consent.consent_id).status.value == "ISSUED"
 
 
 def test_legacy_orders_do_not_touch_checkouts(commerce_core: CommerceCore) -> None:
