@@ -2036,6 +2036,7 @@ class CommerceCore:
         # atomic DB transition (UPDATE ... WHERE status=ISSUED RETURNING).
         with self._order_lock:
             order = self.get_order(order_id)
+            self._require_inventory_reservation(order_id)
             # Validate the transition BEFORE burning the single-use consent:
             # a failed transition must leave the consent ISSUED so the order
             # stays recoverable instead of bricking.
@@ -2127,6 +2128,7 @@ class CommerceCore:
         return order
 
     def mark_payment_pending(self, order_id: str, *, provider_ref: str | None = None) -> Order:
+        self._require_inventory_reservation(order_id)
         return self._transition_order(
             order_id,
             OrderStatus.PAYMENT_PENDING,
@@ -2338,6 +2340,13 @@ class CommerceCore:
                 data={"provider_ref": provider_ref, "amount_paise": updated.amount_paise},
             )
         return updated
+
+    def _require_inventory_reservation(self, order_id: str) -> None:
+        statuses = self.inventory_repo.status_for_order(self.merchant_scope, order_id)
+        if not statuses or any(status != "RESERVED" for status in statuses.values()):
+            raise ValueError(
+                "order inventory must be reserved before consent or payment"
+            )
 
     def _refresh_inventory_stock(self, skus: Sequence[str] | None = None) -> None:
         target_skus = set(skus or (product.sku for product in self.catalog.all()))
