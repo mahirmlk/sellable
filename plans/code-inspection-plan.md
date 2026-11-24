@@ -55,6 +55,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - Status: Implemented in focused draft PR #27; its CI passed in run 45390551118. Review and merge it after PR #14, then verify against staging data.
 - Acceptance: Every order creation checks the complete merchant-scoped usage history; storage/query errors cannot permit a frequency-limited action.
 
+### [P1-006] Reserve inventory atomically across checkout and payment transitions
+- **Location:** `services/commerce/sellable/repositories.py`; `services/commerce/sellable/core.py`; PR #28
+- **Finding:** Checkout could create multiple paid-capable orders against the same last unit because stock availability was only represented by catalog snapshots. In-flight consent and payment retries also needed to hold inventory across process interruptions and provider callbacks.
+- **Action:** Persist a per-order/SKU reservation, conditionally reserve only available stock, retain it through retryable failures, commit it on verified payment, and release it only after a safe abort. Keep the 15-minute expiry limited to orders that cannot yet have a provider payment link; cancel and confirm payment-link cancellation before releasing stock for a payment-pending order.
+- **Status:** Implemented in draft PR #28 based on PR #14. Latest Python 3.11/3.12, frontend, and Cloudflare checks passed in run 45397471938. Vercel preview status was rate-limited by the account and did not run.
+- **Acceptance:** Concurrent orders cannot oversell; replay and duplicate settlement/release are idempotent; retryable payment failures retain stock; old catalog snapshots cannot restore committed sales. Continue to require staging verification before launch.
+
 ### [P2-001] Keep simulated behavior clearly labeled
 - **Location:** `docs/STAGING_SANDBOX_RUNBOOK.md:75,82`; `docs/DEPLOYMENT.md`
 - **Finding:** Current unit/eval coverage uses fake providers and in-memory databases, while live provider behavior and refund-webhook automation remain incomplete.
