@@ -104,6 +104,16 @@ redirects are disabled so integration credentials and webhook signatures are
 not forwarded to another host. Local HTTP integrations remain available only
 in `development` and `test` environments.
 
+**Inventory reservation rollout gate.** Before deploying a version that enables
+stock reservations over a database used by the previous backend, stop creating
+new checkouts and use the previous backend to cancel every open Razorpay payment
+link. Verify each cancellation with Razorpay and ensure its order reaches
+`ABORTED`; if cancellation is ambiguous or fails, keep the previous backend
+running and reconcile the payment outcome first. The new backend fails startup
+when it finds any `PAYMENT_PENDING` or `PAYMENT_FAILED` order without an active
+inventory reservation. Do not bypass this gate or accept a legacy link after
+rollout; it could capture payment without reserving stock.
+
 The first production release must run one Cloudflare Container instance. Keep `WEB_CONCURRENCY` and `UVICORN_WORKERS` unset or set to `1`; startup rejects multiple workers while consent and payment-attempt transitions remain process-local. Consent consumption
 and payment-attempt serialization still depend on process-local locks; the app
 rejects multiple workers but cannot detect multiple replicas. Do not scale the
