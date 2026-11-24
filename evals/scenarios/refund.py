@@ -22,11 +22,18 @@ class _StubRefundRail:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
+        self.idempotency_keys: list[str | None] = []
 
     def refund(
-        self, payment_id: str, amount_paise: int, *, notes: dict[str, str] | None = None
+        self,
+        payment_id: str,
+        amount_paise: int,
+        *,
+        notes: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
     ) -> ProviderRefund:
         self.calls.append((payment_id, amount_paise))
+        self.idempotency_keys.append(idempotency_key)
         return ProviderRefund(
             provider_refund_id=f"rfnd_eval_{len(self.calls):04d}",
             provider_payment_id=payment_id,
@@ -98,15 +105,28 @@ def run() -> dict:
     core.mark_payment_pending(order.order_id)
     core.mark_paid(order.order_id, provider_ref="pay_eval_refund_001")
 
-    result = refunds.initiate_refund(order_id=order.order_id, reason="eval full refund")
+    result = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="eval full refund",
+        idempotency_key="eval_refund_idempotency_key_01",
+    )
+    replay = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="eval full refund",
+        idempotency_key="eval_refund_idempotency_key_01",
+    )
     settled = core.get_order(order.order_id)
     actions = [e.action for e in core.ledger.for_trace("trc_f9d0e1c3f9d0e1c3f9d0e1c3f9d0e1c3")]
 
     return {
         "passed": unpaid_refused
         and len(rail.calls) == 1
+        and rail.idempotency_keys[0] == (
+            f"sellable:{order.merchant_id}:{order.order_id}:eval_refund_idempotency_key_01"
+        )
         and rail.calls[0] == ("pay_eval_refund_001", ORDER_TOTAL)
         and result["refund_status"] == "processed"
+        and replay["refund_id"] == result["refund_id"]
         and settled.status is OrderStatus.REFUNDED
         and "refund.settled" in actions,
         "unpaid_refused": unpaid_refused,
@@ -115,3 +135,4 @@ def run() -> dict:
         "order_status": settled.status,
         "settled_in_ledger": "refund.settled" in actions,
     }
+
