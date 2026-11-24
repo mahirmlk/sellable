@@ -328,6 +328,32 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
     ) == 1
 
 
+def test_rollout_gate_detects_legacy_payment_orders_without_inventory_holds(
+    commerce_core: CommerceCore,
+) -> None:
+    merchant_id = commerce_core.merchant_scope
+    order = Order(
+        trace_id=_trace(),
+        quote_id="legacy_quote",
+        buyer_agent_id="legacy_agent",
+        merchant_id=merchant_id,
+        amount_paise=100,
+        idempotency_key=f"legacy_payment_{uuid4().hex}",
+        status=OrderStatus.PAYMENT_PENDING,
+        provider_link_id="legacy_provider_link",
+    )
+    commerce_core.order_repo.save(order)
+
+    assert commerce_core.inventory_repo.has_unreserved_active_payment_orders()
+
+    # Rollout is safe only after an active reservation exists for every old
+    # payment-capable order; cancellation is the documented pre-deploy path.
+    commerce_core.inventory_repo.reserve_for_order(
+        merchant_id, order.order_id, [("AUDIO-CASE-01", 1)]
+    )
+    assert not commerce_core.inventory_repo.has_unreserved_active_payment_orders()
+
+
 def test_orphaned_reservation_is_released_after_order_insert_crash(
     commerce_core: CommerceCore,
 ) -> None:
