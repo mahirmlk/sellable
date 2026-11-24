@@ -293,7 +293,13 @@ def _maintenance_tick() -> None:
             core = registry.get(merchant_id)
             core.cart_service.expire_due(merchant_id)
             core.checkout_service.expire_due(merchant_id)
-            core.expire_stale_unpaid_orders()
+            core.expire_stale_unpaid_orders(
+                cancel_provider_link=lambda order_id, scoped_core: (
+                    payment_service.cancel_provider_link_for_expiry(
+                        order_id, commerce=scoped_core
+                    )
+                )
+            )
             session_service.expire_due(merchant_id)
         except Exception as error:  # noqa: BLE001 — sweeps never kill the worker
             logger.warning("Maintenance sweep failed for %s: %s", merchant_id, error)
