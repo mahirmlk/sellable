@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Callable
 from threading import RLock
 
@@ -29,6 +30,8 @@ from sellable.payments.razorpay import (
 )
 from sellable.payments.service import UnexpectedOrderStateError
 from sellable.repositories import RefundRepository
+
+logger = logging.getLogger(__name__)
 
 
 class RefundService:
@@ -137,10 +140,13 @@ class RefundService:
                     amount_paise=amount_paise,
                 )
         if refund is None:
-            # A valid provider event can beat a timed-out API response. If it
-            # cannot be uniquely correlated, acknowledge it without changing
-            # money state; the merchant can reconcile it from provider records.
-            return {"status": "ignored", "reason": "refund_not_correlated"}
+            # Acknowledging an uncorrelated money event would silently lose
+            # settlement. Return a retryable conflict so operators can reconcile
+            # the provider record before the event is acknowledged.
+            logger.error("Signed Razorpay refund event could not be correlated")
+            raise UnexpectedOrderStateError(
+                "Signed Razorpay refund event could not be matched to a local refund"
+            )
 
         if (
             refund.amount_paise != amount_paise
@@ -165,7 +171,10 @@ class RefundService:
                 delivery_key=delivery_key,
             )
             if updated is None:
-                return {"status": "ignored", "reason": "refund_not_found"}
+                logger.error("Signed Razorpay refund event lost its local refund row")
+                raise UnexpectedOrderStateError(
+                    "Signed Razorpay refund event has no local refund record"
+                )
 
             core = core_for_merchant(updated.merchant_id)
             order = core.get_order(updated.order_id)
