@@ -28,7 +28,6 @@ from sellable.contracts import (
     IntentMandate,
     OrderStatus,
     PaymentStatus,
-    RefundStatus,
     utc_now,
 )
 from sellable.core import CommerceCore, IdempotencyReuseError
@@ -801,7 +800,9 @@ def test_pending_partial_reserves_balance_but_only_processed_refunds_close_order
     assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
 
 
-def test_refund_webhook_reconciles_and_deduplicates_status_events(core_and_engine, monkeypatch) -> None:
+def test_refund_webhook_reconciles_and_deduplicates_status_events(
+    core_and_engine, monkeypatch
+) -> None:
     core, engine = core_and_engine
     order = settle_paid(core, "trc_h_ref_webhook", "idem_hardening_rf_webhook")
     refunds, client = refund_service_for(core, engine)
@@ -848,10 +849,11 @@ def test_refund_webhook_reconciles_and_deduplicates_status_events(core_and_engin
     }
     try:
         with TestClient(app) as http:
-            rejected = http.post("/webhooks/razorpay", content=body, headers={
-                **headers,
-                "X-Razorpay-Signature": "invalid",
-            })
+            rejected = http.post(
+                "/webhooks/razorpay",
+                content=body,
+                headers={**headers, "X-Razorpay-Signature": "invalid"},
+            )
             assert rejected.status_code == 401
 
             settled = http.post("/webhooks/razorpay", content=body, headers=headers)
