@@ -2347,6 +2347,9 @@ class CommerceCore:
             except Exception:  # noqa: BLE001 — one bad row must not stop the sweep
                 logger.exception("Could not expire stale unpaid order %s", order_id)
         self.inventory_repo.reconcile_aborted_orders(self.merchant_scope)
+        self.inventory_repo.release_orphaned_reservations(
+            self.merchant_scope, before=utc_now() - timedelta(minutes=5)
+        )
         return expired
 
     def mark_aborted(
