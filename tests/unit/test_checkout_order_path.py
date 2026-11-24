@@ -292,6 +292,24 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
         commerce_core.merchant_scope, second_order.order_id
     ) == {"AUDIO-CASE-01": "COMMITTED"}
 
+    # A connector refresh that still reports the pre-sale source quantity
+    # must not restore locally committed stock.
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+    # Once the source snapshot reflects the sale, the local offset is reconciled;
+    # a later restock becomes available.
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 0})])
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 1
+
 
 def test_stale_consent_stage_order_releases_its_stock_hold(
     commerce_core: CommerceCore,
