@@ -16,7 +16,7 @@ from datetime import timedelta
 import pytest
 from fastapi.testclient import TestClient
 import requests
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from sellable.config import Settings
@@ -898,9 +898,22 @@ def test_refund_webhook_reconciles_and_deduplicates_status_events(
             assert reconciled.status.name == "PROCESSED"
             actions_before_replay = ledger_actions(core, order.trace_id)
 
-            replay = http.post("/webhooks/razorpay", content=body, headers=headers)
+            with engine.connect() as connection:
+                delivery_count_before = connection.execute(
+                    text("SELECT COUNT(*) FROM webhook_deliveries WHERE delivery_key LIKE 'refund:%'")
+                ).scalar_one()
+            replay = http.post(
+                "/webhooks/razorpay",
+                content=body,
+                headers={**headers, "X-Razorpay-Event-Id": "attacker-chosen-replay-id"},
+            )
             assert replay.status_code == 200, replay.text
             assert replay.json()["status"] == "processed"
+            with engine.connect() as connection:
+                delivery_count_after = connection.execute(
+                    text("SELECT COUNT(*) FROM webhook_deliveries WHERE delivery_key LIKE 'refund:%'")
+                ).scalar_one()
+            assert delivery_count_after == delivery_count_before
 
             older = {
                 **payload,
