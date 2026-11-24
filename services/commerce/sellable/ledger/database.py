@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import threading
+import re
 
 from sqlalchemy import (
     JSON,
@@ -1265,6 +1266,73 @@ def _ensure_ledger_attribution_columns(engine) -> None:
                 log.info("%s: added column %s", table, name)
 
 
+def _normalise_index_predicate(predicate: str | None) -> str | None:
+    if predicate is None:
+        return None
+    normalized = predicate.lower().replace('"', "")
+    normalized = re.sub(r"::(?:character varying|varchar|text)(?:\\(\\d+\\))?", "", normalized)
+    return re.sub(r"[\\s()]", "", normalized)
+
+
+def _verify_required_postgres_index(
+    connection,
+    *,
+    index_name: str,
+    table_name: str,
+    columns: tuple[str, ...],
+    predicate: str | None,
+) -> None:
+    """Fail closed if a required index name exists with the wrong definition."""
+    row = connection.execute(
+        text(
+            """
+            SELECT table_record.relname AS table_name,
+                   index_record.indisunique AS is_unique,
+                   index_record.indisvalid AS is_valid,
+                   index_record.indisready AS is_ready,
+                   ARRAY(
+                       SELECT pg_get_indexdef(index_record.indexrelid, key.position, true)
+                       FROM generate_series(1, index_record.indnkeyatts) AS key(position)
+                       ORDER BY key.position
+                   ) AS columns,
+                   pg_get_expr(index_record.indpred, index_record.indrelid) AS predicate
+            FROM pg_class AS index_class
+            JOIN pg_namespace AS index_schema
+              ON index_schema.oid = index_class.relnamespace
+            JOIN pg_index AS index_record
+              ON index_record.indexrelid = index_class.oid
+            JOIN pg_class AS table_record
+              ON table_record.oid = index_record.indrelid
+            WHERE index_schema.nspname = current_schema()
+              AND index_class.relname = :index_name
+            """
+        ),
+        {"index_name": index_name},
+    ).mappings().first()
+
+    actual_columns = tuple(
+        str(column).strip().strip('"').lower()
+        for column in (row["columns"] if row is not None else ())
+    )
+    actual_predicate = (
+        _normalise_index_predicate(row["predicate"]) if row is not None else None
+    )
+    expected_predicate = _normalise_index_predicate(predicate)
+    if (
+        row is None
+        or row["table_name"] != table_name
+        or not row["is_unique"]
+        or not row["is_valid"]
+        or not row["is_ready"]
+        or actual_columns != columns
+        or actual_predicate != expected_predicate
+    ):
+        raise RuntimeError(
+            f"Production startup found an invalid or mismatched required index "
+            f"{index_name}; verify its table, key columns, uniqueness, and predicate."
+        )
+
+
 def _migrate(engine, *, require_invariants: bool = False) -> None:
     """Add columns introduced after the initial schema without dropping data."""
     import logging
@@ -1423,6 +1491,26 @@ def _migrate(engine, *, require_invariants: bool = False) -> None:
         logging.getLogger("sellable.migrate").warning(
             "Skipping active-session unique index (%s)", type(error).__name__
         )
+
+    # IF NOT EXISTS only checks the object name. An existing invalid, non-unique,
+    # or differently-defined index can make PostgreSQL skip the DDL silently.
+    # Verify the actual catalog definition before allowing production startup.
+    if require_invariants:
+        with engine.connect() as connection:
+            _verify_required_postgres_index(
+                connection,
+                index_name="uq_orders_merchant_idempotency",
+                table_name="orders",
+                columns=("merchant_id", "idempotency_key"),
+                predicate=None,
+            )
+            _verify_required_postgres_index(
+                connection,
+                index_name="uq_active_checkout_session",
+                table_name="checkout_sessions",
+                columns=("merchant_id", "buyer_ref"),
+                predicate="status = 'ACTIVE'",
+            )
 
 
 def initialise_database(config: Settings = settings) -> None:
