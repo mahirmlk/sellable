@@ -69,6 +69,7 @@ from sellable.repositories import (
     DelegationRepository,
     FraudRepository,
     FulfillmentRepository,
+    InventoryRepository,
     IdentityLinkRepository,
     MerchantOnboardingRepository,
     MerchantRepository,
@@ -126,6 +127,7 @@ class CommerceCore:
         policy: MerchantPolicy,
         ledger: LedgerRepository,
         order_repo: OrderRepository | None = None,
+        inventory_repo: InventoryRepository | None = None,
         consent_repo: ConsentRepository | None = None,
         consent_service: ConsentService | None = None,
         policy_engine: PolicyEngine | None = None,
@@ -171,6 +173,7 @@ class CommerceCore:
         self.policy = policy
         self.ledger = ledger
         self.order_repo = order_repo or OrderRepository(engine=engine)
+        self.inventory_repo = inventory_repo or InventoryRepository(engine=engine)
         self.consent_repo = consent_repo or ConsentRepository(engine=engine)
         self.consent_service = consent_service or ConsentService()
         self.policy_engine = policy_engine or PolicyEngine()
@@ -255,6 +258,9 @@ class CommerceCore:
         self._idempotency_keys: dict[str, str] = {}
         self._order_lock = threading.Lock()
         self.merchant_scope = merchant_scope or policy.merchant_id
+        # Seed only missing catalog rows for direct/local core construction. Existing
+        # merchant inventory remains authoritative and is never overwritten here.
+        CatalogRepository(engine=engine).add_many(catalog.all())
 
         # Hydrate from database
         self._hydrate()
@@ -1528,6 +1534,16 @@ class CommerceCore:
                     raise IdempotencyReuseError(
                         "Idempotency key cannot be reused for a different transaction"
                     )
+                lines = [(line.sku, line.quantity) for line in checkout.lines]
+                if existing.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope, existing.order_id, lines
+                    )
                 if checkout.order_id is None:
                     try:
                         self.checkout_service.link_order(
@@ -1620,11 +1636,14 @@ class CommerceCore:
                 idempotency_key=idempotency_key,
                 requires_approval=requires_approval,
             )
-            self._orders[order.order_id] = order
-            self._idempotency_keys[idempotency_key] = order.order_id
+            lines = [(line.sku, line.quantity) for line in checkout.lines]
+            self.inventory_repo.reserve_for_order(
+                self.merchant_scope, order.order_id, lines
+            )
             try:
                 self.order_repo.save(order)
             except IntegrityError:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
                 winner = self.order_repo.for_idempotency_key(
                     self.merchant_scope, idempotency_key
                 )
@@ -1634,9 +1653,23 @@ class CommerceCore:
                     raise IdempotencyReuseError(
                         "Idempotency key cannot be reused for a different transaction"
                     ) from None
+                if winner.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope, winner.order_id, lines
+                    )
                 self._orders[winner.order_id] = winner
                 self._idempotency_keys[idempotency_key] = winner.order_id
                 return winner
+            except Exception:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
+                raise
+            self._orders[order.order_id] = order
+            self._idempotency_keys[idempotency_key] = order.order_id
             pending = self.checkout_service.mark_payment_pending(checkout_id, self.merchant_scope)
             _ = pending
             self.checkout_service.link_order(checkout_id, self.merchant_scope, order.order_id)
@@ -1763,6 +1796,17 @@ class CommerceCore:
                 # same order rather than 409ing a safe retry.
                 if existing.amount_paise != cart.total_paise:
                     raise IdempotencyReuseError("Idempotency key cannot be reused for a different transaction")
+                if existing.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope,
+                        existing.order_id,
+                        [(item.sku, item.quantity) for item in cart.items],
+                    )
                 return existing
 
             # Delegation check (target §14): additive — orders without a
@@ -1842,14 +1886,17 @@ class CommerceCore:
                 idempotency_key=idempotency_key,
                 requires_approval=requires_approval,
             )
-            self._orders[order.order_id] = order
-            self._idempotency_keys[idempotency_key] = order.order_id
+            lines = [(item.sku, item.quantity) for item in cart.items]
+            self.inventory_repo.reserve_for_order(
+                self.merchant_scope, order.order_id, lines
+            )
             # Persist to database. The (merchant_id, idempotency_key) unique
             # constraint is the cross-worker backstop: if a concurrent process
             # won the race, resolve against the winner instead of duplicating.
             try:
                 self.order_repo.save(order)
             except IntegrityError:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
                 winner = self.order_repo.for_idempotency_key(
                     self.merchant_scope, idempotency_key
                 )
@@ -1859,9 +1906,23 @@ class CommerceCore:
                     raise IdempotencyReuseError(
                         "Idempotency key cannot be reused for a different transaction"
                     ) from None
+                if winner.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope, winner.order_id, lines
+                    )
                 self._orders[winner.order_id] = winner
                 self._idempotency_keys[idempotency_key] = winner.order_id
                 return winner
+            except Exception:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
+                raise
+            self._orders[order.order_id] = order
+            self._idempotency_keys[idempotency_key] = order.order_id
             self._record(
                 trace_id=trace_id,
                 actor=LedgerActor.COMMERCE_CORE,
@@ -2082,6 +2143,9 @@ class CommerceCore:
             explanation="A signature-verified provider event confirmed that payment was captured.",
             provider_ref=provider_ref,
         )
+        # Reconcile on every delivery, including duplicate paid webhooks after a
+        # crash between the order transition and inventory settlement.
+        self.inventory_repo.commit_order(self.merchant_scope, order_id)
         if before is not OrderStatus.PAID:
             self._publish_outbox(
                 event_type="order.paid",
@@ -2270,12 +2334,16 @@ class CommerceCore:
         return updated
 
     def mark_aborted(self, order_id: str, *, reason: str) -> Order:
-        return self._transition_order(
+        aborted = self._transition_order(
             order_id,
             OrderStatus.ABORTED,
             action="order.aborted",
             explanation=f"The order was aborted safely: {reason}",
         )
+        # Release is idempotent and happens after the state transition so failed
+        # persistence never makes reserved inventory available prematurely.
+        self.inventory_repo.release_order(self.merchant_scope, order_id)
+        return aborted
 
     def _transition_order(
         self,
