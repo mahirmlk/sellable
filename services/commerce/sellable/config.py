@@ -107,7 +107,7 @@ class Settings:
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
 
-    # Payment provider selection: razorpay (default) | stripe | simulated.
+    # Deployed environments use Razorpay Test Mode; Stripe/simulated are dev/test only.
     payment_provider: str = "razorpay"
 
     # Email notification channel (§35): disabled unless an SMTP relay is
