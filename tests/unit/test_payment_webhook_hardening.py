@@ -813,6 +813,11 @@ def test_refund_webhook_reconciles_and_deduplicates_status_events(
         amount_paise=50_000,
         idempotency_key="idem_hardening_webhook_500",
     )
+    stale_provider_result = RefundRepository(engine).for_idempotency_key(
+        order.merchant_id, "idem_hardening_webhook_500"
+    )
+    assert stale_provider_result is not None
+    assert stale_provider_result.status.name == "PENDING"
     refunds.initiate_refund(
         order_id=order.order_id,
         reason="second partial",
@@ -860,6 +865,15 @@ def test_refund_webhook_reconciles_and_deduplicates_status_events(
             assert settled.status_code == 200, settled.text
             assert settled.json()["status"] == "processed"
             assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
+
+            # A late pending response from the create call cannot overwrite
+            # the processed webhook state.
+            RefundRepository(engine).save(stale_provider_result)
+            reconciled = RefundRepository(engine).for_idempotency_key(
+                order.merchant_id, "idem_hardening_webhook_500"
+            )
+            assert reconciled is not None
+            assert reconciled.status.name == "PROCESSED"
             actions_before_replay = ledger_actions(core, order.trace_id)
 
             replay = http.post("/webhooks/razorpay", content=body, headers=headers)
