@@ -316,6 +316,27 @@ class CatalogProductRecord(Base):
     attributes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class InventoryReservationRecord(Base):
+    """Idempotent per-order reservations against the merchant's available stock."""
+
+    __tablename__ = "inventory_reservations"
+
+    reservation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="RESERVED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "merchant_id", "order_id", "sku",
+            name="uq_inventory_reservation_order_sku",
+        ),
+    )
+
+
 class DelegationRecord(Base):
     """Bounded customer→agent delegation grants (target §14.2).
 
