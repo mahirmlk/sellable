@@ -74,15 +74,30 @@ def razorpay_settings() -> Settings:
 
 
 class FakeRazorpayPaymentLinks:
+    def __init__(self) -> None:
+        self.items: list[dict[str, object]] = []
+        self.cancelled: list[str] = []
+
     def create(self, data: dict[str, object]) -> dict[str, object]:
         assert data["currency"] == "INR"
-        return {
-            "id": "plink_test_0001",
+        response = {
+            "id": f"plink_test_{len(self.items) + 1:04d}",
             "short_url": "https://rzp.io/i/testlink",
             "amount": data["amount"],
             "currency": "INR",
             "status": "created",
+            "reference_id": data["reference_id"],
             "order_id": "order_razorpay_test_01",
+        }
+        self.items.append(response)
+        return response
+
+    def all(self, params: dict[str, object]) -> dict[str, object]:
+        return {
+            "items": [
+                item for item in self.items
+                if item.get("reference_id") == params.get("reference_id")
+            ]
         }
 
 
@@ -142,10 +157,17 @@ class FakeRazorpayRefunds:
 
 class FakeRazorpayLinkNamespace(FakeRazorpayPaymentLinks):
     def __init__(self) -> None:
-        self.cancelled: list[str] = []
+        super().__init__()
+        self.fail_cancel_once = False
 
     def cancel(self, link_id: str) -> dict[str, object]:
+        if self.fail_cancel_once:
+            self.fail_cancel_once = False
+            raise RazorpayRequestError("simulated cancellation timeout", retryable=True)
         self.cancelled.append(link_id)
+        for item in self.items:
+            if item.get("id") == link_id:
+                item["status"] = "cancelled"
         return {"id": link_id, "status": "cancelled"}
 
 
@@ -888,6 +910,50 @@ def test_fulfill_transitions_paid_and_rejects_others(
     fulfilled = commerce_core.mark_fulfilled(paid.order_id)
     assert fulfilled.status is OrderStatus.FULFILLED
     assert "order.fulfilled" in ledger_actions(commerce_core, paid.trace_id)
+
+
+def test_stale_payment_order_cancels_link_before_releasing_stock(core_and_engine) -> None:
+    core, _ = core_and_engine
+    order = core.create_order(
+        cart=make_cart(),
+        intent=make_intent(),
+        trace_id="trc_h_expire_payment",
+        idempotency_key="idem_hardening_expire_payment",
+    )
+    consent = core.issue_consent(order.order_id)
+    client = FakeRazorpayClient()
+    payments = PaymentService(
+        core, RazorpayAdapter(razorpay_settings(), client=client)
+    )
+    payments.start_payment(order_id=order.order_id, consent_id=consent.consent_id)
+
+    stale = core.get_order(order.order_id).model_copy(
+        update={"created_at": utc_now() - timedelta(minutes=16)}
+    )
+    core.order_repo.save(stale)
+    client.payment_link.fail_cancel_once = True
+
+    cancel = lambda order_id, scoped_core: payments.cancel_provider_link_for_expiry(
+        order_id, commerce=scoped_core
+    )
+    assert core.expire_stale_unpaid_orders(cancel_provider_link=cancel) == 0
+    assert core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+    assert core.inventory_repo.status_for_order(
+        core.merchant_scope, order.order_id
+    ) == {"AUDIO-CASE-01": "RESERVED"}
+
+    # The next sweep reconciles and cancels the live link, then aborts and
+    # releases the hold exactly once.
+    assert core.expire_stale_unpaid_orders(cancel_provider_link=cancel) == 1
+    assert client.payment_link.cancelled == ["plink_test_0001"]
+    assert core.get_order(order.order_id).status is OrderStatus.ABORTED
+    assert core.inventory_repo.status_for_order(
+        core.merchant_scope, order.order_id
+    ) == {"AUDIO-CASE-01": "RELEASED"}
+    actions = ledger_actions(core, order.trace_id)
+    assert actions.index("payment.link_cancelled") < actions.index("order.aborted")
+    assert core.expire_stale_unpaid_orders(cancel_provider_link=cancel) == 0
+    assert client.payment_link.cancelled == ["plink_test_0001"]
 
 
 def test_cancel_provider_link_before_abort(core_and_engine) -> None:
