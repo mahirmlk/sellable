@@ -8,7 +8,7 @@ BLOCKED — deterministic CI and sandbox hardening pass, but a clean, isolated C
 
 ## Executive Summary
 
-The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. Signed refund-status webhook reconciliation is implemented in draft PR #24 with fake-provider signature, replay, ordering, and partial-refund regressions. CI still does not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. A focused review also found that the required-index migration can accept a conflicting same-name index; draft PR #25 adds catalog verification, with CI pending. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
+The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. Signed refund-status webhook reconciliation is implemented in draft PR #24 with fake-provider signature, replay, ordering, and partial-refund regressions. CI still does not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The pending-refund/idempotency fix is now folded into PR #14 and its Python/eval, frontend, and Cloudflare CI passed. Signed refund-status webhook reconciliation is on platform-based draft PR #26. A focused review found that the required-index migration could accept a conflicting same-name index; PR #25 adds catalog verification and its CI passed. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
 
 The highest risk is treating the sandbox as production-proven before staging verifies the provider boundary and database constraints. The exploit/correctness paths compound when an external retry or duplicate webhook meets partially completed payment/refund state: local idempotency, provider idempotency, ledger settlement, and the order status must agree.
 
@@ -24,8 +24,8 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ### [P1-001] Verify automatic refund status reconciliation in staging
 - **Location:** `services/commerce/sellable/refunds.py`; `services/commerce/sellable/main.py`; `docs/STAGING_SANDBOX_RUNBOOK.md`
-- **Finding:** Draft PR #24 implements signed, deduplicated, monotonic refund-status webhook reconciliation and recovery for ambiguous create responses. CI uses signed fixtures and fake providers; it has not proved actual Razorpay Test Mode delivery or staging database behavior.
-- **Action:** Review and merge the focused refund PRs in a safe order, then replay pending/processed/failed refund webhooks in isolated staging and verify ledger/order state.
+- **Finding:** PR #14 now includes the refund idempotency fix. Draft PR #26 adds signed, deduplicated, monotonic refund-status reconciliation and recovery for ambiguous create responses on top of the platform branch. Its CI uses signed fixtures and fake providers; it cannot prove actual Razorpay Test Mode delivery or staging database behavior.
+- **Action:** Review the platform-based refund webhook PR, then replay pending/processed/failed refund webhooks in isolated staging and verify ledger/order state.
 - **Acceptance:** Pending refunds reserve balance; only processed refund totals can mark the order REFUNDED; duplicate and out-of-order signed events produce one stable settlement; provider state matches local state.
 
 ### [P1-002] Preserve the single-instance topology constraint
@@ -35,10 +35,10 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Acceptance:** Operational configuration and alerts detect a topology change; a future multi-instance release passes concurrent consent/payment tests using database-backed atomic guards.
 
 ### [P1-003] Complete independent review and safe sequencing of platform PRs
-- **Location:** PR #14, `feat/platform-completion`; related refund PRs #16 and #24
-- **Finding:** PR #14 is a 100+ file draft and still contains the pre-fix refund implementation. Because #16 changes the same files, an unsafe merge order could reintroduce the pending-refund bug. Focused review of outbound URL validation and Cloudflare forwarding found no blocker in those inspected paths; review of the remaining auth, data, payment, frontend, and deployment diff is still outstanding. Review also found that `CREATE UNIQUE INDEX IF NOT EXISTS` does not verify an existing same-name index definition.
-- **Action:** Resolve the refund PR dependency/merge order before any merge. Continue reviewing PR #14 by security boundary and keep fixes in small follow-up PRs; draft PR #25 verifies required index catalog definitions.
-- **Acceptance:** No unresolved high-severity review findings; the final merged tree retains the refund fix and validates actual unique-index definitions; every prerequisite change has passing required CI.
+- **Location:** PR #14, `feat/platform-completion`; follow-ups #25 and #26
+- **Finding:** PR #14 is a 100+ file draft. It now contains the pending-refund/idempotency fix and has passing CI; #26 carries refund-webhook reconciliation on top of the platform branch. Focused review of outbound URL validation and Cloudflare forwarding found no blocker in those inspected paths; review of the remaining auth, data, payment, frontend, and deployment diff is still outstanding. PR #25 verifies the database index definitions that the startup gate requires.
+- **Action:** Finish reviewing PR #14 by security boundary and its focused follow-ups. Keep the dependencies ordered and resolve review findings before any merge.
+- **Acceptance:** No unresolved high-severity review findings; the final merged tree retains both refund fixes and validates actual unique-index definitions; every prerequisite change has passing required CI.
 
 ### [P1-004] Scope legacy agent routes and discovery to the selected merchant
 - **Location:** `services/commerce/sellable/main.py:2115-2145,3140-3398`; `docs/STAGING_SANDBOX_RUNBOOK.md:65-73`
@@ -69,6 +69,6 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## Evidence and Limitations
 
-- GitHub Actions passed for the current draft revisions of PRs #14, #16, #17, #18, #19, #20, #22, #23, and #24 as reported in their run summaries. These are code and configuration checks, not external staging proof. PR #25's catalog-verification CI is pending.
+- GitHub Actions passed for the updated PR #14 refund fix, PR #25 catalog verification, and earlier focused checks on #17, #18, #19, #20, #22, and #23. PR #26 webhook reconciliation CI is running. These are code/configuration checks, not external staging proof.
 - No Razorpay API call, live payment, or production deployment was made.
 - Staging resources are not yet provisioned. Do not mark this plan CLEAR until the acceptance criteria above are met.
