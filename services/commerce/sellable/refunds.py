@@ -84,10 +84,11 @@ class RefundService:
             return {"status": "ignored", "event_type": event_name}
 
         section = payload.get("payload")
+        refund_section = section.get("refund") if isinstance(section, dict) else None
         entity = (
-            section.get("refund", {}).get("entity", {})
-            if isinstance(section, dict)
-            else {}
+            refund_section.get("entity")
+            if isinstance(refund_section, dict)
+            else None
         )
         if not isinstance(entity, dict):
             raise ValueError("Refund webhook entity is invalid")
@@ -115,7 +116,7 @@ class RefundService:
             "processed": RefundStatus.PROCESSED,
             "failed": RefundStatus.FAILED,
         }
-        if provider_status not in statuses:
+        if not isinstance(provider_status, str) or provider_status not in statuses:
             raise ValueError("Refund webhook has an unsupported provider status")
         target_status = statuses[provider_status]
         if event_name == "refund.processed" and target_status is not RefundStatus.PROCESSED:
