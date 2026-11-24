@@ -7,6 +7,9 @@ requests return the existing refund record instead of refunding twice.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Callable
 from threading import RLock
 
 from sellable.contracts import (
@@ -18,7 +21,12 @@ from sellable.contracts import (
 )
 from sellable.core import CommerceCore
 from sellable.orders import InvalidOrderTransitionError
-from sellable.payments.razorpay import RazorpayAdapter, RazorpayRequestError
+from sellable.payments.razorpay import (
+    InvalidWebhookSignatureError,
+    RazorpayAdapter,
+    RazorpayConfigurationError,
+    RazorpayRequestError,
+)
 from sellable.payments.service import UnexpectedOrderStateError
 from sellable.repositories import RefundRepository
 
@@ -44,6 +52,158 @@ class RefundService:
         if self._refund_repo is None:
             self._refund_repo = RefundRepository()
         return self._refund_repo
+
+    def handle_webhook(
+        self,
+        body: bytes,
+        signature: str | None,
+        *,
+        event_id: str | None,
+        core_for_merchant: Callable[[str], CommerceCore],
+    ) -> dict[str, object]:
+        """Verify and reconcile signed Razorpay refund status events.
+
+        Refund status and the webhook delivery claim are committed together.
+        Processed settlement is idempotent, so a duplicate event can repair a
+        crash between committing refund status and updating the order ledger.
+        """
+        if self.rail is None:
+            raise RazorpayConfigurationError("Razorpay refund rail is not configured")
+        self.rail.verify_webhook(body, signature)
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
+            raise ValueError("Refund webhook body is not valid JSON") from error
+        if not isinstance(payload, dict):
+            raise ValueError("Refund webhook payload must be an object")
+
+        event_name = payload.get("event")
+        if not isinstance(event_name, str) or not event_name.startswith("refund."):
+            raise ValueError("Unsupported Razorpay refund webhook event")
+        if event_name not in {"refund.created", "refund.processed", "refund.failed"}:
+            return {"status": "ignored", "event_type": event_name}
+
+        section = payload.get("payload")
+        entity = (
+            section.get("refund", {}).get("entity", {})
+            if isinstance(section, dict)
+            else {}
+        )
+        if not isinstance(entity, dict):
+            raise ValueError("Refund webhook entity is invalid")
+        provider_refund_id = entity.get("id")
+        provider_payment_id = entity.get("payment_id")
+        raw_amount = entity.get("amount")
+        provider_status = entity.get("status")
+        currency = entity.get("currency", "INR")
+        try:
+            amount_paise = int(raw_amount)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Refund webhook amount is invalid") from error
+        if (
+            not isinstance(provider_refund_id, str)
+            or not provider_refund_id
+            or not isinstance(provider_payment_id, str)
+            or not provider_payment_id
+            or amount_paise <= 0
+            or currency != "INR"
+        ):
+            raise ValueError("Refund webhook entity is missing valid identifiers or amount")
+
+        statuses = {
+            "pending": RefundStatus.PENDING,
+            "processed": RefundStatus.PROCESSED,
+            "failed": RefundStatus.FAILED,
+        }
+        if provider_status not in statuses:
+            raise ValueError("Refund webhook has an unsupported provider status")
+        target_status = statuses[provider_status]
+        if event_name == "refund.processed" and target_status is not RefundStatus.PROCESSED:
+            raise ValueError("refund.processed event has a non-processed status")
+        if event_name == "refund.failed" and target_status is not RefundStatus.FAILED:
+            raise ValueError("refund.failed event has a non-failed status")
+
+        repo = self._repo()
+        refund = repo.for_provider_refund_id(provider_refund_id)
+        if refund is None:
+            notes = entity.get("notes")
+            order_id = notes.get("local_order_id") if isinstance(notes, dict) else None
+            if isinstance(order_id, str):
+                refund = repo.match_ambiguous_provider_refund(
+                    provider_payment_id=provider_payment_id,
+                    order_id=order_id,
+                    amount_paise=amount_paise,
+                )
+        if refund is None:
+            # A valid provider event can beat a timed-out API response. If it
+            # cannot be uniquely correlated, acknowledge it without changing
+            # money state; the merchant can reconcile it from provider records.
+            return {"status": "ignored", "reason": "refund_not_correlated"}
+
+        if (
+            refund.amount_paise != amount_paise
+            or (
+                refund.provider_payment_id is not None
+                and refund.provider_payment_id != provider_payment_id
+            )
+        ):
+            raise ValueError("Refund webhook does not match the stored refund request")
+
+        event_identity = event_id.strip() if event_id and event_id.strip() else hashlib.sha256(body).hexdigest()
+        delivery_key = "refund:" + hashlib.sha256(event_identity.encode("utf-8")).hexdigest()
+        updated, _changed = repo.reconcile_provider_status(
+            refund_id=refund.refund_id,
+            provider_refund_id=provider_refund_id,
+            status=target_status,
+            delivery_key=delivery_key,
+        )
+        if updated is None:
+            return {"status": "ignored", "reason": "refund_not_found"}
+
+        core = core_for_merchant(updated.merchant_id)
+        order = core.get_order(updated.order_id)
+        if updated.status is RefundStatus.PROCESSED:
+            total_processed = sum(
+                item.amount_paise
+                for item in repo.for_order(updated.merchant_id, updated.order_id)
+                if item.status is RefundStatus.PROCESSED
+            )
+            self._settle_processed_refund(
+                core,
+                order,
+                updated.provider_refund_id,
+                partial=total_processed < order.amount_paise,
+            )
+        elif updated.status is RefundStatus.FAILED:
+            events = core.ledger.for_trace(order.trace_id, merchant_id=order.merchant_id)
+            if not any(
+                event.provider_ref == updated.provider_refund_id
+                and event.action == "refund.failed"
+                for event in events
+            ):
+                core.ledger.append(
+                    LedgerEvent(
+                        trace_id=order.trace_id,
+                        merchant_id=order.merchant_id,
+                        actor=LedgerActor.COMMERCE_CORE,
+                        action="refund.failed",
+                        inputs={
+                            "order_id": order.order_id,
+                            "refund_id": updated.refund_id,
+                            "amount_paise": updated.amount_paise,
+                            "source": "razorpay_webhook",
+                        },
+                        output={"status": "failed"},
+                        reasoning_summary="Razorpay reported that the test-mode refund failed.",
+                        provider_ref=updated.provider_refund_id,
+                    )
+                )
+        return {
+            "status": updated.status.value.lower(),
+            "refund_id": updated.refund_id,
+            "provider_refund_id": updated.provider_refund_id or "",
+            "order_id": updated.order_id,
+        }
 
     def initiate_refund(
         self,
