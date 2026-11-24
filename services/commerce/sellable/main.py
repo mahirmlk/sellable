@@ -114,6 +114,7 @@ from sellable.registry import (
 )
 from sellable.repositories import (
     CatalogRepository,
+    InventoryRepository,
     CheckoutSessionRepository,
     IdentityLinkRepository,
     MerchantRepository,
@@ -335,6 +336,15 @@ async def lifespan(_: FastAPI):
     _assert_production_configuration()
     initialise_database()
     logger.info("Database initialized")
+    if (
+        not settings.is_dev_environment
+        and InventoryRepository().has_unreserved_active_payment_orders()
+    ):
+        raise RuntimeError(
+            "Startup refused: legacy PAYMENT_PENDING/PAYMENT_FAILED orders lack "
+            "inventory reservations. Stop new checkouts and cancel/verify every "
+            "open provider link on the previous version before rolling out."
+        )
     # Non-blocking JWKS warm: daemon thread only, startup never waits on it.
     try:
         from sellable.supabase_jwt import warm_jwks_cache
