@@ -4179,7 +4179,7 @@ def console_reject_order(
         order = core.get_order(order_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    if order.status is OrderStatus.PAYMENT_PENDING and order.provider_link_id:
+    if order.status in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED} and order.provider_link_id:
         # A live provider link exists: cancel it first so the aborted order
         # can never be paid afterwards. Fail closed — no abort while the
         # link may still be payable.
