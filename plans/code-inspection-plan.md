@@ -46,6 +46,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Action:** Route authenticated agent reads/writes through the API key's merchant core, require signed requests for mutating quote flows, and let public discovery resolve a known merchant ID. Update the runbook URLs and keep a regression for each route family.
 - **Status:** Implemented as a focused draft in PR #22; PR #18's runbook now uses merchant-scoped discovery URLs. Review and merge the code before treating the runbook as executable evidence.
 
+### [P1-007] Bind canonical checkout authorization to the presenting agent
+- **Location:** `services/commerce/sellable/authorization.py`; `services/commerce/sellable/core.py`; PR #29
+- **Finding:** The delegation decision supports checking the subject agent, and the legacy order path passed the buyer agent ID, but canonical checkout order creation omitted it. That allowed a direct core checkout call to skip the agent-to-delegation binding.
+- **Action:** Pass the buyer agent identity into the core authorization decision and reject mismatches before persisting an order.
+- **Status:** Fixed in focused draft PR #29 with a canonical checkout regression. Python 3.11/3.12, frontend, and Cloudflare checks passed in run 45400311667.
+- **Acceptance:** Every delegated order path checks the actual presenting agent against the delegation subject, and a mismatch creates no order. Review this follow-up before merging the platform branch.
+
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
 ### [P1-005] Fail closed on delegation frequency checks
