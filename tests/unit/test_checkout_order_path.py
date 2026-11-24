@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 from sellable.contracts import (
     CheckoutStatus,
@@ -20,7 +21,7 @@ from sellable.contracts import (
     utc_now,
 )
 from sellable.core import CommerceCore
-from sellable.ledger.database import Base
+from sellable.ledger.database import Base, CatalogProductRecord, InventoryReservationRecord
 from sellable.ledger.service import LedgerRepository
 from sellable.repositories import CatalogRepository, InsufficientStockError
 
@@ -309,6 +310,38 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
         for p in catalog_repo.list(commerce_core.merchant_scope)
         if p.sku == "AUDIO-CASE-01"
     ) == 1
+
+
+def test_orphaned_reservation_is_released_after_order_insert_crash(
+    commerce_core: CommerceCore,
+) -> None:
+    merchant_id = commerce_core.merchant_scope
+    order_id = f"ord_missing_{uuid4().hex}"
+    sku = "AUDIO-CASE-01"
+    with Session(commerce_core.order_repo._engine) as session:
+        catalog_row = session.get(CatalogProductRecord, f"{merchant_id}:{sku}")
+        assert catalog_row is not None
+        catalog_row.reserved_stock = 1
+        session.add(
+            InventoryReservationRecord(
+                reservation_id="a" * 64,
+                merchant_id=merchant_id,
+                order_id=order_id,
+                sku=sku,
+                quantity=1,
+                status="RESERVED",
+                created_at=utc_now() - timedelta(minutes=10),
+            )
+        )
+        session.commit()
+
+    released = commerce_core.inventory_repo.release_orphaned_reservations(
+        merchant_id, before=utc_now() - timedelta(minutes=5)
+    )
+    assert released == 1
+    assert commerce_core.inventory_repo.status_for_order(merchant_id, order_id) == {
+        sku: "RELEASED"
+    }
 
 
 def test_stale_consent_stage_order_releases_its_stock_hold(
