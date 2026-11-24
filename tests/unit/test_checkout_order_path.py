@@ -22,6 +22,7 @@ from sellable.contracts import (
 from sellable.core import CommerceCore
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
+from sellable.repositories import CatalogRepository, InsufficientStockError
 
 
 @pytest.fixture
@@ -217,6 +218,100 @@ def test_order_from_checkout_gates(commerce_core: CommerceCore) -> None:
         trace_id=trace_id,
     )
     assert first.order_id == second.order_id
+
+
+
+def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
+    commerce_core: CommerceCore,
+) -> None:
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+
+    first_checkout = _authorized_checkout(commerce_core, _trace())
+    second_checkout = _authorized_checkout(commerce_core, _trace())
+    first_key = f"idem_stock_first_{uuid4().hex}"
+    first_order = commerce_core.create_order_from_checkout(
+        first_checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=first_key,
+        trace_id=_trace(),
+    )
+    assert catalog_repo.list(commerce_core.merchant_scope)[0].stock >= 0
+
+    # A retry for the same order reuses its reservation and never decrements twice.
+    replay = commerce_core.create_order_from_checkout(
+        first_checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=first_key,
+        trace_id=_trace(),
+    )
+    assert replay.order_id == first_order.order_id
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, first_order.order_id
+    ) == {"AUDIO-CASE-01": "RESERVED"}
+
+    with pytest.raises(InsufficientStockError, match="insufficient stock"):
+        commerce_core.create_order_from_checkout(
+            second_checkout.checkout_id,
+            intent=_intent(),
+            idempotency_key=f"idem_stock_second_{uuid4().hex}",
+            trace_id=_trace(),
+        )
+
+    # An aborted order releases exactly once; the next distinct order can reserve.
+    commerce_core.mark_aborted(first_order.order_id, reason="test cancellation")
+    commerce_core.mark_aborted(first_order.order_id, reason="duplicate cancellation")
+    available = next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    )
+    assert available == 1
+
+    second_order = commerce_core.create_order_from_checkout(
+        second_checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_retry_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+    commerce_core.mark_paid(second_order.order_id, provider_ref="pay_stock_1")
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, second_order.order_id
+    ) == {"AUDIO-CASE-01": "COMMITTED"}
+
+
+def test_stale_consent_stage_order_releases_its_stock_hold(
+    commerce_core: CommerceCore,
+) -> None:
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    authorized = _authorized_checkout(commerce_core, _trace())
+    order = commerce_core.create_order_from_checkout(
+        authorized.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_expire_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    stale = order.model_copy(update={"created_at": utc_now() - timedelta(minutes=16)})
+    commerce_core.order_repo.save(stale)
+
+    assert commerce_core.expire_stale_unpaid_orders() == 1
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.ABORTED
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, order.order_id
+    ) == {"AUDIO-CASE-01": "RELEASED"}
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 1
 
 
 def test_legacy_orders_do_not_touch_checkouts(commerce_core: CommerceCore) -> None:
