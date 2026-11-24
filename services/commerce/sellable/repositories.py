@@ -824,9 +824,15 @@ class InventoryRepository:
                         .where(
                             CatalogProductRecord.id == row_id,
                             CatalogProductRecord.merchant_id == merchant_id,
-                            CatalogProductRecord.stock >= quantity,
+                            (
+                                CatalogProductRecord.stock
+                                - CatalogProductRecord.reserved_stock
+                                - CatalogProductRecord.committed_stock
+                            ) >= quantity,
                         )
-                        .values(stock=CatalogProductRecord.stock - quantity)
+                        .values(
+                            reserved_stock=CatalogProductRecord.reserved_stock + quantity
+                        )
                     )
                     if updated.rowcount != 1:
                         raise InsufficientStockError(
@@ -861,17 +867,33 @@ class InventoryRepository:
             self._assert_same_order(existing, expected)
 
     def commit_order(self, merchant_id: str, order_id: str) -> None:
-        """Mark reserved units as sold; the catalog stock was decremented at reserve."""
+        """Transfer active holds into a durable local-sale offset."""
         with Session(self._engine) as session:
-            session.execute(
-                update(InventoryReservationRecord)
-                .where(
+            records = session.scalars(
+                select(InventoryReservationRecord).where(
                     InventoryReservationRecord.merchant_id == merchant_id,
                     InventoryReservationRecord.order_id == order_id,
                     InventoryReservationRecord.status == "RESERVED",
                 )
-                .values(status="COMMITTED")
-            )
+            ).all()
+            for record in records:
+                committed = session.execute(
+                    update(CatalogProductRecord)
+                    .where(
+                        CatalogProductRecord.id == f"{merchant_id}:{record.sku}",
+                        CatalogProductRecord.merchant_id == merchant_id,
+                        CatalogProductRecord.reserved_stock >= record.quantity,
+                    )
+                    .values(
+                        reserved_stock=CatalogProductRecord.reserved_stock - record.quantity,
+                        committed_stock=CatalogProductRecord.committed_stock + record.quantity,
+                    )
+                )
+                if committed.rowcount != 1:
+                    raise RuntimeError(
+                        f"cannot commit inventory reservation for SKU {record.sku}"
+                    )
+                record.status = "COMMITTED"
             session.commit()
 
     def release_order(self, merchant_id: str, order_id: str) -> None:
@@ -890,8 +912,11 @@ class InventoryRepository:
                     .where(
                         CatalogProductRecord.id == f"{merchant_id}:{record.sku}",
                         CatalogProductRecord.merchant_id == merchant_id,
+                        CatalogProductRecord.reserved_stock >= record.quantity,
                     )
-                    .values(stock=CatalogProductRecord.stock + record.quantity)
+                    .values(
+                        reserved_stock=CatalogProductRecord.reserved_stock - record.quantity
+                    )
                 )
                 if restored.rowcount != 1:
                     raise RuntimeError(
@@ -959,7 +984,7 @@ class CatalogRepository:
                     description=r.description,
                     price_paise=r.price_paise,
                     floor_paise=r.floor_paise,
-                    stock=r.stock,
+                    stock=max(0, r.stock - r.reserved_stock - r.committed_stock),
                     category=r.category,
                     attributes=r.attributes or {},
                 )
@@ -1040,6 +1065,13 @@ class CatalogRepository:
                     existing.description = product.description
                     existing.price_paise = product.price_paise
                     existing.floor_paise = product.floor_paise
+                    # A lower source snapshot acknowledges local sales first. Any
+                    # unacknowledged committed offset remains deducted from availability.
+                    if product.stock < existing.stock:
+                        acknowledged = existing.stock - product.stock
+                        existing.committed_stock = max(
+                            0, existing.committed_stock - acknowledged
+                        )
                     existing.stock = product.stock
                     existing.category = product.category
                     existing.attributes = product.attributes
