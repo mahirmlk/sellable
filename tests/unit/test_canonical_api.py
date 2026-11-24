@@ -437,6 +437,68 @@ def test_legacy_agent_catalog_uses_authenticated_merchant_key(commerce_core, mon
         app.dependency_overrides.clear()
 
 
+def test_payment_start_and_retry_use_authenticated_merchant_core(commerce_core):
+    from sellable.auth import AgentApiKey, get_agent_api_key_signed
+    from sellable.contracts import PaymentAttempt
+    from sellable.main import (
+        app,
+        get_payment_service,
+        get_scoped_commerce_signed,
+    )
+
+    class TenantCore:
+        merchant_scope = "mrc_payment_tenant"
+
+    tenant_core = TenantCore()
+    seen = []
+
+    class PaymentServiceSpy:
+        def start_payment(self, *, order_id, consent_id, commerce=None):
+            seen.append(("start", commerce.merchant_scope))
+            return PaymentAttempt(
+                order_id=order_id,
+                provider_order_id="plink_tenant_start",
+                idempotency_key="idem_tenant_payment_start",
+            )
+
+        def retry_payment(self, *, order_id, commerce=None):
+            seen.append(("retry", commerce.merchant_scope))
+            return PaymentAttempt(
+                order_id=order_id,
+                provider_order_id="plink_tenant_retry",
+                idempotency_key="idem_tenant_payment_retry",
+            )
+
+    client = _client(commerce_core)
+    app.dependency_overrides[get_agent_api_key_signed] = lambda: AgentApiKey(
+        key_id="tenant_key",
+        merchant_id=tenant_core.merchant_scope,
+        buyer_agent_id="buyer_tenant",
+        auth_method="signed",
+    )
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: tenant_core
+    app.dependency_overrides[get_payment_service] = lambda: PaymentServiceSpy()
+    try:
+        started = client.post(
+            "/orders/ord_tenant_01/payment",
+            json={"consent_id": "consent_tenant_01"},
+            headers=H,
+        )
+        assert started.status_code == 200, started.text
+
+        retried = client.post(
+            "/orders/ord_tenant_01/payment/retry",
+            headers=H,
+        )
+        assert retried.status_code == 200, retried.text
+        assert seen == [
+            ("start", "mrc_payment_tenant"),
+            ("retry", "mrc_payment_tenant"),
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_a2a_task_uses_authenticated_merchant_core(commerce_core, monkeypatch):
     from sellable.main import app, get_scoped_commerce_signed
     from sellable.protocols import a2a
