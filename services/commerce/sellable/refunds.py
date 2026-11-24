@@ -157,59 +157,62 @@ class RefundService:
             else hashlib.sha256(body).hexdigest()
         )
         delivery_key = "refund:" + hashlib.sha256(event_identity.encode("utf-8")).hexdigest()
-        updated, _changed = repo.reconcile_provider_status(
-            refund_id=refund.refund_id,
-            provider_refund_id=provider_refund_id,
-            status=target_status,
-            delivery_key=delivery_key,
-        )
-        if updated is None:
-            return {"status": "ignored", "reason": "refund_not_found"}
+        with self._settlement_lock:
+            updated, _changed = repo.reconcile_provider_status(
+                refund_id=refund.refund_id,
+                provider_refund_id=provider_refund_id,
+                status=target_status,
+                delivery_key=delivery_key,
+            )
+            if updated is None:
+                return {"status": "ignored", "reason": "refund_not_found"}
 
-        core = core_for_merchant(updated.merchant_id)
-        order = core.get_order(updated.order_id)
-        if updated.status is RefundStatus.PROCESSED:
-            total_processed = sum(
-                item.amount_paise
-                for item in repo.for_order(updated.merchant_id, updated.order_id)
-                if item.status is RefundStatus.PROCESSED
-            )
-            self._settle_processed_refund(
-                core,
-                order,
-                updated.provider_refund_id,
-                partial=total_processed < order.amount_paise,
-            )
-        elif updated.status is RefundStatus.FAILED:
-            events = core.ledger.for_trace(order.trace_id, merchant_id=order.merchant_id)
-            if not any(
-                event.provider_ref == updated.provider_refund_id
-                and event.action == "refund.failed"
-                for event in events
-            ):
-                core.ledger.append(
-                    LedgerEvent(
-                        trace_id=order.trace_id,
-                        merchant_id=order.merchant_id,
-                        actor=LedgerActor.COMMERCE_CORE,
-                        action="refund.failed",
-                        inputs={
-                            "order_id": order.order_id,
-                            "refund_id": updated.refund_id,
-                            "amount_paise": updated.amount_paise,
-                            "source": "razorpay_webhook",
-                        },
-                        output={"status": "failed"},
-                        reasoning_summary="Razorpay reported that the test-mode refund failed.",
-                        provider_ref=updated.provider_refund_id,
-                    )
+            core = core_for_merchant(updated.merchant_id)
+            order = core.get_order(updated.order_id)
+            if updated.status is RefundStatus.PROCESSED:
+                total_processed = sum(
+                    item.amount_paise
+                    for item in repo.for_order(updated.merchant_id, updated.order_id)
+                    if item.status is RefundStatus.PROCESSED
                 )
-        return {
-            "status": updated.status.value.lower(),
-            "refund_id": updated.refund_id,
-            "provider_refund_id": updated.provider_refund_id or "",
-            "order_id": updated.order_id,
-        }
+                self._settle_processed_refund(
+                    core,
+                    order,
+                    updated.provider_refund_id,
+                    partial=total_processed < order.amount_paise,
+                )
+            elif updated.status is RefundStatus.FAILED:
+                events = core.ledger.for_trace(
+                    order.trace_id, merchant_id=order.merchant_id
+                )
+                if not any(
+                    event.provider_ref == updated.provider_refund_id
+                    and event.action == "refund.failed"
+                    for event in events
+                ):
+                    core.ledger.append(
+                        LedgerEvent(
+                            trace_id=order.trace_id,
+                            merchant_id=order.merchant_id,
+                            actor=LedgerActor.COMMERCE_CORE,
+                            action="refund.failed",
+                            inputs={
+                                "order_id": order.order_id,
+                                "refund_id": updated.refund_id,
+                                "amount_paise": updated.amount_paise,
+                                "source": "razorpay_webhook",
+                            },
+                            output={"status": "failed"},
+                            reasoning_summary="Razorpay reported that the test-mode refund failed.",
+                            provider_ref=updated.provider_refund_id,
+                        )
+                    )
+            return {
+                "status": updated.status.value.lower(),
+                "refund_id": updated.refund_id,
+                "provider_refund_id": updated.provider_refund_id or "",
+                "order_id": updated.order_id,
+            }
 
     def initiate_refund(
         self,
@@ -357,25 +360,26 @@ class RefundService:
                 }[provider_refund.status],
             }
         )
-        repo.save(settled)
-        # A webhook may have advanced this row while the provider call was
-        # returning. Continue from persisted monotonic state, never this stale
-        # response snapshot.
-        settled = repo.for_idempotency_key(order.merchant_id, key) or settled
-        if settled.status is not RefundStatus.PROCESSED:
+        with self._settlement_lock:
+            repo.save(settled)
+            # A webhook may have advanced this row while the provider call was
+            # returning. Continue from persisted monotonic state, never this stale
+            # response snapshot.
+            settled = repo.for_idempotency_key(order.merchant_id, key) or settled
+            if settled.status is not RefundStatus.PROCESSED:
+                return self._present(settled, order_trace=order.trace_id)
+            total_refunded = sum(
+                item.amount_paise
+                for item in repo.for_order(order.merchant_id, order.order_id)
+                if item.status is RefundStatus.PROCESSED
+            )
+            self._settle_processed_refund(
+                core,
+                order,
+                settled.provider_refund_id,
+                partial=total_refunded < order.amount_paise,
+            )
             return self._present(settled, order_trace=order.trace_id)
-        total_refunded = sum(
-            item.amount_paise
-            for item in repo.for_order(order.merchant_id, order.order_id)
-            if item.status is RefundStatus.PROCESSED
-        )
-        self._settle_processed_refund(
-            core,
-            order,
-            settled.provider_refund_id,
-            partial=total_refunded < order.amount_paise,
-        )
-        return self._present(settled, order_trace=order.trace_id)
 
     def _settle_processed_refund(
         self, core: CommerceCore, order, provider_refund_id: str | None, *, partial: bool
