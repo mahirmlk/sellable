@@ -30,6 +30,13 @@ class CatalogService:
         except KeyError as error:
             raise UnknownSkuError(f"Unknown SKU: {sku}") from error
 
+    def set_available_stock(self, sku: str, stock: int) -> None:
+        """Refresh the cached stock snapshot after a durable reservation change."""
+        if stock < 0:
+            raise ValueError("available stock cannot be negative")
+        product = self.get(sku)
+        self._products[sku] = product.model_copy(update={"stock": stock})
+
     def add_product(self, product: Product) -> Product:
         if product.sku in self._products:
             raise ValueError(f"SKU already exists: {product.sku}")
