@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
 
@@ -2359,15 +2359,35 @@ class CommerceCore:
                     # A source sync may have removed the item from this cache.
                     logger.debug("Inventory cache refresh skipped for unknown SKU %s", sku)
 
-    def expire_stale_unpaid_orders(self) -> int:
-        """Abort consent-stage orders after the stock hold window (15 minutes)."""
+    def expire_stale_unpaid_orders(
+        self,
+        *,
+        cancel_provider_link: Callable[[str, CommerceCore], bool] | None = None,
+    ) -> int:
+        """Abort unpaid orders 15 minutes after creation, after cancel confirmation.
+
+        Consent-stage orders have no payment link. Payment-pending/failed orders
+        stay reserved unless the provider confirms the link is cancelled, expired,
+        or absent. An uncertain provider result leaves the hold in place for retry.
+        """
         cutoff = utc_now() - timedelta(minutes=15)
         expired = 0
         for order_id in self.order_repo.stale_unpaid_ids(self.merchant_scope, cutoff):
             try:
+                order = self.get_order(order_id)
+                needs_provider_confirmation = order.status in {
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }
+                if needs_provider_confirmation:
+                    if cancel_provider_link is None:
+                        continue
+                    if not cancel_provider_link(order_id, self):
+                        continue
                 self.mark_aborted(
                     order_id,
-                    reason="Consent was not completed within the 15-minute stock hold window.",
+                    reason="Unpaid order exceeded the 15-minute stock hold window.",
+                    provider_link_cancelled=needs_provider_confirmation,
                 )
                 expired += 1
             except Exception:  # noqa: BLE001 — one bad row must not stop the sweep
