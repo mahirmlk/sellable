@@ -1931,10 +1931,13 @@ def commerce_order_cancel_request(
             status_code=409,
             detail="settled orders cannot be cancelled by an agent; use returns/refunds",
         )
-    if order.provider_link_id:
+    if order.provider_link_id or order.status in {
+        OrderStatus.PAYMENT_PENDING,
+        OrderStatus.PAYMENT_FAILED,
+    }:
         raise HTTPException(
             status_code=409,
-            detail="a live payment link exists; only the merchant can cancel this order",
+            detail="a provider link may still be payable; only the merchant can cancel it",
         )
     try:
         aborted = core.mark_aborted(
@@ -4194,7 +4197,12 @@ def console_reject_order(
                 detail=f"Could not cancel the live payment link: {error}",
             ) from error
     try:
-        core.mark_aborted(order_id, reason="Order rejected by merchant via console.")
+        core.mark_aborted(
+            order_id,
+            reason="Order rejected by merchant via console.",
+            provider_link_cancelled=order.status
+            in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED},
+        )
         return {"status": "rejected", "order_id": order_id}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
