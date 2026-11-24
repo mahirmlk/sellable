@@ -114,6 +114,14 @@ when it finds any `PAYMENT_PENDING` or `PAYMENT_FAILED` order without an active
 inventory reservation. Do not bypass this gate or accept a legacy link after
 rollout; it could capture payment without reserving stock.
 
+After rollout, every unpaid order holds stock for 15 minutes from order creation.
+The maintenance sweep aborts consent-stage orders directly. For payment-pending
+or payment-failed orders, it first reconciles the Razorpay link by the stable
+order reference, cancels any payable link, and releases stock only after the
+provider confirms the link is cancelled, expired, or absent. If the provider
+cannot confirm that state, the order and stock hold remain for the next retry
+or manual reconciliation.
+
 The first production release must run one Cloudflare Container instance. Keep `WEB_CONCURRENCY` and `UVICORN_WORKERS` unset or set to `1`; startup rejects multiple workers while consent and payment-attempt transitions remain process-local. Consent consumption
 and payment-attempt serialization still depend on process-local locks; the app
 rejects multiple workers but cannot detect multiple replicas. Do not scale the
