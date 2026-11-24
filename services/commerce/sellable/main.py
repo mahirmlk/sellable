@@ -4179,12 +4179,15 @@ def console_reject_order(
         order = core.get_order(order_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    if order.status in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED} and order.provider_link_id:
-        # A live provider link exists: cancel it first so the aborted order
-        # can never be paid afterwards. Fail closed — no abort while the
-        # link may still be payable.
+    if order.status in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED}:
+        # Fail closed if a possibly live link cannot be positively cancelled.
         try:
-            payments.cancel_provider_link(order_id, commerce=core)
+            cancelled = payments.cancel_provider_link(order_id, commerce=core)
+            if not cancelled:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Cannot abort until the provider confirms link cancellation.",
+                )
         except (RazorpayConfigurationError, RazorpayRequestError) as error:
             raise HTTPException(
                 status_code=502,
