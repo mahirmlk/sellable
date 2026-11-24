@@ -8,7 +8,7 @@ BLOCKED — deterministic CI and sandbox hardening pass, but a clean, isolated C
 
 ## Executive Summary
 
-The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. Signed refund-status webhook reconciliation is implemented in draft PR #24 with fake-provider signature, replay, ordering, and partial-refund regressions. CI still does not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The pending-refund/idempotency fix is now folded into PR #14 and its Python/eval, frontend, and Cloudflare CI passed. Signed refund-status webhook reconciliation is on platform-based draft PR #26. A focused review found that the required-index migration could accept a conflicting same-name index; PR #25 adds catalog verification and its CI passed. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
+The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. PR #14 now contains the pending-refund/idempotency fix and its Python/eval, frontend, and Cloudflare CI passed. PR #26 adds signed, replay-safe refund-status reconciliation on the platform branch and its CI passed with fake providers. PR #25 verifies the actual required index definitions and its CI passed. These checks do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
 
 The highest risk is treating the sandbox as production-proven before staging verifies the provider boundary and database constraints. The exploit/correctness paths compound when an external retry or duplicate webhook meets partially completed payment/refund state: local idempotency, provider idempotency, ledger settlement, and the order status must agree.
 
@@ -69,6 +69,6 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## Evidence and Limitations
 
-- GitHub Actions passed for the updated PR #14 refund fix, PR #25 catalog verification, and earlier focused checks on #17, #18, #19, #20, #22, and #23. PR #26 webhook reconciliation CI is running. These are code/configuration checks, not external staging proof.
+- GitHub Actions passed for the updated PR #14 refund fix, PR #25 catalog verification, and earlier focused checks on #17, #18, #19, #20, #22, and #23. PR #26 webhook reconciliation passed in GitHub Actions run [45384123436](https://github.com/mahirmlk/sellable/actions/runs/45384123436). These are code/configuration checks, not external staging proof.
 - No Razorpay API call, live payment, or production deployment was made.
 - Staging resources are not yet provisioned. Do not mark this plan CLEAR until the acceptance criteria above are met.
