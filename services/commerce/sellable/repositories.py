@@ -801,6 +801,35 @@ class InventoryRepository:
                 "order inventory reservation does not match the requested lines"
             )
 
+    def has_unreserved_active_payment_orders(self) -> bool:
+        """Detect payment attempts from before inventory reservations were enabled.
+
+        The rollout must drain/cancel these provider links before this version
+        starts accepting traffic; a captured legacy payment cannot be safely
+        assigned stock after the fact.
+        """
+        reservation_exists = (
+            select(InventoryReservationRecord.reservation_id)
+            .where(
+                InventoryReservationRecord.merchant_id == OrderRecord.merchant_id,
+                InventoryReservationRecord.order_id == OrderRecord.order_id,
+                InventoryReservationRecord.status == "RESERVED",
+            )
+            .exists()
+        )
+        query = (
+            select(OrderRecord.order_id)
+            .where(
+                OrderRecord.status.in_(
+                    [OrderStatus.PAYMENT_PENDING.value, OrderStatus.PAYMENT_FAILED.value]
+                )
+            )
+            .where(~reservation_exists)
+            .limit(1)
+        )
+        with Session(self._engine) as session:
+            return session.scalar(query) is not None
+
     def reserve_for_order(
         self, merchant_id: str, order_id: str, lines: Sequence[tuple[str, int]]
     ) -> None:
