@@ -250,7 +250,12 @@ class PaymentService:
                 # The previous Payment Link may still accept payment even after
                 # a failed attempt. Never release stock until Razorpay confirms
                 # the link cancellation.
-                self.cancel_provider_link(order_id, commerce=core)
+                cancelled = self.cancel_provider_link(order_id, commerce=core)
+                if not cancelled:
+                    raise ValueError(
+                        "Retry limit reached, but the provider link could not be confirmed "
+                        "cancelled; inventory remains reserved for reconciliation"
+                    )
                 core.mark_aborted(order_id, reason="Retry limit reached")
                 self._record(
                     core=core,
