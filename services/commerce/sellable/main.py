@@ -294,7 +294,7 @@ def _maintenance_tick() -> None:
             core.cart_service.expire_due(merchant_id)
             core.checkout_service.expire_due(merchant_id)
             core.expire_stale_unpaid_orders(
-                cancel_provider_link=lambda order_id, scoped_core: (
+                expire_payment_order=lambda order_id, scoped_core: (
                     payment_service.cancel_provider_link_for_expiry(
                         order_id, commerce=scoped_core
                     )
