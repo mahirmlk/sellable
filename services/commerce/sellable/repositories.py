@@ -896,8 +896,9 @@ class InventoryRepository:
                 record.status = "COMMITTED"
             session.commit()
 
-    def release_order(self, merchant_id: str, order_id: str) -> None:
+    def release_order(self, merchant_id: str, order_id: str) -> list[str]:
         """Restore units only for an aborted order; repeated calls are harmless."""
+        released_skus: list[str] = []
         with Session(self._engine) as session:
             records = session.scalars(
                 select(InventoryReservationRecord).where(
@@ -923,7 +924,25 @@ class InventoryRepository:
                         f"cannot release reservation: catalog SKU {record.sku} is missing"
                     )
                 record.status = "RELEASED"
+                released_skus.append(record.sku)
             session.commit()
+        return released_skus
+
+    def available_stock(self, merchant_id: str, sku: str) -> int | None:
+        with Session(self._engine) as session:
+            row = session.execute(
+                select(
+                    CatalogProductRecord.stock,
+                    CatalogProductRecord.reserved_stock,
+                    CatalogProductRecord.committed_stock,
+                ).where(
+                    CatalogProductRecord.merchant_id == merchant_id,
+                    CatalogProductRecord.sku == sku,
+                )
+            ).first()
+        if row is None:
+            return None
+        return max(0, row[0] - row[1] - row[2])
 
     def status_for_order(self, merchant_id: str, order_id: str) -> dict[str, str]:
         with Session(self._engine) as session:
