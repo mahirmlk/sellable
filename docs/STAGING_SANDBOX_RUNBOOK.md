@@ -56,7 +56,7 @@ In the Razorpay dashboard, explicitly select **Test Mode** and create a webhook 
 https://<staging-worker-host>/webhooks/razorpay
 ```
 
-Use the same webhook secret as the staging Worker's `RAZORPAY_WEBHOOK_SECRET`. Subscribe to `payment.captured` and `payment.failed`. Confirm the webhook URL is the staging Worker host, not the production API.
+Use the same webhook secret as the staging Worker's `RAZORPAY_WEBHOOK_SECRET`. Subscribe to `payment.captured`, `payment.failed`, `refund.created`, `refund.processed`, and `refund.failed`. Confirm the webhook URL is the staging Worker host, not the production API.
 
 Use Razorpay's current [test credentials and payment methods guide](https://hdfcbank-collectnow-docs.razorpay.com/payments/payment-gateway/android-integration/standard/integration-steps/) for checkout values. Never use a live-mode key or a real payment method.
 
@@ -69,8 +69,8 @@ Use Razorpay's current [test credentials and payment methods guide](https://hdfc
 5. Have the agent request checkout authorization and an order using stable idempotency keys. A human must review the exact merchant, item, amount, and spend mandate and issue single-use consent. Start payment only with that consent.
 6. Open the returned Razorpay payment URL and complete checkout using Razorpay Test Mode values. Do not treat a browser return URL as proof of payment.
 7. Wait for the signed `payment.captured` webhook. Confirm the staging order is `PAID`, then fetch `GET /orders/{order_id}/receipt` with the merchant-scoped agent key. The receipt must include the provider reference, amount, authorization reference, and trace ID.
-8. As the test merchant owner, issue a full refund with a stable `idempotency_key` through `POST /orders/{order_id}/refund`. Repeat the identical request once and confirm it returns the same local refund ID. Confirm Razorpay Test Mode shows one refund and the order becomes `REFUNDED`.
-9. Redeliver the payment webhook from Razorpay's dashboard. Confirm the order remains settled and the ledger has one payment settlement event.
+8. As the test merchant owner, issue a full refund with a stable `idempotency_key` through `POST /orders/{order_id}/refund`. Repeat the identical request once and confirm it returns the same local refund ID. If Razorpay reports the refund as pending, verify the order stays `PAID` until the signed `refund.processed` event arrives; only then should it become `REFUNDED`.
+9. Redeliver the refund webhook from Razorpay's dashboard and confirm the order remains `REFUNDED` with one settlement ledger event. Redeliver the payment webhook and confirm the order still has one payment settlement event.
 
 The committed CI tests and evals use fake providers and in-memory databases; they prove deterministic business rules, not Razorpay behavior. `tests/unit/test_external_agent_sandbox_flow.py` also uses a fake Razorpay rail. Only this staging procedure proves the provider boundary.
 
@@ -79,7 +79,8 @@ The committed CI tests and evals use fake providers and in-memory databases; the
 - Check `GET /health`, `GET /ready`, and the staging merchant's onboarding readiness before checkout.
 - In Cloudflare, inspect Worker logs, Container status, scheduled heartbeat logs, and error rates. In Supabase, inspect staging database/Auth logs. In Razorpay Test Mode, inspect payment and webhook delivery attempts.
 - If checkout remains `PAYMENT_PENDING`, inspect Razorpay's Test Mode payment and webhook delivery records. Retry delivery after verifying the URL and secret. Never manually mark an order paid.
-- If a refund is `initiated`/pending, do not treat it as settled. Pending amounts remain reserved and the order remains `PAID` until provider status is processed. Automatic refund-webhook reconciliation is not implemented yet; record this as an unfinished path and do not use a pending refund as proof of completion.
+- If a refund is `initiated`/pending, do not treat it as settled. Pending amounts remain reserved and the order remains `PAID` until the signed provider status event reports `processed`.
+- If a signed refund event cannot be matched to a local request, the endpoint returns 409 instead of acknowledging it. Check Cloudflare logs and the Razorpay Test Mode refund details/notes, repair the missing correlation through the same stable idempotency key, then retry delivery. Do not manually mark a refund processed.
 - Retry a request only with the same idempotency key and identical parameters. If provider state is ambiguous, inspect the provider's Test Mode record before attempting a different refund.
 - Roll back the staging Worker version if a deployment is unhealthy, then verify `/ready` and the webhook endpoint again. Keep staging database and provider records disposable and separate from production.
 
@@ -90,5 +91,5 @@ The committed CI tests and evals use fake providers and in-memory databases; the
 - [ ] Test merchant onboarded and catalog published.
 - [ ] External agent discovery, negotiation, consent, and payment completed.
 - [ ] Signed Razorpay test webhook verified; receipt checked.
-- [ ] Test refund processed; identical retry did not duplicate it.
-- [ ] Webhook replay did not duplicate payment settlement.
+- [ ] Test refund processed by signed refund webhook; identical request retry and webhook replay did not duplicate it.
+- [ ] Payment webhook replay did not duplicate payment settlement.
