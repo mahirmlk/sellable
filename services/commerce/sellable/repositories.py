@@ -411,7 +411,11 @@ class RefundRepository:
             RefundStatus.PROCESSED: 2,
         }
         with Session(self._engine) as session:
-            existing = session.get(RefundRecord, refund.refund_id)
+            existing = session.scalar(
+                select(RefundRecord)
+                .where(RefundRecord.refund_id == refund.refund_id)
+                .with_for_update()
+            )
             if existing:
                 if (
                     existing.provider_refund_id is not None
