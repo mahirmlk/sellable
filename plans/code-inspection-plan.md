@@ -8,7 +8,7 @@ BLOCKED — deterministic CI and sandbox hardening pass, but a clean, isolated C
 
 ## Executive Summary
 
-The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. PR #14 now contains the pending-refund/idempotency fix and its Python/eval, frontend, and Cloudflare CI passed. PR #26 adds signed, replay-safe refund-status reconciliation on the platform branch and its CI passed with fake providers. PR #25 verifies the actual required index definitions and its CI passed. These checks do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
+The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. PR #14 now contains the pending-refund/idempotency fix and its Python/eval, frontend, and Cloudflare CI passed. PR #26 adds signed, replay-safe refund-status reconciliation on the platform branch; its latest CI passed with fake providers after review fixes moved signature verification before JSON parsing and changed replay claims to hash the signed raw body, not the unsigned event-ID header. PR #25 verifies the actual required index definitions and its CI passed. These checks do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
 
 The highest risk is treating the sandbox as production-proven before staging verifies the provider boundary and database constraints. The exploit/correctness paths compound when an external retry or duplicate webhook meets partially completed payment/refund state: local idempotency, provider idempotency, ledger settlement, and the order status must agree.
 
@@ -36,7 +36,7 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ### [P1-003] Complete independent review and safe sequencing of platform PRs
 - **Location:** PR #14, `feat/platform-completion`; follow-ups #25 and #26
-- **Finding:** PR #14 is a 100+ file draft. It now contains the pending-refund/idempotency fix and has passing CI; #26 carries refund-webhook reconciliation on top of the platform branch. Focused review of outbound URL validation and Cloudflare forwarding found no blocker in those inspected paths; review of the remaining auth, data, payment, frontend, and deployment diff is still outstanding. PR #25 verifies the database index definitions that the startup gate requires.
+- **Finding:** PR #14 is a 100+ file draft. It contains the pending-refund/idempotency and sandbox-only provider fixes and has passing CI. Review also found and fixed a fail-open Cloudflare HTTPS check for missing/unknown environment values. #26 carries refund-webhook reconciliation on top of the platform branch and has passing CI after the webhook review fixes. Focused review of outbound URL validation and Cloudflare forwarding found no blocker in those inspected paths; review of the remaining auth, data, payment, frontend, and deployment diff is still outstanding. PR #25 verifies the database index definitions that the startup gate requires.
 - **Action:** Finish reviewing PR #14 by security boundary and its focused follow-ups. Keep the dependencies ordered and resolve review findings before any merge.
 - **Acceptance:** No unresolved high-severity review findings; the final merged tree retains both refund fixes and validates actual unique-index definitions; every prerequisite change has passing required CI.
 
@@ -57,7 +57,7 @@ The highest risk is treating the sandbox as production-proven before staging ver
 ### [P2-002] Retain fail-closed startup and readiness gates
 - **Location:** `services/commerce/sellable/main.py`; `services/commerce/sellable/ledger/database.py`; PR #20
 - **Finding:** Production safety depends on required database uniqueness/indexes and the maintenance worker. Falling back to process-local guards or serving traffic without required maintenance can invalidate idempotency and expiry behavior.
-- **Action:** Keep production startup fail-closed on required index creation and maintenance-worker failure; draft PR #25 also verifies the actual index definitions. Keep readiness unhealthy when a required worker is unavailable. Exercise these gates against the actual isolated Postgres staging database before launch.
+- **Action:** Keep production startup fail-closed on required index creation and maintenance-worker failure; draft PR #25 verifies actual index definitions, and draft PR #20 rejects disabled/unavailable maintenance workers and reports worker health in readiness. Review and merge both focused gates. Exercise them against the actual isolated Postgres staging database before launch.
 - **Acceptance:** Missing constraints or worker health blocks readiness; recovery requires fixing configuration/data, not bypassing the gate.
 
 ## Cross-Cutting Answers
@@ -69,6 +69,6 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## Evidence and Limitations
 
-- GitHub Actions passed for the updated PR #14 refund fix, PR #25 catalog verification, and earlier focused checks on #17, #18, #19, #20, #22, and #23. PR #26 webhook reconciliation passed in GitHub Actions run [45384123436](https://github.com/mahirmlk/sellable/actions/runs/45384123436). These are code/configuration checks, not external staging proof.
+- GitHub Actions passed for PR #14's latest head in run [45386624830](https://github.com/mahirmlk/sellable/actions/runs/45386624830), PR #25's index verification in run [45381931393](https://github.com/mahirmlk/sellable/actions/runs/45381931393), and PR #26's latest webhook review fixes in run [45387676861](https://github.com/mahirmlk/sellable/actions/runs/45387676861). Earlier focused checks on #17, #18, #20, #22, and #23 also passed. These are code/configuration checks, not external staging proof.
 - No Razorpay API call, live payment, or production deployment was made.
 - Staging resources are not yet provisioned. Do not mark this plan CLEAR until the acceptance criteria above are met.
