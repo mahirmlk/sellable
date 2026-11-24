@@ -257,7 +257,8 @@ class CommerceCore:
         )
         self.case_service = case_service or CaseService(self.case_repo)
         self._idempotency_keys: dict[str, str] = {}
-        self._order_lock = threading.Lock()
+        # Reentrant because expiry holds this lock through the guarded abort transition.
+        self._order_lock = threading.RLock()
         self.merchant_scope = merchant_scope or policy.merchant_id
         # Seed only missing catalog rows for direct/local core construction. Existing
         # merchant inventory remains authoritative and is never overwritten here.
