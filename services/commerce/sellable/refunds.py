@@ -47,6 +47,7 @@ class RefundService:
         # refund balance checks and reservations inside that process so two
         # concurrent partial refunds cannot both spend the same balance.
         self._refund_lock = RLock()
+        self._settlement_lock = RLock()
 
     def _repo(self) -> RefundRepository:
         if self._refund_repo is None:
@@ -54,22 +55,6 @@ class RefundService:
         return self._refund_repo
 
     def handle_webhook(
-        self,
-        body: bytes,
-        signature: str | None,
-        *,
-        event_id: str | None,
-        core_for_merchant: Callable[[str], CommerceCore],
-    ) -> dict[str, object]:
-        with self._refund_lock:
-            return self._handle_webhook(
-                body,
-                signature,
-                event_id=event_id,
-                core_for_merchant=core_for_merchant,
-            )
-
-    def _handle_webhook(
         self,
         body: bytes,
         signature: str | None,
@@ -392,29 +377,32 @@ class RefundService:
         )
         return self._present(settled, order_trace=order.trace_id)
 
-    @staticmethod
     def _settle_processed_refund(
-        core: CommerceCore, order, provider_refund_id: str | None, *, partial: bool
+        self, core: CommerceCore, order, provider_refund_id: str | None, *, partial: bool
     ) -> None:
         if not provider_refund_id:
             return
-        events = core.ledger.for_trace(order.trace_id, merchant_id=order.merchant_id)
-        if any(
-            event.provider_ref == provider_refund_id
-            and event.action in {"refund.settled", "refund.partial_settled"}
-            for event in events
-        ):
-            return
-        try:
-            core.mark_refunded(
-                order.order_id,
-                provider_ref=provider_refund_id,
-                partial=partial,
-            )
-        except InvalidOrderTransitionError as error:
-            raise UnexpectedOrderStateError(
-                f"Order {order.order_id} in {order.status} cannot record the refund"
-            ) from error
+        # Webhooks and provider API responses can reconcile the same refund
+        # concurrently. Serialize the short order/ledger transition without
+        # holding a lock across provider network I/O.
+        with self._settlement_lock:
+            events = core.ledger.for_trace(order.trace_id, merchant_id=order.merchant_id)
+            if any(
+                event.provider_ref == provider_refund_id
+                and event.action in {"refund.settled", "refund.partial_settled"}
+                for event in events
+            ):
+                return
+            try:
+                core.mark_refunded(
+                    order.order_id,
+                    provider_ref=provider_refund_id,
+                    partial=partial,
+                )
+            except InvalidOrderTransitionError as error:
+                raise UnexpectedOrderStateError(
+                    f"Order {order.order_id} in {order.status} cannot record the refund"
+                ) from error
 
     @staticmethod
     def _present(refund: Refund, *, order_trace: str) -> dict[str, object]:
