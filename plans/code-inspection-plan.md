@@ -53,6 +53,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Status:** Fixed in focused draft PR #29 with a canonical checkout regression. Python 3.11/3.12, frontend, and Cloudflare checks passed in run 45400311667.
 - **Acceptance:** Every delegated order path checks the actual presenting agent against the delegation subject, and a mismatch creates no order. Review this follow-up before merging the platform branch.
 
+### [P1-008] Gate CI on the versioned agent-safety evaluation battery
+- **Location:** `.github/workflows/ci.yml`; `evals/run_all.py`; PR #30
+- **Finding:** CI ran the deterministic scenarios, but skipped the versioned evaluation suites and their regression gates. The external-agent HTTP sandbox flow already runs as part of the full pytest suite.
+- **Action:** Run the full evaluation entry point in CI with the mock LLM adapter so safety suites, regression thresholds, and deterministic scenarios all fail the build on errors without calling an external model.
+- **Status:** Implemented in draft PR #30. Run 45401459117 passed Python 3.11/3.12, frontend, and Cloudflare checks; the test log confirms P0 safety and commerce gates at 100%, zero P0 failures, and RESULT: PASS. Vercel preview deployed successfully.
+- **Acceptance:** The full suite and release gates run on every relevant pull request, and the documented external-agent flow stays inside the mandatory test job. Isolated Razorpay Test Mode staging remains a separate release gate.
+
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
 ### [P1-005] Fail closed on delegation frequency checks
