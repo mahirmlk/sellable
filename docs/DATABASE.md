@@ -104,6 +104,28 @@ CREATE INDEX ix_ledger_events_merchant_id ON ledger_events(merchant_id);
 
 ---
 
+### `catalog_products` and `inventory_reservations`
+
+`catalog_products.stock` stores the latest source-system on-hand quantity.
+`reserved_stock` and `committed_stock` are local offsets, so available units
+are `max(0, stock - reserved_stock - committed_stock)`. A catalog refresh
+updates source stock without clearing active reservations. A lower source
+snapshot reconciles committed sales; an unchanged stale snapshot cannot restore
+units already sold locally.
+
+Before an order is inserted, a conditional database update reserves every SKU
+only when its available quantity is sufficient, and a unique
+`(merchant_id, order_id, sku)` row records the reservation. The transaction
+rolls back all lines if any SKU is short. Verified payment moves reserved
+quantities to committed offsets. An abort releases reserved quantities once;
+refunded orders do not restock automatically because a physical return is not
+implied by a money refund.
+
+Orders awaiting consent are aborted after a 15-minute hold. Payment-pending and
+payment-failed orders keep their stock reserved until the provider link is
+confirmed cancelled. The maintenance sweep repairs an interrupted release and
+removes orphan reservations left by a process crash before order insertion.
+
 ### `orders`
 
 Persisted order state. Created when a buyer accepts a quote and the policy engine allows the transaction. Updated on every status transition.
