@@ -42,9 +42,10 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ### [P1-004] Scope legacy agent routes and discovery to the selected merchant
 - **Location:** `services/commerce/sellable/main.py:2115-2145,3140-3398`; `docs/STAGING_SANDBOX_RUNBOOK.md:65-73`
-- **Finding:** The A2A task handler and legacy `/agent/*` routes were wired to the global demo commerce core/gateway. The public agent manifest/catalog endpoints also had no merchant selector, so an external agent following the runbook could see the demo merchant instead of the newly onboarded staging merchant.
-- **Action:** Route authenticated agent reads/writes through the API key's merchant core, require signed requests for mutating quote flows, and let public discovery resolve a known merchant ID. Update the runbook URLs and keep a regression for each route family.
-- **Status:** Implemented as a focused draft in PR #22; PR #18's runbook now uses merchant-scoped discovery URLs. Review and merge the code before treating the runbook as executable evidence.
+- **Finding:** The A2A task handler and legacy `/agent/*` routes were wired to the global demo commerce core/gateway. Public agent discovery lacked merchant selection, and payment start/retry used the global demo core even after order routes were scoped.
+- **Action:** Route authenticated reads, writes, consent, and payment start/retry through the signed API key's merchant core; require HMAC on mutating agent routes; let public discovery resolve known merchants. Keep route-family regressions and merchant-scoped runbook URLs.
+- **Status:** Implemented in draft PR #22. Run 45403432662 passed Python 3.11/3.12, frontend, and Cloudflare checks after adding tenant-bound payment start/retry tests. Vercel preview status was rate-limited.
+- **Acceptance:** An agent from merchant A cannot read or mutate merchant B's order, consent, or payment state; all agent-facing payment operations use the authenticated merchant core. Continue to require staging verification.
 
 ### [P1-007] Bind canonical checkout authorization to the presenting agent
 - **Location:** `services/commerce/sellable/authorization.py`; `services/commerce/sellable/core.py`; PR #29
