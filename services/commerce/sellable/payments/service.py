@@ -256,7 +256,11 @@ class PaymentService:
                         "Retry limit reached, but the provider link could not be confirmed "
                         "cancelled; inventory remains reserved for reconciliation"
                     )
-                core.mark_aborted(order_id, reason="Retry limit reached")
+                core.mark_aborted(
+                    order_id,
+                    reason="Retry limit reached",
+                    provider_link_cancelled=True,
+                )
                 self._record(
                     core=core,
                     trace_id=order.trace_id,
