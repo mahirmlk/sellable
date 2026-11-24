@@ -121,10 +121,16 @@ quantities to committed offsets. An abort releases reserved quantities once;
 refunded orders do not restock automatically because a physical return is not
 implied by a money refund.
 
-Orders awaiting consent are aborted after a 15-minute hold. Payment-pending and
-payment-failed orders keep their stock reserved until the provider link is
-confirmed cancelled. The maintenance sweep repairs an interrupted release and
-removes orphan reservations left by a process crash before order insertion.
+Every unpaid order is considered for abort after a 15-minute hold from
+order creation. Consent-stage orders have no payment link and release their
+reservation when aborted. Payment-pending and payment-failed orders first
+reconcile the Razorpay link by the stable order reference, cancel any payable
+link, and release stock only after the provider confirms that the link is
+cancelled, expired, or absent. Uncertain outcomes retain the reservation for
+the next retry or manual reconciliation. Expiry serializes cancellation and
+abort against payment retries and webhook settlement. The maintenance sweep
+also repairs interrupted releases and removes orphan reservations left by a
+process crash before order insertion.
 
 ### `orders`
 
