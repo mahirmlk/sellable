@@ -2557,9 +2557,9 @@ def retry_payment(
 
 @app.post(
     "/webhooks/razorpay",
-    response_model=PaymentAttempt,
+    response_model=None,
     tags=["payments"],
-    summary="Verify and reconcile a Razorpay payment webhook.",
+    summary="Verify and reconcile a Razorpay payment or refund webhook.",
 )
 # Not exempt: the one unauthenticated HMAC-verifying endpoint still gets a
 # generous per-IP bucket against floods and signature-probing. Genuine
@@ -2568,9 +2568,36 @@ def retry_payment(
 async def razorpay_webhook(
     request: Request,
     x_razorpay_signature: str | None = Header(default=None),
+    x_razorpay_event_id: str | None = Header(default=None, alias="x-razorpay-event-id"),
     payments: PaymentService = Depends(get_payment_service),
-) -> PaymentAttempt:
+    refunds: RefundService = Depends(get_refund_service),
+) -> PaymentAttempt | dict[str, str]:
     body = await request.body()
+    try:
+        payload = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        payload = None
+    event_name = payload.get("event") if isinstance(payload, dict) else None
+
+    if isinstance(event_name, str) and event_name.startswith("refund."):
+        try:
+            result = refunds.handle_webhook(
+                body,
+                x_razorpay_signature,
+                event_id=x_razorpay_event_id,
+                core_for_merchant=registry.get,
+            )
+        except InvalidWebhookSignatureError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from error
+        except RazorpayConfigurationError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except UnexpectedOrderStateError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        _drain_bus_best_effort()
+        return {key: str(value) for key, value in result.items()}
+
     try:
         attempt = payments.handle_webhook(body, x_razorpay_signature)
     except InvalidWebhookSignatureError as error:
@@ -2583,8 +2610,6 @@ async def razorpay_webhook(
         raise HTTPException(status_code=409, detail=str(error)) from error
     except (UnknownProviderOrderError, UnsupportedWebhookEventError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    # Verified settlement fans out asynchronously: analytics, merchant
-    # notifications, fulfillment, and trust update off the durable outbox.
     _drain_bus_best_effort()
     return attempt
 
