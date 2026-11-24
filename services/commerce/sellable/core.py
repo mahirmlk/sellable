@@ -2382,24 +2382,29 @@ class CommerceCore:
         explanation: str,
         provider_ref: str | None = None,
     ) -> Order:
-        order = self.get_order(order_id)
-        if order.status is target:
-            return order  # idempotent: duplicate webhook/delivery must not crash
-        updated_order = order.model_copy(update={"status": transition(order.status, target)})
-        self._orders[order_id] = updated_order
-        # Persist updated order
-        self.order_repo.save(updated_order)
-        self._record(
-            trace_id=order.trace_id,
-            actor=LedgerActor.COMMERCE_CORE,
-            action=action,
-            inputs={"order_id": order_id, "previous_status": order.status},
-            output={"status": updated_order.status},
-            reasoning_summary=explanation,
-            provider_ref=provider_ref,
-            outcome_effect={"order_state": updated_order.status},
-        )
-        return updated_order
+        # Serialize state transitions with consent consumption and order creation.
+        # The first release remains single-replica; this also closes thread races
+        # between a paid webhook and an abort/release in that process.
+        with self._order_lock:
+            order = self.get_order(order_id)
+            if order.status is target:
+                return order  # idempotent: duplicate webhook/delivery must not crash
+            updated_order = order.model_copy(
+                update={"status": transition(order.status, target)}
+            )
+            self._orders[order_id] = updated_order
+            self.order_repo.save(updated_order)
+            self._record(
+                trace_id=order.trace_id,
+                actor=LedgerActor.COMMERCE_CORE,
+                action=action,
+                inputs={"order_id": order_id, "previous_status": order.status},
+                output={"status": updated_order.status},
+                reasoning_summary=explanation,
+                provider_ref=provider_ref,
+                outcome_effect={"order_state": updated_order.status},
+            )
+            return updated_order
 
     def _publish_outbox(
         self,
