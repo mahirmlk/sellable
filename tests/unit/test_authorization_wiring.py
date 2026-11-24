@@ -8,6 +8,7 @@ authorization check only runs when ``delegation_id`` is supplied.
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -235,6 +236,53 @@ def test_delegation_repository_save_get_revoke(commerce_core: CommerceCore) -> N
 
     with pytest.raises(LookupError):
         repo.revoke(grant.delegation_id, "mrc_other")
+
+
+def test_frequency_limit_denies_when_usage_lookup_is_unavailable(
+    commerce_core: CommerceCore,
+) -> None:
+    grant = _grant(commerce_core.merchant_scope, frequency_limit=1)
+    commerce_core.delegation_repo.save(grant)
+
+    def unavailable(_delegation_id: str) -> int:
+        raise RuntimeError("ledger unavailable")
+
+    service = AuthorizationService(
+        delegation_lookup=commerce_core.delegation_repo,
+        usage_lookup=unavailable,
+    )
+    decision = service.authorize(
+        delegation_id=grant.delegation_id,
+        scope=OperationScope.CHECKOUT_WRITE,
+        merchant_id=commerce_core.merchant_scope,
+        amount_paise=69_900,
+    )
+
+    assert decision.outcome == AuthorizationOutcome.DENY
+    assert decision.reason_code == "DELEGATION_USAGE_UNAVAILABLE"
+
+
+def test_delegation_usage_scans_past_first_ledger_page(
+    commerce_core: CommerceCore, monkeypatch
+) -> None:
+    records = [
+        SimpleNamespace(sequence=index, action="audit.note", inputs_json={})
+        for index in range(1, 501)
+    ]
+    records.append(
+        SimpleNamespace(
+            sequence=501,
+            action="order.created",
+            inputs_json={"delegation_id": "dlg_after_first_page"},
+        )
+    )
+
+    def events_after(sequence: int, *, limit: int, merchant_id: str):
+        assert merchant_id == commerce_core.merchant_scope
+        return [record for record in records if record.sequence > sequence][:limit]
+
+    monkeypatch.setattr(commerce_core.ledger, "events_after", events_after)
+    assert commerce_core._delegation_usage("dlg_after_first_page") == 1
 
 
 def test_agent_identity_and_reputation_roundtrip(commerce_core: CommerceCore) -> None:
