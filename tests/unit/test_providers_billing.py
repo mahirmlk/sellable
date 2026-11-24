@@ -93,7 +93,7 @@ def test_all_adapters_satisfy_the_protocol() -> None:
 
 
 def test_factory_selection() -> None:
-    config = SimpleNamespace(payment_provider="stripe")
+    config = SimpleNamespace(payment_provider="stripe", is_dev_environment=True)
     assert isinstance(build_provider(config), StripeAdapter)
     assert build_provider(SimpleNamespace()).provider_name == "razorpay"
     assert build_provider(Settings(environment="development", payment_provider="simulated")).provider_name == (
@@ -183,9 +183,13 @@ def test_stripe_webhook_route() -> None:
         stripe_webhook_secret="whsec_123",
     )
     original = main_module.settings
-    main_module.settings = monkey_settings
+    main_module.settings = Settings(environment="production")
     client = TestClient(main_module.app)
     try:
+        disabled = client.post("/webhooks/stripe", content=b"not json")
+        assert disabled.status_code == 404
+
+        main_module.settings = monkey_settings
         body = b'{"id":"evt_test","type":"charge.refunded"}'
         timestamp = int(time.time())
         digest = hmac.new(
