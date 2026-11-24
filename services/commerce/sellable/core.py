@@ -2349,7 +2349,19 @@ class CommerceCore:
         self.inventory_repo.reconcile_aborted_orders(self.merchant_scope)
         return expired
 
-    def mark_aborted(self, order_id: str, *, reason: str) -> Order:
+    def mark_aborted(
+        self,
+        order_id: str,
+        *,
+        reason: str,
+        provider_link_cancelled: bool = False,
+    ) -> Order:
+        current = self.get_order(order_id)
+        if current.status in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED}:
+            if not provider_link_cancelled:
+                raise ValueError(
+                    "provider link cancellation must be confirmed before releasing stock"
+                )
         aborted = self._transition_order(
             order_id,
             OrderStatus.ABORTED,
