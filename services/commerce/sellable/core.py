@@ -2362,7 +2362,7 @@ class CommerceCore:
     def expire_stale_unpaid_orders(
         self,
         *,
-        cancel_provider_link: Callable[[str, CommerceCore], bool] | None = None,
+        expire_payment_order: Callable[[str, CommerceCore], bool] | None = None,
     ) -> int:
         """Abort unpaid orders 15 minutes after creation, after cancel confirmation.
 
@@ -2380,15 +2380,18 @@ class CommerceCore:
                     OrderStatus.PAYMENT_FAILED,
                 }
                 if needs_provider_confirmation:
-                    if cancel_provider_link is None:
+                    # The payment service serializes link cancellation and
+                    # the ABORTED transition against retries and payment
+                    # settlement. It returns true only after both are complete.
+                    if expire_payment_order is None:
                         continue
-                    if not cancel_provider_link(order_id, self):
+                    if not expire_payment_order(order_id, self):
                         continue
-                self.mark_aborted(
-                    order_id,
-                    reason="Unpaid order exceeded the 15-minute stock hold window.",
-                    provider_link_cancelled=needs_provider_confirmation,
-                )
+                if not needs_provider_confirmation:
+                    self.mark_aborted(
+                        order_id,
+                        reason="Unpaid order exceeded the 15-minute stock hold window.",
+                    )
                 expired += 1
             except Exception:  # noqa: BLE001 — one bad row must not stop the sweep
                 logger.exception("Could not expire stale unpaid order %s", order_id)
