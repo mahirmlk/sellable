@@ -247,6 +247,10 @@ class PaymentService:
             # lock so concurrent retries cannot both pass.
             retries = core.ledger.count_actions(order.trace_id, "retry.started")
             if retries >= self.MAX_RETRIES:
+                # The previous Payment Link may still accept payment even after
+                # a failed attempt. Never release stock until Razorpay confirms
+                # the link cancellation.
+                self.cancel_provider_link(order_id, commerce=core)
                 core.mark_aborted(order_id, reason="Retry limit reached")
                 self._record(
                     core=core,
