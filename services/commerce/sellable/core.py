@@ -2333,6 +2333,22 @@ class CommerceCore:
             )
         return updated
 
+    def expire_stale_unpaid_orders(self) -> int:
+        """Abort consent-stage orders after the stock hold window (15 minutes)."""
+        cutoff = utc_now() - timedelta(minutes=15)
+        expired = 0
+        for order_id in self.order_repo.stale_unpaid_ids(self.merchant_scope, cutoff):
+            try:
+                self.mark_aborted(
+                    order_id,
+                    reason="Consent was not completed within the 15-minute stock hold window.",
+                )
+                expired += 1
+            except Exception:  # noqa: BLE001 — one bad row must not stop the sweep
+                logger.exception("Could not expire stale unpaid order %s", order_id)
+        self.inventory_repo.reconcile_aborted_orders(self.merchant_scope)
+        return expired
+
     def mark_aborted(self, order_id: str, *, reason: str) -> Order:
         aborted = self._transition_order(
             order_id,
