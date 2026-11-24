@@ -8,7 +8,7 @@ BLOCKED — deterministic CI and sandbox hardening pass, but a clean, isolated C
 
 ## Executive Summary
 
-The codebase now has draft changes covering SSRF controls, production configuration and database-index gates, pinned dependencies, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. CI has passed for the inspected draft changes, including Python tests/evals, frontend checks, and Cloudflare configuration validation. Those checks use fake providers and do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed webhook delivery, or provider refund behavior. Automatic refund webhook reconciliation remains unfinished. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
+The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. Signed refund-status webhook reconciliation is implemented in draft PR #24 with fake-provider signature, replay, ordering, and partial-refund regressions. CI still does not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. A focused review also found that the required-index migration can accept a conflicting same-name index; draft PR #25 adds catalog verification, with CI pending. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
 
 The highest risk is treating the sandbox as production-proven before staging verifies the provider boundary and database constraints. The exploit/correctness paths compound when an external retry or duplicate webhook meets partially completed payment/refund state: local idempotency, provider idempotency, ledger settlement, and the order status must agree.
 
@@ -22,11 +22,11 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## P1 — High (resolve before broad production use)
 
-### [P1-001] Finish and verify automatic refund status reconciliation
-- **Location:** `docs/STAGING_SANDBOX_RUNBOOK.md:82`; `services/commerce/sellable/refunds.py`
-- **Finding:** Pending refunds reserve refundable balance; only processed refunds count toward fully-refunded order status. The runbook also marks automatic refund-webhook reconciliation unfinished. Without that path, an asynchronous provider status change may remain pending locally until an operator retry or manual recovery.
-- **Action:** Implement authenticated, replay-safe refund webhook reconciliation with provider-event idempotency and ledger uniqueness, or explicitly restrict the first release to operator-driven retry/reconciliation with documented alerts and recovery steps.
-- **Acceptance:** Pending refunds keep the order PAID; partial completion remains PAID; only when all refundable balance is processed does the order become REFUNDED. Duplicate and out-of-order events are safe.
+### [P1-001] Verify automatic refund status reconciliation in staging
+- **Location:** `services/commerce/sellable/refunds.py`; `services/commerce/sellable/main.py`; `docs/STAGING_SANDBOX_RUNBOOK.md`
+- **Finding:** Draft PR #24 implements signed, deduplicated, monotonic refund-status webhook reconciliation and recovery for ambiguous create responses. CI uses signed fixtures and fake providers; it has not proved actual Razorpay Test Mode delivery or staging database behavior.
+- **Action:** Review and merge the focused refund PRs in a safe order, then replay pending/processed/failed refund webhooks in isolated staging and verify ledger/order state.
+- **Acceptance:** Pending refunds reserve balance; only processed refund totals can mark the order REFUNDED; duplicate and out-of-order signed events produce one stable settlement; provider state matches local state.
 
 ### [P1-002] Preserve the single-instance topology constraint
 - **Location:** `docs/DEPLOYMENT.md` (production topology and first-release constraints); `cloudflare/worker.js` (fixed Durable Object name)
@@ -34,11 +34,11 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Action:** Before first deployment, confirm the account supports the selected Container/Durable Object policy and that the deployed topology really maintains one service instance. Keep autoscaling and multiple API replicas disabled. Plan atomic database transitions before scaling.
 - **Acceptance:** Operational configuration and alerts detect a topology change; a future multi-instance release passes concurrent consent/payment tests using database-backed atomic guards.
 
-### [P1-003] Complete independent review of the broad platform PR
-- **Location:** PR #14, `feat/platform-completion`
-- **Finding:** The core security and deployment changes are in a 100+ file draft PR. Targeted inspection covered the critical outbound URL guard, Worker forwarding, deployment policy, payment flow, and regression coverage, but a full line-by-line review is still outstanding.
-- **Action:** Review the entire diff by security boundary (auth/merchant isolation, database/RLS/indexes, payments and webhooks, outbound network, Worker/Container configuration, frontend session handling, dependency and CI changes). Resolve findings in small follow-up PRs.
-- **Acceptance:** No unresolved high-severity review findings; every prerequisite change has passing required CI before a maintainer merges it.
+### [P1-003] Complete independent review and safe sequencing of platform PRs
+- **Location:** PR #14, `feat/platform-completion`; related refund PRs #16 and #24
+- **Finding:** PR #14 is a 100+ file draft and still contains the pre-fix refund implementation. Because #16 changes the same files, an unsafe merge order could reintroduce the pending-refund bug. Focused review of outbound URL validation and Cloudflare forwarding found no blocker in those inspected paths; review of the remaining auth, data, payment, frontend, and deployment diff is still outstanding. Review also found that `CREATE UNIQUE INDEX IF NOT EXISTS` does not verify an existing same-name index definition.
+- **Action:** Resolve the refund PR dependency/merge order before any merge. Continue reviewing PR #14 by security boundary and keep fixes in small follow-up PRs; draft PR #25 verifies required index catalog definitions.
+- **Acceptance:** No unresolved high-severity review findings; the final merged tree retains the refund fix and validates actual unique-index definitions; every prerequisite change has passing required CI.
 
 ### [P1-004] Scope legacy agent routes and discovery to the selected merchant
 - **Location:** `services/commerce/sellable/main.py:2115-2145,3140-3398`; `docs/STAGING_SANDBOX_RUNBOOK.md:65-73`
@@ -57,7 +57,7 @@ The highest risk is treating the sandbox as production-proven before staging ver
 ### [P2-002] Retain fail-closed startup and readiness gates
 - **Location:** `services/commerce/sellable/main.py`; `services/commerce/sellable/ledger/database.py`; PR #20
 - **Finding:** Production safety depends on required database uniqueness/indexes and the maintenance worker. Falling back to process-local guards or serving traffic without required maintenance can invalidate idempotency and expiry behavior.
-- **Action:** Keep production startup fail-closed on required index creation and maintenance-worker failure; keep readiness unhealthy when a required worker is unavailable. Exercise these gates against the actual isolated Postgres staging database before launch.
+- **Action:** Keep production startup fail-closed on required index creation and maintenance-worker failure; draft PR #25 also verifies the actual index definitions. Keep readiness unhealthy when a required worker is unavailable. Exercise these gates against the actual isolated Postgres staging database before launch.
 - **Acceptance:** Missing constraints or worker health blocks readiness; recovery requires fixing configuration/data, not bypassing the gate.
 
 ## Cross-Cutting Answers
@@ -69,6 +69,6 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## Evidence and Limitations
 
-- GitHub Actions passed for the current draft revisions of PRs #14, #16, #17, #18, #19, and #20 as reported in their run summaries. These are code and configuration checks, not external staging proof.
+- GitHub Actions passed for the current draft revisions of PRs #14, #16, #17, #18, #19, #20, #22, #23, and #24 as reported in their run summaries. These are code and configuration checks, not external staging proof. PR #25's catalog-verification CI is pending.
 - No Razorpay API call, live payment, or production deployment was made.
 - Staging resources are not yet provisioned. Do not mark this plan CLEAR until the acceptance criteria above are met.
