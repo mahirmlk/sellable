@@ -3492,10 +3492,11 @@ async def razorpay_webhook(
     body = await request.body()
     # Authenticate before parsing untrusted JSON to select a webhook handler.
     # The selected handler verifies again before it reconciles provider state.
-    if refunds.rail is None:
+    webhook_rail = refunds.rail or getattr(payments, "rail", None)
+    if webhook_rail is None:
         raise HTTPException(status_code=503, detail="Razorpay webhook is not configured")
     try:
-        refunds.rail.verify_webhook(body, x_razorpay_signature)
+        webhook_rail.verify_webhook(body, x_razorpay_signature)
     except InvalidWebhookSignatureError as error:
         raise HTTPException(status_code=401, detail=str(error)) from error
     except RazorpayConfigurationError as error:
