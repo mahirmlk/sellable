@@ -311,7 +311,11 @@ class CatalogProductRecord(Base):
     description: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
     price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     floor_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    # stock is the latest source-system on-hand quantity. Local orders apply
+    # offsets so connector refreshes cannot silently restore reserved/sold units.
     stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reserved_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    committed_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     attributes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
@@ -1261,6 +1265,10 @@ _LEDGER_ATTRIBUTION_COLUMNS: tuple[tuple[str, str], ...] = (
 _LATE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "ledger_events": _LEDGER_ATTRIBUTION_COLUMNS,
     "notifications": (("dedupe_key", "VARCHAR(160)"),),
+    "catalog_products": (
+        ("reserved_stock", "INTEGER NOT NULL DEFAULT 0"),
+        ("committed_stock", "INTEGER NOT NULL DEFAULT 0"),
+    ),
 }
 
 
