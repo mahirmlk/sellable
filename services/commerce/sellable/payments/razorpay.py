@@ -125,7 +125,9 @@ class RazorpayAdapter:
             provider_order_id=response.get("order_id"),
         )
 
-    def find_payment_link(self, order: Order) -> ProviderPaymentLink | None:
+    def find_payment_link(
+        self, order: Order, *, include_terminal: bool = False
+    ) -> ProviderPaymentLink | None:
         """Look up a prior link by the stable local order reference.
 
         This reconciles a create request whose response was lost before its
@@ -199,7 +201,7 @@ class RazorpayAdapter:
                 "Recovered Razorpay link does not match the local order",
                 retryable=False,
             )
-        if status in {"cancelled", "expired"}:
+        if status in {"cancelled", "expired"} and not include_terminal:
             raise RazorpayRequestError(
                 "Recovered Razorpay payment link is no longer payable",
                 retryable=False,
