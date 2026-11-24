@@ -58,9 +58,11 @@ https://<staging-worker-host>/webhooks/razorpay
 
 Use the same webhook secret as the staging Worker's `RAZORPAY_WEBHOOK_SECRET`. Subscribe to `payment.captured`, `payment.failed`, `refund.created`, `refund.processed`, and `refund.failed`. Confirm the webhook URL is the staging Worker host, not the production API.
 
-Use Razorpay's current [test credentials and payment methods guide](https://hdfcbank-collectnow-docs.razorpay.com/payments/payment-gateway/android-integration/standard/integration-steps/) for checkout values. Never use a live-mode key or a real payment method.
+Use Razorpay's official [Payment Links test flow](https://hdfcbank-collectnow-docs.razorpay.com/payments/payment-links/create/) to open the hosted link and select the test success or failure outcome. Use no live credentials or real payment instrument.
 
 ## Reproduce the sandbox flow
+
+For exact request signing headers and the canonical HMAC format, follow [`docs/AGENT_INTEGRATION.md`](AGENT_INTEGRATION.md). That guide matches the current staging API and requires the raw query and request-body hash for signed writes.
 
 1. Open the Vercel staging console and sign in with a staging Supabase test user.
 2. Complete merchant onboarding, create a test product, and publish the catalog. Record the returned merchant ID and confirm the product appears at `/catalog.ai.json?merchant=<merchant_id>`.
