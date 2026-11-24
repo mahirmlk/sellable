@@ -8,7 +8,7 @@ BLOCKED — deterministic CI and sandbox hardening pass, but a clean, isolated C
 
 ## Executive Summary
 
-The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. PR #14 now contains the pending-refund/idempotency fix and its Python/eval, frontend, and Cloudflare CI passed. PR #26 adds signed, replay-safe refund-status reconciliation on the platform branch; its latest CI passed with fake providers after review fixes moved signature verification before JSON parsing and changed replay claims to hash the signed raw body, not the unsigned event-ID header. PR #25 verifies the actual required index definitions and its CI passed. These checks do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
+The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. PR #14 now contains the pending-refund/idempotency fix and its Python/eval, frontend, and Cloudflare CI passed. PR #26 adds signed, replay-safe refund-status reconciliation on the platform branch; its latest CI passed with fake providers after review fixes moved signature verification before JSON parsing and changed replay claims to hash the signed raw body, not the unsigned event-ID header. PR #25 verifies the actual required index definitions and its CI passed. Focused review of PR #14 also found that delegation-frequency checks scanned only 500 events and treated ledger failures as zero use; PR #27 now counts all history and denies when usage cannot be verified, with passing CI. These checks do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
 
 The highest risk is treating the sandbox as production-proven before staging verifies the provider boundary and database constraints. The exploit/correctness paths compound when an external retry or duplicate webhook meets partially completed payment/refund state: local idempotency, provider idempotency, ledger settlement, and the order status must agree.
 
@@ -48,6 +48,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
+### [P1-005] Fail closed on delegation frequency checks
+- Location: services/commerce/sellable/authorization.py; services/commerce/sellable/core.py
+- Finding: The authorization path previously skipped frequency limits when usage was unavailable, and the count scanned only the newest 500 ledger events. Repeated use could therefore exceed a configured frequency cap after older order events left that window.
+- Action: Count all durable order-use events and deny when the usage count cannot be verified.
+- Status: Implemented in focused draft PR #27; its CI passed in run 45390551118. Review and merge it after PR #14, then verify against staging data.
+- Acceptance: Every order creation checks the complete merchant-scoped usage history; storage/query errors cannot permit a frequency-limited action.
+
 ### [P2-001] Keep simulated behavior clearly labeled
 - **Location:** `docs/STAGING_SANDBOX_RUNBOOK.md:75,82`; `docs/DEPLOYMENT.md`
 - **Finding:** Current unit/eval coverage uses fake providers and in-memory databases, while live provider behavior and refund-webhook automation remain incomplete.
@@ -69,6 +76,6 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## Evidence and Limitations
 
-- GitHub Actions passed for PR #14's latest head in run [45386624830](https://github.com/mahirmlk/sellable/actions/runs/45386624830), PR #25's index verification in run [45381931393](https://github.com/mahirmlk/sellable/actions/runs/45381931393), and PR #26's latest webhook review fixes in run [45387676861](https://github.com/mahirmlk/sellable/actions/runs/45387676861). Earlier focused checks on #17, #18, #20, #22, and #23 also passed. These are code/configuration checks, not external staging proof.
+- GitHub Actions passed for PR #14's latest head in run [45386624830](https://github.com/mahirmlk/sellable/actions/runs/45386624830), PR #25's index verification in run [45381931393](https://github.com/mahirmlk/sellable/actions/runs/45381931393), and PR #26's latest webhook review fixes in run [45387676861](https://github.com/mahirmlk/sellable/actions/runs/45387676861). PR #27's frequency-limit fix passed in run [45390551118](https://github.com/mahirmlk/sellable/actions/runs/45390551118). Earlier focused checks on #17, #18, #20, #22, and #23 also passed. These are code/configuration checks, not external staging proof.
 - No Razorpay API call, live payment, or production deployment was made.
 - Staging resources are not yet provisioned. Do not mark this plan CLEAR until the acceptance criteria above are met.
