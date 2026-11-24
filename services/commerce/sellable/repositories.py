@@ -463,13 +463,11 @@ class RefundRepository:
         provider_payment_id: str,
         order_id: str,
         amount_paise: int,
-        merchant_id: str,
     ) -> Refund | None:
         """Recover a timed-out create response only when one pending attempt matches."""
         with Session(self._engine) as session:
             query = (
                 select(RefundRecord)
-                .where(RefundRecord.merchant_id == merchant_id)
                 .where(RefundRecord.order_id == order_id)
                 .where(RefundRecord.provider_payment_id == provider_payment_id)
                 .where(RefundRecord.amount_paise == amount_paise)
