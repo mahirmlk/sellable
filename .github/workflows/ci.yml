@@ -42,11 +42,11 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 
-      - name: Run eval scenarios
-        # scenario_runner exits non-zero on any scenario failure (see
-        # evals/runner/scenario_runner.py __main__: SystemExit(1 if failed)),
-        # so a failing golden scenario fails this job and the build.
-        run: python -m evals.runner.scenario_runner
+      - name: Run agent safety evaluation battery
+        # This executes versioned safety suites, regression gates, and the
+        # deterministic golden scenarios. Any failed case or gate fails CI.
+        # Force the mock adapter so CI never calls an external LLM provider.
+        run: python -m evals.run_all --no-llm --json
 
   frontend:
     runs-on: ubuntu-latest
