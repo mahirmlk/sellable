@@ -936,6 +936,7 @@ class InventoryRepository:
                     CatalogProductRecord.reserved_stock,
                     CatalogProductRecord.committed_stock,
                 ).where(
+                    CatalogProductRecord.id == f"{merchant_id}:{sku}",
                     CatalogProductRecord.merchant_id == merchant_id,
                     CatalogProductRecord.sku == sku,
                 )
