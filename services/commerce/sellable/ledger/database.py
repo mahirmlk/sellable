@@ -1270,8 +1270,8 @@ def _normalise_index_predicate(predicate: str | None) -> str | None:
     if predicate is None:
         return None
     normalized = predicate.lower().replace('"', "")
-    normalized = re.sub(r"::(?:character varying|varchar|text)(?:\\(\\d+\\))?", "", normalized)
-    return re.sub(r"[\\s()]", "", normalized)
+    normalized = re.sub(r"::(?:character varying|varchar|text)(?:\(\d+\))?", "", normalized)
+    return re.sub(r"[\s()]", "", normalized)
 
 
 def _verify_required_postgres_index(
