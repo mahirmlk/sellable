@@ -330,6 +330,23 @@ class OrderRepository:
                 for r in records
             ]
 
+    def stale_unpaid_ids(self, merchant_id: str, before: datetime) -> list[str]:
+        """Orders with no provider link, safe to abort and release after the hold window."""
+        with Session(self._engine) as session:
+            query = (
+                select(OrderRecord.order_id)
+                .where(OrderRecord.merchant_id == merchant_id)
+                .where(
+                    OrderRecord.status.in_(
+                        [OrderStatus.AWAITING_CONSENT.value, OrderStatus.CONSENTED.value]
+                    )
+                )
+                .where(OrderRecord.created_at < before)
+                .order_by(OrderRecord.created_at.asc())
+                .limit(5000)
+            )
+            return list(session.scalars(query).all())
+
     def status_counts(self, merchant_id: str | None = None) -> dict[str, int]:
         """Count orders per status in ONE grouped query.
 
@@ -892,6 +909,28 @@ class InventoryRepository:
                 )
             ).all()
             return {record.sku: record.status for record in records}
+
+
+    def reconcile_aborted_orders(self, merchant_id: str) -> int:
+        """Release reservations left behind by a crash after an abort transition."""
+        with Session(self._engine) as session:
+            order_ids = session.scalars(
+                select(InventoryReservationRecord.order_id)
+                .join(
+                    OrderRecord,
+                    OrderRecord.order_id == InventoryReservationRecord.order_id,
+                )
+                .where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.status == "RESERVED",
+                    OrderRecord.merchant_id == merchant_id,
+                    OrderRecord.status == OrderStatus.ABORTED.value,
+                )
+                .distinct()
+            ).all()
+        for order_id in order_ids:
+            self.release_order(merchant_id, order_id)
+        return len(order_ids)
 
 
 class CatalogRepository:
