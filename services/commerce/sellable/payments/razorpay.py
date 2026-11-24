@@ -40,7 +40,7 @@ class _ProviderTimeoutSession(requests.Session):
         # Razorpay returns 409 while the original request with this key is
         # still processing. Keep this as a retryable transport-level failure:
         # the refund repository must continue reserving its balance.
-        if response.status_code == 409 and has_refund_idempotency:
+        if has_refund_idempotency and getattr(response, "status_code", None) == 409:
             raise requests.exceptions.HTTPError(
                 "Razorpay refund idempotency request is still processing",
                 response=response,
