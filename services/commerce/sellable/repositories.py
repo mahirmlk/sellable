@@ -466,6 +466,14 @@ class RefundRepository:
             )
             return [self._to_refund(r) for r in session.scalars(query).all()]
 
+    def get(self, refund_id: str, merchant_id: str) -> Refund | None:
+        """One refund, merchant-scoped; foreign ids stay invisible."""
+        with Session(self._engine) as session:
+            record = session.get(RefundRecord, refund_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            return self._to_refund(record)
+
     def for_provider_refund_id(self, provider_refund_id: str) -> Refund | None:
         with Session(self._engine) as session:
             record = session.scalars(
