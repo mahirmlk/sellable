@@ -90,12 +90,11 @@ def decide(
         outside = [c for c in categories if c not in grant.category_scopes]
         if outside:
             return _deny("CATEGORY_SCOPE_MISMATCH", ["DELEGATION.category_scopes"])
-    if (
-        usage_count is not None
-        and grant.frequency_limit is not None
-        and usage_count >= grant.frequency_limit
-    ):
-        return _deny("FREQUENCY_LIMIT_EXCEEDED", ["DELEGATION.frequency_limit"])
+    if grant.frequency_limit is not None:
+        if usage_count is None:
+            return _deny("DELEGATION_USAGE_UNAVAILABLE", ["DELEGATION.frequency_limit"])
+        if usage_count >= grant.frequency_limit:
+            return _deny("FREQUENCY_LIMIT_EXCEEDED", ["DELEGATION.frequency_limit"])
 
     matched = ["DELEGATION.valid", "DELEGATION.scope_fit"]
     if grant.approval_mode == ApprovalMode.REQUIRE_HUMAN:
