@@ -176,19 +176,21 @@ def test_flagged_tier_blocks(commerce_core: CommerceCore) -> None:
 def test_payment_testing_pattern_blocks_and_flags(commerce_core: CommerceCore) -> None:
     from sellable.contracts import Product
 
+    from sellable.repositories import CatalogRepository
+
     core = commerce_core
-    core.catalog.add_product(
-        Product(
-            merchant_id=core.merchant_scope,
-            sku="SNACK-SAMPLE-01",
-            title="Sample",
-            description="Micro tasting sample",
-            price_paise=500,
-            floor_paise=100,
-            stock=100,
-            category="snacks",
-        )
+    sample_product = Product(
+        merchant_id=core.merchant_scope,
+        sku="SNACK-SAMPLE-01",
+        title="Sample",
+        description="Micro tasting sample",
+        price_paise=500,
+        floor_paise=100,
+        stock=100,
+        category="snacks",
     )
+    core.catalog.add_product(sample_product)
+    CatalogRepository(engine=core.order_repo._engine).add(sample_product)
     small = CartMandate(
         intent_ref="im_small",
         items=[
