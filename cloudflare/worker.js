@@ -155,7 +155,14 @@ export class SellableBackend extends DurableObject {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (env.SELLABLE_ENVIRONMENT === "production" && url.protocol !== "https:") {
+    const environment =
+      typeof env.SELLABLE_ENVIRONMENT === "string"
+        ? env.SELLABLE_ENVIRONMENT
+        : "production";
+    if (
+      !["development", "test"].includes(environment) &&
+      url.protocol !== "https:"
+    ) {
       return new Response("HTTPS is required", { status: 400 });
     }
     return backendStub(env).fetch(request);
