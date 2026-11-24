@@ -957,6 +957,29 @@ class InventoryRepository:
             self.release_order(merchant_id, order_id)
         return len(order_ids)
 
+    def release_orphaned_reservations(
+        self, merchant_id: str, *, before: datetime
+    ) -> int:
+        """Recover reservations committed before a process died before order insert."""
+        order_exists = select(OrderRecord.order_id).where(
+            OrderRecord.order_id == InventoryReservationRecord.order_id,
+            OrderRecord.merchant_id == InventoryReservationRecord.merchant_id,
+        ).exists()
+        with Session(self._engine) as session:
+            order_ids = session.scalars(
+                select(InventoryReservationRecord.order_id)
+                .where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.status == "RESERVED",
+                    InventoryReservationRecord.created_at < before,
+                    ~order_exists,
+                )
+                .distinct()
+            ).all()
+        for order_id in order_ids:
+            self.release_order(merchant_id, order_id)
+        return len(order_ids)
+
 
 class CatalogRepository:
     """DB-backed, per-merchant product catalog (the real source of truth)."""
