@@ -1544,6 +1544,7 @@ class CommerceCore:
                     self.inventory_repo.reserve_for_order(
                         self.merchant_scope, existing.order_id, lines
                     )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 if checkout.order_id is None:
                     try:
                         self.checkout_service.link_order(
@@ -1662,6 +1663,7 @@ class CommerceCore:
                     self.inventory_repo.reserve_for_order(
                         self.merchant_scope, winner.order_id, lines
                     )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 self._orders[winner.order_id] = winner
                 self._idempotency_keys[idempotency_key] = winner.order_id
                 return winner
@@ -1670,6 +1672,7 @@ class CommerceCore:
                 raise
             self._orders[order.order_id] = order
             self._idempotency_keys[idempotency_key] = order.order_id
+            self._refresh_inventory_stock([sku for sku, _ in lines])
             pending = self.checkout_service.mark_payment_pending(checkout_id, self.merchant_scope)
             _ = pending
             self.checkout_service.link_order(checkout_id, self.merchant_scope, order.order_id)
@@ -1802,11 +1805,11 @@ class CommerceCore:
                     OrderStatus.PAYMENT_PENDING,
                     OrderStatus.PAYMENT_FAILED,
                 }:
+                    lines = [(item.sku, item.quantity) for item in cart.items]
                     self.inventory_repo.reserve_for_order(
-                        self.merchant_scope,
-                        existing.order_id,
-                        [(item.sku, item.quantity) for item in cart.items],
+                        self.merchant_scope, existing.order_id, lines
                     )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 return existing
 
             # Delegation check (target §14): additive — orders without a
@@ -1915,6 +1918,7 @@ class CommerceCore:
                     self.inventory_repo.reserve_for_order(
                         self.merchant_scope, winner.order_id, lines
                     )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 self._orders[winner.order_id] = winner
                 self._idempotency_keys[idempotency_key] = winner.order_id
                 return winner
@@ -1923,6 +1927,7 @@ class CommerceCore:
                 raise
             self._orders[order.order_id] = order
             self._idempotency_keys[idempotency_key] = order.order_id
+            self._refresh_inventory_stock([sku for sku, _ in lines])
             self._record(
                 trace_id=trace_id,
                 actor=LedgerActor.COMMERCE_CORE,
@@ -2333,6 +2338,17 @@ class CommerceCore:
             )
         return updated
 
+    def _refresh_inventory_stock(self, skus: Sequence[str] | None = None) -> None:
+        target_skus = set(skus or (product.sku for product in self.catalog.all()))
+        for sku in target_skus:
+            available = self.inventory_repo.available_stock(self.merchant_scope, sku)
+            if available is not None:
+                try:
+                    self.catalog.set_available_stock(sku, available)
+                except ValueError:
+                    # A source sync may have removed the item from this cache.
+                    logger.debug("Inventory cache refresh skipped for unknown SKU %s", sku)
+
     def expire_stale_unpaid_orders(self) -> int:
         """Abort consent-stage orders after the stock hold window (15 minutes)."""
         cutoff = utc_now() - timedelta(minutes=15)
@@ -2350,6 +2366,7 @@ class CommerceCore:
         self.inventory_repo.release_orphaned_reservations(
             self.merchant_scope, before=utc_now() - timedelta(minutes=5)
         )
+        self._refresh_inventory_stock()
         return expired
 
     def mark_aborted(
@@ -2373,7 +2390,10 @@ class CommerceCore:
         )
         # Release is idempotent and happens after the state transition so failed
         # persistence never makes reserved inventory available prematurely.
-        self.inventory_repo.release_order(self.merchant_scope, order_id)
+        released_skus = self.inventory_repo.release_order(
+            self.merchant_scope, order_id
+        )
+        self._refresh_inventory_stock(released_skus)
         return aborted
 
     def _transition_order(
