@@ -258,6 +258,12 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
     ) == {"AUDIO-CASE-01": "RESERVED"}
 
     with pytest.raises(InsufficientStockError, match="insufficient stock"):
+        commerce_core.inventory_repo.reserve_for_order(
+            commerce_core.merchant_scope,
+            f"ord_competing_{uuid4().hex}",
+            [("AUDIO-CASE-01", 1)],
+        )
+    with pytest.raises(ValueError, match="INSUFFICIENT_STOCK"):
         commerce_core.create_order_from_checkout(
             second_checkout.checkout_id,
             intent=_intent(),
