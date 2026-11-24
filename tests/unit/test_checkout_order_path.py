@@ -237,7 +237,11 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
         idempotency_key=first_key,
         trace_id=_trace(),
     )
-    assert catalog_repo.list(commerce_core.merchant_scope)[0].stock >= 0
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
 
     # A retry for the same order reuses its reservation and never decrements twice.
     replay = commerce_core.create_order_from_checkout(
