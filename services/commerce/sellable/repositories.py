@@ -877,6 +877,16 @@ class InventoryRepository:
                 )
             ).all()
             for record in records:
+                claimed = session.execute(
+                    update(InventoryReservationRecord)
+                    .where(
+                        InventoryReservationRecord.reservation_id == record.reservation_id,
+                        InventoryReservationRecord.status == "RESERVED",
+                    )
+                    .values(status="COMMITTED")
+                )
+                if claimed.rowcount != 1:
+                    continue
                 committed = session.execute(
                     update(CatalogProductRecord)
                     .where(
@@ -893,7 +903,6 @@ class InventoryRepository:
                     raise RuntimeError(
                         f"cannot commit inventory reservation for SKU {record.sku}"
                     )
-                record.status = "COMMITTED"
             session.commit()
 
     def release_order(self, merchant_id: str, order_id: str) -> list[str]:
@@ -908,6 +917,16 @@ class InventoryRepository:
                 )
             ).all()
             for record in records:
+                claimed = session.execute(
+                    update(InventoryReservationRecord)
+                    .where(
+                        InventoryReservationRecord.reservation_id == record.reservation_id,
+                        InventoryReservationRecord.status == "RESERVED",
+                    )
+                    .values(status="RELEASED")
+                )
+                if claimed.rowcount != 1:
+                    continue
                 restored = session.execute(
                     update(CatalogProductRecord)
                     .where(
@@ -923,7 +942,6 @@ class InventoryRepository:
                     raise RuntimeError(
                         f"cannot release reservation: catalog SKU {record.sku} is missing"
                     )
-                record.status = "RELEASED"
                 released_skus.append(record.sku)
             session.commit()
         return released_skus
