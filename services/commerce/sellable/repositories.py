@@ -331,14 +331,19 @@ class OrderRepository:
             ]
 
     def stale_unpaid_ids(self, merchant_id: str, before: datetime) -> list[str]:
-        """Orders with no provider link, safe to abort and release after the hold window."""
+        """Unpaid orders past their stock hold window; callers cancel any live provider link first."""
         with Session(self._engine) as session:
             query = (
                 select(OrderRecord.order_id)
                 .where(OrderRecord.merchant_id == merchant_id)
                 .where(
                     OrderRecord.status.in_(
-                        [OrderStatus.AWAITING_CONSENT.value, OrderStatus.CONSENTED.value]
+                        [
+                            OrderStatus.AWAITING_CONSENT.value,
+                            OrderStatus.CONSENTED.value,
+                            OrderStatus.PAYMENT_PENDING.value,
+                            OrderStatus.PAYMENT_FAILED.value,
+                        ]
                     )
                 )
                 .where(OrderRecord.created_at < before)
