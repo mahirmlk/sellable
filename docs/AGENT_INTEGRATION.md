@@ -41,11 +41,40 @@ timestamp.nonce.agent_id.method.path.query.sha256(body)
 
 `query` is the raw URL query without `?`; hash the exact body bytes with
 SHA-256, or use an empty string for an empty body. Join the seven fields with
-literal periods, HMAC-SHA256 the UTF-8 canonical bytes with the staging
-`BUYER_AGENT_HMAC_SECRET`, and send the lowercase hex digest in
-`X-Signature`, along with `X-Agent-Id`, `X-Timestamp`, and a unique
-`X-Nonce`. The timestamp window is five minutes, and a nonce can be used only
-once. See `sellable.auth.sign_request` for the test/client reference helper.
+literal periods and HMAC-SHA256 the UTF-8 canonical bytes using the staging
+`BUYER_AGENT_HMAC_SECRET`. Send the lowercase hex digest in `X-Signature`,
+along with `X-Agent-Id`, `X-Timestamp`, and a unique `X-Nonce`. The timestamp
+window is five minutes, and a nonce can be used only once. For JSON writes, sign
+the exact serialized bytes that you send:
+
+```python
+import hashlib
+import hmac
+import secrets
+import time
+from urllib.parse import urlsplit
+
+def signed_headers(url, method, body, agent_key, hmac_secret, agent_id):
+    target = urlsplit(url)
+    timestamp = str(int(time.time()))
+    nonce = secrets.token_hex(16)
+    body_hash = hashlib.sha256(body).hexdigest() if body else ""
+    canonical = ".".join([
+        timestamp, nonce, agent_id, method.upper(),
+        target.path, target.query, body_hash,
+    ])
+    signature = hmac.new(
+        hmac_secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return {
+        "Authorization": f"Bearer {agent_key}",
+        "X-Agent-Id": agent_id,
+        "X-Timestamp": timestamp,
+        "X-Nonce": nonce,
+        "X-Signature": signature,
+        "Content-Type": "application/json",
+    }
+```
 
 Production and staging require this signed form for mutating agent routes;
 read-only requests may use the API key alone. Deployed payments accept
