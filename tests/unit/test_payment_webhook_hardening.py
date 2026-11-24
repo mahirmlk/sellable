@@ -901,7 +901,9 @@ def test_cancel_provider_link_before_abort(core_and_engine) -> None:
     assert client.payment_link.cancelled == ["plink_test_0001"]
     assert "payment.link_cancelled" in ledger_actions(core, order.trace_id)
 
-    core.mark_aborted(order.order_id, reason="rejected")
+    core.mark_aborted(
+        order.order_id, reason="rejected", provider_link_cancelled=True
+    )
     assert core.get_order(order.order_id).status is OrderStatus.ABORTED
 
     # No recorded link: nothing to cancel.
