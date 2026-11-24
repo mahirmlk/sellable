@@ -296,6 +296,13 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
     consent = commerce_core.issue_consent(second_order.order_id)
     commerce_core.consume_consent(consent.consent_id, order_id=second_order.order_id)
     commerce_core.mark_payment_pending(second_order.order_id)
+    commerce_core.mark_payment_failed(second_order.order_id, reason="retryable test failure")
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+    commerce_core.mark_payment_pending(second_order.order_id)
     commerce_core.mark_paid(second_order.order_id, provider_ref="pay_stock_1")
     assert commerce_core.inventory_repo.status_for_order(
         commerce_core.merchant_scope, second_order.order_id
