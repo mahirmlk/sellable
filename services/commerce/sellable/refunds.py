@@ -61,6 +61,22 @@ class RefundService:
         event_id: str | None,
         core_for_merchant: Callable[[str], CommerceCore],
     ) -> dict[str, object]:
+        with self._refund_lock:
+            return self._handle_webhook(
+                body,
+                signature,
+                event_id=event_id,
+                core_for_merchant=core_for_merchant,
+            )
+
+    def _handle_webhook(
+        self,
+        body: bytes,
+        signature: str | None,
+        *,
+        event_id: str | None,
+        core_for_merchant: Callable[[str], CommerceCore],
+    ) -> dict[str, object]:
         """Verify and reconcile signed Razorpay refund status events.
 
         Refund status and the webhook delivery claim are committed together.
