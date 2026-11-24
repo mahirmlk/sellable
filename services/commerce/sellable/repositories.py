@@ -405,12 +405,27 @@ class RefundRepository:
         )
 
     def save(self, refund: Refund) -> None:
+        priorities = {
+            RefundStatus.PENDING: 0,
+            RefundStatus.FAILED: 1,
+            RefundStatus.PROCESSED: 2,
+        }
         with Session(self._engine) as session:
             existing = session.get(RefundRecord, refund.refund_id)
             if existing:
-                existing.provider_payment_id = refund.provider_payment_id
-                existing.provider_refund_id = refund.provider_refund_id
-                existing.status = refund.status.value
+                if (
+                    existing.provider_refund_id is not None
+                    and refund.provider_refund_id is not None
+                    and existing.provider_refund_id != refund.provider_refund_id
+                ):
+                    raise ValueError("Provider refund ID changed for an existing refund")
+                if refund.provider_payment_id is not None:
+                    existing.provider_payment_id = refund.provider_payment_id
+                if existing.provider_refund_id is None:
+                    existing.provider_refund_id = refund.provider_refund_id
+                current_status = RefundStatus(existing.status)
+                if priorities[refund.status] > priorities[current_status]:
+                    existing.status = refund.status.value
             else:
                 session.add(
                     RefundRecord(
