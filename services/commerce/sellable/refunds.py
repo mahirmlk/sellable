@@ -149,7 +149,11 @@ class RefundService:
         ):
             raise ValueError("Refund webhook does not match the stored refund request")
 
-        event_identity = event_id.strip() if event_id and event_id.strip() else hashlib.sha256(body).hexdigest()
+        event_identity = (
+            event_id.strip()
+            if event_id and event_id.strip()
+            else hashlib.sha256(body).hexdigest()
+        )
         delivery_key = "refund:" + hashlib.sha256(event_identity.encode("utf-8")).hexdigest()
         updated, _changed = repo.reconcile_provider_status(
             refund_id=refund.refund_id,
