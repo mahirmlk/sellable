@@ -373,6 +373,10 @@ class RefundService:
             }
         )
         repo.save(settled)
+        # A webhook may have advanced this row while the provider call was
+        # returning. Continue from persisted monotonic state, never this stale
+        # response snapshot.
+        settled = repo.for_idempotency_key(order.merchant_id, key) or settled
         if settled.status is not RefundStatus.PROCESSED:
             return self._present(settled, order_trace=order.trace_id)
         total_refunded = sum(
@@ -383,7 +387,7 @@ class RefundService:
         self._settle_processed_refund(
             core,
             order,
-            provider_refund.provider_refund_id,
+            settled.provider_refund_id,
             partial=total_refunded < order.amount_paise,
         )
         return self._present(settled, order_trace=order.trace_id)
