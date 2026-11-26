@@ -309,22 +309,81 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
         commerce_core.merchant_scope, second_order.order_id
     ) == {"AUDIO-CASE-01": "COMMITTED"}
 
-    # A connector refresh that still reports the pre-sale source quantity
-    # must not restore locally committed stock.
+    # Count-only snapshots, even lower values, cannot identify this order and
+    # therefore never clear its committed offset.
     catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
     assert next(
         p.stock
         for p in catalog_repo.list(commerce_core.merchant_scope)
         if p.sku == "AUDIO-CASE-01"
     ) == 0
-    # Once the source snapshot reflects the sale, the local offset is reconciled;
-    # a later restock becomes available.
     catalog_repo.upsert_many([product.model_copy(update={"stock": 0})])
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+
+    acknowledged = commerce_core.acknowledge_inventory_source_order(
+        second_order.order_id, acknowledged_by="test-owner"
+    )
+    assert acknowledged == ["AUDIO-CASE-01"]
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, second_order.order_id
+    ) == {"AUDIO-CASE-01": "ACKNOWLEDGED"}
+    assert commerce_core.acknowledge_inventory_source_order(
+        second_order.order_id, acknowledged_by="test-owner"
+    ) == []
     catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
     assert next(
         p.stock
         for p in catalog_repo.list(commerce_core.merchant_scope)
         if p.sku == "AUDIO-CASE-01"
+    ) == 1
+
+
+def test_external_stock_decrease_does_not_acknowledge_local_sale(
+    commerce_core: CommerceCore,
+) -> None:
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 2})])
+    checkout = _authorized_checkout(commerce_core, _trace())
+    order = commerce_core.create_order_from_checkout(
+        checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_external_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    consent = commerce_core.issue_consent(order.order_id)
+    commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
+    commerce_core.mark_payment_pending(order.order_id)
+    commerce_core.mark_paid(order.order_id, provider_ref="pay_stock_external")
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
+    ) == 1
+
+    # An unrelated source sale lowers the count from 2 to 1. It cannot be
+    # assumed to include this local sale, so both units remain accounted for.
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
+    ) == 0
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, order.order_id
+    ) == {product.sku: "COMMITTED"}
+
+    # Once the source has applied this exact order, the owner acknowledges it.
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 0})])
+    assert commerce_core.acknowledge_inventory_source_order(
+        order.order_id, acknowledged_by="test-owner"
+    ) == [product.sku]
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
+    ) == 0
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
     ) == 1
 
 
