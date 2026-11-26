@@ -99,7 +99,7 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Location:** `services/commerce/sellable/payments/razorpay.py`; `tests/unit/test_payments.py`; PR #14
 - **Finding:** Payment-link recovery converted the provider's amount with `int()`. A malformed fractional paise amount could be truncated to the expected integer and the recovered link accepted. Provider create responses also need type validation because a malformed response may follow a successful provider-side create.
 - **Action:** Require an actual integer (excluding booleans) matching the local order amount on both create and recovery responses. Keep uncertain malformed create results retryable so recovery by stable order reference can reconcile without issuing a second link.
-- **Status:** Fixed on PR #14 head `f957cc4ca84f705f6575b39b04c0030f2d2410dd`; fake-provider regressions cover float, string, and boolean responses. Exact-head Actions run [45820234307](https://github.com/mahirmlk/sellable/actions/runs/45820234307) passed Python 3.11/3.12 tests/evals, frontend, and Cloudflare checks; Vercel is green.
+- **Status:** Fixed on PR #14 head `302a3b3eacf93814c73b55cbc0a26a859769c303`; fake-provider regressions cover float, string, and boolean responses. Exact-head Actions run [45820898250](https://github.com/mahirmlk/sellable/actions/runs/45820898250) passed Python 3.11/3.12 tests/evals, frontend, and Cloudflare checks; Vercel is green.
 - **Acceptance:** Recovery never truncates or coerces provider monetary values; malformed responses remain retryable and no second link is created automatically.
 
 ### [P1-014] Remove vulnerable frontend dependencies and align Node runtime
