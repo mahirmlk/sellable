@@ -5,7 +5,6 @@ from __future__ import annotations
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
     CatalogSearchRequest,
-    Consent,
     IntentMandate,
     LedgerActor,
     LedgerEvent,
