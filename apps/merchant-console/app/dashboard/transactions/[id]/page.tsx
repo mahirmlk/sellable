@@ -22,6 +22,8 @@ import {
   getConsoleTransactionDetail,
   refundOrder,
   fulfillOrder,
+  acknowledgeInventorySourceOrder,
+  isDemoMode,
   ApiError,
   type ConsoleApproval,
   type ConsoleTransactionDetail,
@@ -133,6 +135,9 @@ export default function TransactionDetailPage() {
   // Defaults to the full order amount when the dialog opens.
   const [refundAmountRupees, setRefundAmountRupees] = useState("");
   const [fulfilling, setFulfilling] = useState(false);
+  const [acknowledgingInventory, setAcknowledgingInventory] = useState(false);
+  const [inventoryAckDialogOpen, setInventoryAckDialogOpen] = useState(false);
+  const [acknowledgedOrderId, setAcknowledgedOrderId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -235,6 +240,35 @@ export default function TransactionDetailPage() {
       setFulfilling(false);
     }
   }, [tx, fulfilling, fetchData]);
+
+  // This owner action releases a committed-stock offset only after the merchant
+  // has applied this specific order in the source inventory system.
+  const handleAcknowledgeInventory = useCallback(async () => {
+    if (!tx || acknowledgingInventory) return;
+    const orderId = tx.id;
+    setAcknowledgingInventory(true);
+    try {
+      const result = await acknowledgeInventorySourceOrder(orderId);
+      setAcknowledgedOrderId(orderId);
+      setInventoryAckDialogOpen(false);
+      await fetchData();
+      toast({
+        tone: "success",
+        title: result.status === "already_acknowledged" ? "Source sync already acknowledged" : "Source sync acknowledged",
+        description: "This order's committed stock offset has been released.",
+      });
+    } catch (err) {
+      toast({
+        tone: "error",
+        title: err instanceof ApiError && err.status === 403 ? "Owner access required" : "Could not acknowledge source sync",
+        description: err instanceof ApiError && err.status === 403
+          ? "Only a merchant owner can confirm inventory source sync."
+          : "Confirm that this exact order has been applied in the source inventory system, then retry.",
+      });
+    } finally {
+      setAcknowledgingInventory(false);
+    }
+  }, [tx, acknowledgingInventory, fetchData]);
 
   const handleExportItems = useCallback(() => {
     if (!detail) return;
@@ -353,6 +387,17 @@ export default function TransactionDetailPage() {
             >
               <RotateCcw size={12} /> View replay
             </Link>
+            {!isDemoMode() && (tx.status === "PAID" || tx.status === "FULFILLED") && (
+              <button
+                type="button"
+                onClick={() => setInventoryAckDialogOpen(true)}
+                disabled={acknowledgingInventory || acknowledgedOrderId === tx.id}
+                className="inline-flex items-center gap-2 h-9 px-4 rounded-full bg-panel border border-hairline text-[13px] font-medium text-ink-2 hover:text-ink transition-all cursor-pointer disabled:opacity-50"
+              >
+                <PackageCheck size={12} />
+                {acknowledgedOrderId === tx.id ? "Source sync acknowledged" : "Acknowledge source sync"}
+              </button>
+            )}
             {tx.status === "PAID" && (
               <button
                 onClick={() => void handleFulfill()}
@@ -775,6 +820,29 @@ export default function TransactionDetailPage() {
           )}
         </>
       )}
+
+      <ConfirmDialog
+        open={inventoryAckDialogOpen}
+        title="Confirm source inventory sync"
+        description={
+          <div className="space-y-2">
+            <p>
+              Confirm only after your source inventory system has applied this exact order
+              ({tx.order_id}). This releases the committed stock offset and can increase
+              available stock.
+            </p>
+            <p className="text-[12px]">
+              This action is for merchant owners. A stock-count refresh alone is not confirmation.
+            </p>
+          </div>
+        }
+        confirmLabel="Acknowledge sync"
+        tone="primary"
+        typeToConfirm="SYNCED"
+        busy={acknowledgingInventory}
+        onConfirm={() => void handleAcknowledgeInventory()}
+        onCancel={() => setInventoryAckDialogOpen(false)}
+      />
 
       {/* Irreversible: refund only proceeds after typing REFUND in the dialog. */}
       <ConfirmDialog
