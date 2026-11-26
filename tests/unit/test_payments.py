@@ -336,33 +336,39 @@ def test_ambiguous_payment_link_create_recovers_after_service_restart(
 
 
 @pytest.mark.parametrize("provider_amount", [69_900.5, "69900", True])
-def test_payment_link_recovery_rejects_coerced_or_fractional_amounts(
-    commerce_core: CommerceCore, provider_amount: object
+@pytest.mark.parametrize("operation", ["create", "recover"])
+def test_payment_link_amounts_reject_coerced_or_fractional_values(
+    commerce_core: CommerceCore, provider_amount: object, operation: str
 ) -> None:
     order, _consent = create_consented_order(commerce_core)
 
-    class RecoveringPaymentLinks:
-        def all(self, _filters: dict[str, str]) -> dict[str, object]:
+    class MalformedPaymentLinks:
+        def _response(self) -> dict[str, object]:
             return {
-                "items": [
-                    {
-                        "id": "plink_malformed_0001",
-                        "reference_id": order.order_id,
-                        "short_url": "https://rzp.io/i/malformed",
-                        "amount": provider_amount,
-                        "currency": "INR",
-                        "status": "created",
-                    }
-                ]
+                "id": "plink_malformed_0001",
+                "reference_id": order.order_id,
+                "short_url": "https://rzp.io/i/malformed",
+                "amount": provider_amount,
+                "currency": "INR",
+                "status": "created",
             }
 
-    class RecoveringClient:
-        def __init__(self) -> None:
-            self.payment_link = RecoveringPaymentLinks()
+        def create(self, _data: dict[str, object]) -> dict[str, object]:
+            return self._response()
 
-    adapter = RazorpayAdapter(razorpay_settings(), client=RecoveringClient())
+        def all(self, _filters: dict[str, str]) -> dict[str, object]:
+            return {"items": [self._response()]}
+
+    class MalformedClient:
+        def __init__(self) -> None:
+            self.payment_link = MalformedPaymentLinks()
+
+    adapter = RazorpayAdapter(razorpay_settings(), client=MalformedClient())
 
     with pytest.raises(RazorpayRequestError) as raised:
-        adapter.find_payment_link(order)
+        if operation == "create":
+            adapter.create_payment_link(order)
+        else:
+            adapter.find_payment_link(order)
 
     assert raised.value.retryable is True
