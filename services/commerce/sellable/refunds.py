@@ -101,10 +101,9 @@ class RefundService:
         raw_amount = entity.get("amount")
         provider_status = entity.get("status")
         currency = entity.get("currency", "INR")
-        try:
-            amount_paise = int(raw_amount)
-        except (TypeError, ValueError) as error:
-            raise ValueError("Refund webhook amount is invalid") from error
+        if type(raw_amount) is not int:
+            raise ValueError("Refund webhook amount must be an integer in paise")
+        amount_paise = raw_amount
         if (
             not isinstance(provider_refund_id, str)
             or not provider_refund_id
