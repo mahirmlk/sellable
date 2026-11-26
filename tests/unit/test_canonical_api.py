@@ -184,6 +184,23 @@ def test_canonical_commerce_flow(commerce_core: CommerceCore) -> None:
         fetched = client.get(f"/commerce/orders/{order_id}", headers=H)
         assert fetched.status_code == 200
         assert fetched.json()["status"] == "AWAITING_CONSENT"
+
+        requested_consent = client.post(
+            "/agent/consents.request",
+            json={"order_id": order_id},
+            headers=H,
+        )
+        assert requested_consent.status_code == 202, requested_consent.text
+        assert requested_consent.json()["status"] == "awaiting_human_authorization"
+        assert "consent_id" not in requested_consent.json()
+        assert commerce_core.get_order(order_id).status.value == "AWAITING_CONSENT"
+        assert commerce_core.consent_service.active_for_order(order_id) is None
+        # Identical request retries are idempotent in the audit trail.
+        client.post("/agent/consents.request", json={"order_id": order_id}, headers=H)
+        events = commerce_core.ledger.for_trace(
+            commerce_core.get_order(order_id).trace_id
+        )
+        assert sum(event.action == "consent.requested" for event in events) == 1
     finally:
         app.dependency_overrides.clear()
 
