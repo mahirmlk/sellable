@@ -828,7 +828,7 @@ export default function TransactionDetailPage() {
           <div className="space-y-2">
             <p>
               Confirm only after your source inventory system has applied this exact order
-              ({tx.order_id}). This releases the committed stock offset and can increase
+              ({tx.id}). This releases the committed stock offset and can increase
               available stock.
             </p>
             <p className="text-[12px]">
