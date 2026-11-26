@@ -85,6 +85,7 @@ def test_active_session_index_accepts_postgres_predicate_rendering() -> None:
     "record",
     [
         _record(table_name="orders", columns=["idempotency_key", "merchant_id"]),
+        _record(table_name="orders", columns=["MERCHANT_ID", "idempotency_key"]),
         _record(
             table_name="orders",
             columns=["merchant_id", "idempotency_key"],
@@ -109,6 +110,11 @@ def test_active_session_index_accepts_postgres_predicate_rendering() -> None:
             table_name="checkout_sessions",
             columns=["merchant_id", "buyer_ref"],
             predicate="status = 'EXPIRED'",
+        ),
+        _record(
+            table_name="checkout_sessions",
+            columns=["merchant_id", "buyer_ref"],
+            predicate="status = 'active'",
         ),
     ],
 )
