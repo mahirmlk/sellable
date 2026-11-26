@@ -151,6 +151,7 @@ def captured_event(order, provider_link_id: str) -> dict[str, object]:
                     "order_id": provider_link_id,
                     "status": "captured",
                     "amount": order.amount_paise,
+                    "currency": "INR",
                 }
             }
         },
