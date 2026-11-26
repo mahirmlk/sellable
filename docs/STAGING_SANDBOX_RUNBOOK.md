@@ -25,6 +25,21 @@ npx wrangler login
 npx wrangler whoami
 ```
 
+Generate fresh agent credentials in a private, unlogged terminal and copy the output directly into your secret manager. The bootstrap plaintext is for the operator only; the Worker receives only its SHA-256 hash. The merchant-scoped purchase key is issued later from the console.
+
+```bash
+python3 - <<'PY'
+import hashlib
+import secrets
+
+bootstrap_key = secrets.token_urlsafe(32)
+hmac_secret = secrets.token_urlsafe(32)
+print(f"bootstrap_key (operator only): {bootstrap_key}")
+print(f"BUYER_AGENT_API_KEY_HASH: {hashlib.sha256(bootstrap_key.encode()).hexdigest()}")
+print(f"BUYER_AGENT_HMAC_SECRET: {hmac_secret}")
+PY
+```
+
 Store staging-only credentials as secrets on the staging Worker. Do not use the production Supabase URL, production service-role key, or live payment keys.
 
 ```bash
