@@ -314,9 +314,10 @@ def test_buyer_mission_is_ledgered_for_activity_and_replay(
     assert "buyer.mission_received" in actions
     assert "buyer.discovered_merchant" in actions
     assert "buyer.catalog_researched" in actions
-    # Order, consent, and mission all share the single flow trace.
+    # Order and consent request share the flow trace; the agent grants none.
     assert "order.created" in actions
-    assert "consent.issued" in actions
+    assert "buyer.consent_requested" in actions
+    assert "consent.issued" not in actions
 
 
 def test_buyer_consent_requires_matching_trace(
@@ -346,10 +347,16 @@ def test_buyer_consent_requires_matching_trace(
     with pytest.raises(ValueError, match="does not match"):
         buyer.tools.request_consent(order_id=order.order_id, trace_id="trc_wrong_trace")
 
-    consent = buyer.tools.request_consent(
+    assert buyer.tools.request_consent(
         order_id=order.order_id, trace_id="trc_guards_consent"
-    )
-    assert consent.order_id == order.order_id
+    ) is None
+    assert core.consent_service.active_for_order(order.order_id) is None
+    actions = [
+        event.action
+        for event in core.ledger.for_trace(order.trace_id)
+    ]
+    assert "buyer.consent_requested" in actions
+    assert "consent.issued" not in actions
 
 
 def test_verify_payment_reads_authoritative_state(

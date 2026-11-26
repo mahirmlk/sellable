@@ -184,6 +184,23 @@ def test_canonical_commerce_flow(commerce_core: CommerceCore) -> None:
         fetched = client.get(f"/commerce/orders/{order_id}", headers=H)
         assert fetched.status_code == 200
         assert fetched.json()["status"] == "AWAITING_CONSENT"
+
+        requested_consent = client.post(
+            "/agent/consents.request",
+            json={"order_id": order_id},
+            headers=H,
+        )
+        assert requested_consent.status_code == 202, requested_consent.text
+        assert requested_consent.json()["status"] == "awaiting_human_authorization"
+        assert "consent_id" not in requested_consent.json()
+        assert commerce_core.get_order(order_id).status.value == "AWAITING_CONSENT"
+        assert commerce_core.consent_service.active_for_order(order_id) is None
+        # Identical request retries are idempotent in the audit trail.
+        client.post("/agent/consents.request", json={"order_id": order_id}, headers=H)
+        events = commerce_core.ledger.for_trace(
+            commerce_core.get_order(order_id).trace_id
+        )
+        assert sum(event.action == "consent.requested" for event in events) == 1
     finally:
         app.dependency_overrides.clear()
 
@@ -363,6 +380,170 @@ def test_a2a_bridge(commerce_core: CommerceCore) -> None:
             "/a2a/tasks", json={"actor": "ghost", "input": {}}, headers=H
         )
         assert unknown.status_code == 404
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_public_agent_discovery_can_select_merchant(commerce_core, monkeypatch):
+    from sellable import main as main_module
+    from sellable.main import app
+
+    class TenantCore:
+        merchant_scope = "mrc_tenant_scope"
+
+    seen = []
+
+    class PublicGateway:
+        def __init__(self, merchant_id):
+            self.merchant_id = merchant_id
+
+        def discovery_manifest(self):
+            return {"merchant_id": self.merchant_id}
+
+    def gateway_for_core(core):
+        seen.append(core.merchant_scope)
+        return PublicGateway(core.merchant_scope)
+
+    monkeypatch.setattr(main_module, "_discovery_core", lambda merchant: TenantCore())
+    monkeypatch.setattr(main_module, "_agent_gateway_for_core", gateway_for_core)
+    client = _client(commerce_core)
+    try:
+        response = client.get("/.well-known/agents.json?merchant=mrc_tenant_scope")
+        assert response.status_code == 200, response.text
+        assert response.json()["merchant_id"] == "mrc_tenant_scope"
+        assert seen == ["mrc_tenant_scope"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_legacy_agent_catalog_uses_authenticated_merchant_key(commerce_core, monkeypatch):
+    from sellable import main as main_module
+    from sellable.auth import AgentApiKey, get_agent_api_key
+    from sellable.main import app
+
+    class TenantCore:
+        merchant_scope = "mrc_tenant_scope"
+
+        def __getattr__(self, name):
+            return getattr(commerce_core, name)
+
+    tenant_core = TenantCore()
+    seen = []
+
+    def core_for_merchant(merchant_id):
+        seen.append(merchant_id)
+        return tenant_core
+
+    monkeypatch.setattr(main_module.registry, "get", core_for_merchant)
+    app.dependency_overrides[get_agent_api_key] = lambda: AgentApiKey(
+        key_id="key_tenant",
+        merchant_id="mrc_tenant_scope",
+        buyer_agent_id="buyer_tenant",
+        auth_method="api_key",
+    )
+    client = _client(commerce_core)
+    try:
+        response = client.post(
+            "/agent/catalog.get",
+            json={"sku": "AUDIO-CASE-01"},
+            headers=H,
+        )
+        assert response.status_code == 200, response.text
+        assert seen and set(seen) == {"mrc_tenant_scope"}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_payment_start_and_retry_use_authenticated_merchant_core(commerce_core):
+    from sellable.auth import AgentApiKey, get_agent_api_key_signed
+    from sellable.contracts import PaymentAttempt
+    from sellable.main import (
+        app,
+        get_payment_service,
+        get_scoped_commerce_signed,
+    )
+
+    class TenantCore:
+        merchant_scope = "mrc_payment_tenant"
+
+    tenant_core = TenantCore()
+    seen = []
+
+    class PaymentServiceSpy:
+        def start_payment(self, *, order_id, consent_id, commerce=None):
+            seen.append(("start", commerce.merchant_scope))
+            return PaymentAttempt(
+                order_id=order_id,
+                provider_order_id="plink_tenant_start",
+                idempotency_key="idem_tenant_payment_start",
+            )
+
+        def retry_payment(self, *, order_id, commerce=None):
+            seen.append(("retry", commerce.merchant_scope))
+            return PaymentAttempt(
+                order_id=order_id,
+                provider_order_id="plink_tenant_retry",
+                idempotency_key="idem_tenant_payment_retry",
+            )
+
+    client = _client(commerce_core)
+    app.dependency_overrides[get_agent_api_key_signed] = lambda: AgentApiKey(
+        key_id="tenant_key",
+        merchant_id=tenant_core.merchant_scope,
+        buyer_agent_id="buyer_tenant",
+        auth_method="signed",
+    )
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: tenant_core
+    app.dependency_overrides[get_payment_service] = lambda: PaymentServiceSpy()
+    try:
+        started = client.post(
+            "/orders/ord_tenant_01/payment",
+            json={"consent_id": "consent_tenant_01"},
+            headers=H,
+        )
+        assert started.status_code == 200, started.text
+
+        retried = client.post(
+            "/orders/ord_tenant_01/payment/retry",
+            headers=H,
+        )
+        assert retried.status_code == 200, retried.text
+        assert seen == [
+            ("start", "mrc_payment_tenant"),
+            ("retry", "mrc_payment_tenant"),
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_a2a_task_uses_authenticated_merchant_core(commerce_core, monkeypatch):
+    from sellable.main import app, get_scoped_commerce_signed
+    from sellable.protocols import a2a
+
+    class TenantCore:
+        merchant_scope = "mrc_tenant_scope"
+
+        def __getattr__(self, name):
+            return getattr(commerce_core, name)
+
+    captured = {}
+
+    def handle_task(seller_agent, _service_agent, _ctx, *, actor, input):
+        captured["merchant_id"] = seller_agent.commerce.merchant_scope
+        return {"actor": actor, "merchant_id": captured["merchant_id"]}
+
+    monkeypatch.setattr(a2a, "handle_task", handle_task)
+    client = _client(commerce_core)
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: TenantCore()
+    try:
+        response = client.post(
+            "/a2a/tasks",
+            json={"actor": "seller", "input": {}},
+            headers=H,
+        )
+        assert response.status_code == 200, response.text
+        assert captured["merchant_id"] == "mrc_tenant_scope"
+        assert response.json()["merchant_id"] == "mrc_tenant_scope"
     finally:
         app.dependency_overrides.clear()
 

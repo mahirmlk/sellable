@@ -13,7 +13,7 @@ from sellable.contracts import CartItem, CartMandate, IntentMandate, OrderStatus
 from sellable.core import CommerceCore
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
-from sellable.main import app, get_payment_service
+from sellable.main import app, get_payment_service, get_scoped_commerce_signed
 from sellable.payments.razorpay import (
     InvalidWebhookSignatureError,
     ProviderPaymentLink,
@@ -261,6 +261,7 @@ def test_payment_and_webhook_endpoints_use_the_verified_service_boundary(
     order, consent = create_consented_order(commerce_core)
     service = PaymentService(commerce_core, razorpay_adapter())
     app.dependency_overrides[get_payment_service] = lambda: service
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     body, signature = signed_webhook(payment_link_paid_payload(reference_id=order.order_id))
     try:
         with TestClient(app) as client:

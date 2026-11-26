@@ -46,7 +46,9 @@ def commerce_core() -> CommerceCore:
     return CommerceCore.from_seed(LedgerRepository(engine), engine=engine)
 
 
-def _client(commerce_core: CommerceCore) -> TestClient:
+def _client(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
     from sellable.agents.seller import SellerAgent
     from sellable.gateway import AgentGateway
     from sellable.main import (
@@ -56,15 +58,20 @@ def _client(commerce_core: CommerceCore) -> TestClient:
         get_payment_service,
         get_scoped_commerce,
         get_scoped_commerce_signed,
-        get_scoped_commerce,
-        get_scoped_commerce_signed,
     )
+    from sellable.merchant_auth import MerchantSession, get_merchant_session
+    import sellable.main as main_module
 
     gateway = AgentGateway(commerce_core, SellerAgent(commerce_core))
+    app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
+        merchant_id=commerce_core.merchant_scope,
+        auth_user_id="human-test-user",
+        role="owner",
+    )
+    # Bind the owner approval to this test's isolated in-memory merchant core.
+    monkeypatch.setattr(main_module, "merchant_core", lambda _session: commerce_core)
     app.dependency_overrides[get_agent_gateway] = lambda: gateway
     app.dependency_overrides[get_commerce] = lambda: commerce_core
-    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
-    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     app.dependency_overrides[get_payment_service] = lambda: PaymentService(
@@ -106,12 +113,20 @@ def _paid_link_payload(order_id: str, amount_paise: int, payment_id: str) -> dic
 
 
 def _settle(client: TestClient, order_id: str, amount_paise: int) -> dict:
-    """Consent → payment → verified webhook → authoritative PAID read."""
-    consent = client.post(
+    """Agent requests consent; a separate authenticated human issues it."""
+    requested = client.post(
         "/agent/consents.request", json={"order_id": order_id}, headers=H
     )
-    assert consent.status_code == 200, consent.text
-    consent_id = consent.json()["consent_id"]
+    assert requested.status_code == 202, requested.text
+    assert requested.json()["status"] == "awaiting_human_authorization"
+    assert "consent_id" not in requested.json()
+
+    # The fixture installs an authenticated merchant owner session separately
+    # from the agent API key. This simulates an explicit human action; it is
+    # not evidence of buyer identity or real-provider behavior.
+    human_consent = client.post(f"/console/orders/{order_id}/consent")
+    assert human_consent.status_code == 200, human_consent.text
+    consent_id = human_consent.json()["consent_id"]
 
     start = client.post(
         f"/orders/{order_id}/payment", json={"consent_id": consent_id}, headers=H
@@ -154,10 +169,12 @@ def _authorize_body(checkout_id: str) -> dict:
     }
 
 
-def test_rest_sandbox_purchase_end_to_end(commerce_core: CommerceCore) -> None:
+def test_rest_sandbox_purchase_end_to_end(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from sellable.main import app
 
-    client = _client(commerce_core)
+    client = _client(commerce_core, monkeypatch)
     try:
         # 1. Discovery + capability negotiation (UCP surface).
         discovery = client.get("/.well-known/ucp")
@@ -231,10 +248,12 @@ def test_rest_sandbox_purchase_end_to_end(commerce_core: CommerceCore) -> None:
         app.dependency_overrides.clear()
 
 
-def test_mcp_sandbox_purchase_end_to_end(commerce_core: CommerceCore) -> None:
+def test_mcp_sandbox_purchase_end_to_end(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from sellable.main import app
 
-    client = _client(commerce_core)
+    client = _client(commerce_core, monkeypatch)
     try:
 
         def call(tool: str, arguments: dict) -> dict:

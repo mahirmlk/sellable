@@ -191,8 +191,10 @@ def test_agent_order_and_consent_flow(
             assert duplicate.json()["replayed"] is True
 
             consent = client.post("/agent/consents.request", json={"order_id": order_id}, headers=H)
-            assert consent.status_code == 200
-            assert consent.json()["single_use"] is True
+            assert consent.status_code == 202
+            assert consent.json()["status"] == "awaiting_human_authorization"
+            assert "consent_id" not in consent.json()
+            assert commerce_core.consent_service.active_for_order(order_id) is None
 
             status = client.post("/agent/orders.status", json={"order_id": order_id}, headers=H)
             assert status.status_code == 200

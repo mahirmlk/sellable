@@ -57,6 +57,7 @@ from sellable.contracts import (
     ConsentStatus,
     IntentMandate,
     LedgerActor,
+    LedgerEvent,
     MerchantPolicy,
     OrderCreateRequest,
     OrderStatus,
@@ -661,6 +662,11 @@ def _cs_agent_for_key(api_key: AgentApiKey) -> CustomerServiceAgent:
     )
 
 
+def _agent_gateway_for_key(api_key: AgentApiKey) -> AgentGateway:
+    """Build a legacy agent gateway over the authenticated merchant's data."""
+    return _agent_gateway_for_core(registry.get(api_key.merchant_id))
+
+
 def get_ledger() -> LedgerRepository:
     return commerce_core.ledger
 
@@ -791,6 +797,17 @@ def _discovery_core(merchant: str | None) -> CommerceCore:
     if MerchantRepository().get(merchant) is None:
         raise HTTPException(status_code=404, detail="Unknown merchant")
     return registry.get(merchant)
+
+
+
+def _agent_gateway_for_core(core: CommerceCore) -> AgentGateway:
+    """Build a public discovery gateway from the selected merchant core."""
+    if core.merchant_scope == DEMO_MERCHANT_ID:
+        return agent_gateway
+    seller = SellerAgent(
+        core, llm=_seller_llm, recorder=_agent_recorder(core, SELLER_AGENT_ID)
+    )
+    return AgentGateway(core, seller)
 
 
 @app.get("/.well-known/ucp", tags=["protocol-ucp"])
@@ -2170,7 +2187,7 @@ def a2a_card() -> dict[str, object]:
 def a2a_task(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None),
@@ -3175,20 +3192,20 @@ def console_billing(
 
 @app.get("/.well-known/agents.json", tags=["agent-gateway"])
 @limiter.exempt
-def agent_manifest(gateway: AgentGateway = Depends(get_agent_gateway)) -> dict[str, object]:
-    return gateway.discovery_manifest()
+def agent_manifest(merchant: str | None = None) -> dict[str, object]:
+    return _agent_gateway_for_core(_discovery_core(merchant)).discovery_manifest()
 
 
 @app.get("/llms.txt", response_class=PlainTextResponse, tags=["agent-gateway"])
 @limiter.exempt
-def llms_instructions(gateway: AgentGateway = Depends(get_agent_gateway)) -> str:
-    return gateway.llms_instructions()
+def llms_instructions(merchant: str | None = None) -> str:
+    return _agent_gateway_for_core(_discovery_core(merchant)).llms_instructions()
 
 
 @app.get("/catalog.ai.json", tags=["agent-gateway"])
 @limiter.exempt
-def agent_catalog(gateway: AgentGateway = Depends(get_agent_gateway)) -> dict[str, object]:
-    return gateway.catalog_document()
+def agent_catalog(merchant: str | None = None) -> dict[str, object]:
+    return _agent_gateway_for_core(_discovery_core(merchant)).catalog_document()
 
 
 @app.post("/agent/catalog.search", response_model=list[Product], tags=["agent-gateway"])
@@ -3196,9 +3213,9 @@ def agent_catalog(gateway: AgentGateway = Depends(get_agent_gateway)) -> dict[st
 def agent_catalog_search(
     request: Request,
     body: CatalogSearchRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> list[Product]:
+    gateway = _agent_gateway_for_key(_api_key)
     return gateway.search_catalog(body)
 
 
@@ -3207,9 +3224,9 @@ def agent_catalog_search(
 def agent_catalog_get(
     request: Request,
     body: CatalogGetRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> Product:
+    gateway = _agent_gateway_for_key(_api_key)
     try:
         return gateway.get_catalog_item(body.sku)
     except ValueError as error:
@@ -3221,9 +3238,8 @@ def agent_catalog_get(
 def agent_quote_create(
     request: Request,
     body: SellerRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
-    commerce: CommerceCore = Depends(get_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
 ) -> SellerDecision:
@@ -3239,7 +3255,7 @@ def agent_quote_create(
         hold_status=403,
         agent_id=_api_key.buyer_agent_id,
     )
-    return gateway.create_quote(body, trace_id=trace_id)
+    return _agent_gateway_for_key(_api_key).create_quote(body, trace_id=trace_id)
 
 
 @app.post("/agent/quotes.negotiate", response_model=SellerDecision, tags=["agent-gateway"])
@@ -3247,9 +3263,8 @@ def agent_quote_create(
 def agent_quote_negotiate(
     request: Request,
     body: SellerRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
-    commerce: CommerceCore = Depends(get_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
 ) -> SellerDecision:
@@ -3264,7 +3279,7 @@ def agent_quote_negotiate(
         hold_status=403,
         agent_id=_api_key.buyer_agent_id,
     )
-    return gateway.create_quote(body, trace_id=trace_id)
+    return _agent_gateway_for_key(_api_key).create_quote(body, trace_id=trace_id)
 
 
 @app.post(
@@ -3294,7 +3309,7 @@ def buyer_run(
 def agent_consents_request(
     request: Request,
     body: ConsentRequest,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
@@ -3313,20 +3328,49 @@ def agent_consents_request(
         route="agent.consents.request",
         agent_id=_api_key.buyer_agent_id,
     )
-    try:
-        consent = commerce.issue_consent(body.order_id)
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    return {
-        "consent_id": consent.consent_id,
-        "order_id": consent.order_id,
-        "amount_paise": consent.amount_paise,
-        "payee_id": consent.payee_id,
-        "purpose": consent.purpose,
-        "expires_at": consent.expires_at.isoformat(),
-        "single_use": consent.single_use,
-        "status": consent.status,
-    }
+    # This authenticated agent request records intent only. Returning a
+    # Consent ID here would let the same agent that proposed an order
+    # authorize it; only an explicit human path may call issue_consent().
+    events = commerce.ledger.for_trace(
+        order.trace_id, merchant_id=order.merchant_id
+    )
+    already_requested = any(
+        event.action == "consent.requested"
+        and (event.inputs_json or {}).get("order_id") == order.order_id
+        and (event.inputs_json or {}).get("buyer_agent_id") == _api_key.buyer_agent_id
+        for event in events
+    )
+    if not already_requested:
+        commerce.ledger.append(
+            LedgerEvent(
+                trace_id=order.trace_id,
+                merchant_id=order.merchant_id,
+                actor=LedgerActor.BUYER_AGENT,
+                action="consent.requested",
+                inputs={
+                    "order_id": order.order_id,
+                    "amount_paise": order.amount_paise,
+                    "buyer_agent_id": _api_key.buyer_agent_id,
+                },
+                output={"status": "awaiting_human_authorization"},
+                reasoning_summary=(
+                    "The agent requested review. No single-use consent or payment "
+                    "authorization was issued."
+                ),
+                agent_id=_api_key.buyer_agent_id,
+            )
+        )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "awaiting_human_authorization",
+            "order_id": order.order_id,
+            "amount_paise": order.amount_paise,
+            "payee_id": order.merchant_id,
+            "purpose": "single_transaction",
+            "single_use": True,
+        },
+    )
 
 
 @app.post("/agent/orders.create", tags=["agent-gateway"])
@@ -3334,8 +3378,7 @@ def agent_consents_request(
 def agent_order_create(
     request: Request,
     body: OrderCreateRequest,
-    gateway: AgentGateway = Depends(get_agent_gateway),
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_delegation_id: str | None = Header(default=None),
@@ -3369,7 +3412,7 @@ def agent_order_create(
             "replayed": True,
         }
 
-    decision = gateway.create_quote(
+    decision = _agent_gateway_for_key(_api_key).create_quote(
         SellerRequest(
             message=body.message,
             intent=body.intent,
@@ -3428,7 +3471,7 @@ def agent_order_create(
 def agent_order_status(
     request: Request,
     body: OrderStatusRequest,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -3484,10 +3527,13 @@ def start_payment(
     order_id: str,
     body: PaymentStartRequest,
     payments: PaymentService = Depends(get_payment_service),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
 ) -> PaymentAttempt:
     try:
-        return payments.start_payment(order_id=order_id, consent_id=body.consent_id)
+        return payments.start_payment(
+            order_id=order_id, consent_id=body.consent_id, commerce=commerce
+        )
     except RazorpayConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except RazorpayRequestError as error:
@@ -3507,10 +3553,11 @@ def retry_payment(
     request: Request,
     order_id: str,
     payments: PaymentService = Depends(get_payment_service),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
 ) -> PaymentAttempt:
     try:
-        return payments.retry_payment(order_id=order_id)
+        return payments.retry_payment(order_id=order_id, commerce=commerce)
     except RazorpayConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except RazorpayRequestError as error:
