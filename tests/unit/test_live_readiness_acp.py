@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import json
 import time
 from datetime import timedelta
 from uuid import uuid4
@@ -22,11 +21,11 @@ from sqlalchemy import create_engine
 from sellable import main as main_module
 from sellable import merchant_auth
 from sellable.config import Settings
-from sellable.contracts import Checkout, CheckoutLine, CheckoutStatus, IntentMandate, utc_now
+from sellable.contracts import Checkout, CheckoutLine, CheckoutStatus, utc_now
 from sellable.ledger import database as ledger_database
 from sellable.ledger.service import LedgerRepository
 from sellable.merchant_auth import AuthenticatedUser, MerchantSession
-from sellable.payments import provider_is_valid
+from sellable.payments import build_provider, provider_is_valid
 from sellable.protocols import acp as acp_adapter
 from sellable.protocols.acp import AcpAuthError, AcpError
 from sellable.registry import MerchantRegistry
@@ -119,6 +118,38 @@ def test_provider_is_valid_variants():
         stripe_webhook_secret="whsec_123",
     )
     assert provider_is_valid(live_stripe) is False
+
+    stripe_without_webhook_secret = Settings(
+        environment="test",
+        payment_provider="stripe",
+        stripe_secret_key="sk_test_123",
+    )
+    assert provider_is_valid(stripe_without_webhook_secret) is False
+
+    simulated_dev = Settings(environment="development", payment_provider="simulated")
+    assert provider_is_valid(simulated_dev) is True
+
+    simulated_prod = Settings(environment="production", payment_provider="simulated")
+    assert provider_is_valid(simulated_prod) is False
+
+    unknown = Settings(environment="test", payment_provider="typo")
+    assert provider_is_valid(unknown) is False
+
+
+def test_non_development_rejects_non_razorpay_payment_rails():
+    for environment in ("staging", "production"):
+        stripe = Settings(
+            environment=environment,
+            payment_provider="stripe",
+            stripe_secret_key="sk_test_only",
+            stripe_webhook_secret="whsec_test_only",
+        )
+        assert provider_is_valid(stripe) is False
+        with pytest.raises(ValueError, match="Razorpay Test Mode"):
+            build_provider(stripe)
+        # An explicit route-level override must not bypass the same policy.
+        with pytest.raises(ValueError, match="Razorpay Test Mode"):
+            build_provider(Settings(environment=environment), "stripe")
 
 
 # --- Readiness evidence + live blockers ------------------------------------

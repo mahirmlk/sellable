@@ -6,8 +6,10 @@ COPY services/ services/
 COPY agents/ agents/
 COPY infra/seed/ infra/seed/
 COPY pyproject.toml .
+COPY requirements/ requirements/
 
-RUN pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir --require-hashes -r requirements/runtime.txt && \
+    python -m pip install --no-cache-dir --no-deps --no-build-isolation .
 
 RUN mkdir -p data && \
     useradd --create-home --shell /bin/bash appuser && \

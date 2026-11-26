@@ -46,7 +46,7 @@ def _suffix_url(url: str | None, suffix: str) -> str | None:
 def _parse_cors_origins(raw: str | None) -> tuple[str, ...]:
     """Parse the ``CORS_ORIGINS`` environment value into a tuple of origins.
 
-    Accepts several real-world formats so a mis-typed Railway variable cannot
+    Accepts several real-world formats so a mis-typed deployment variable cannot
     silently break every browser request:
 
     - comma-separated: ``https://a.example,https://b.example``
@@ -107,8 +107,22 @@ class Settings:
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
 
-    # Payment provider selection: razorpay (default) | stripe | simulated.
+    # Deployed environments use Razorpay Test Mode; Stripe/simulated are dev/test only.
     payment_provider: str = "razorpay"
+
+    # Email notification channel (§35): disabled unless an SMTP relay is
+    # configured. Only urgent merchant events (approvals, payment failures)
+    # are emailed; the in-app feed and webhooks stay primary.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_from: str | None = None
+    smtp_recipients: str | None = None
+
+    # Background maintenance worker (§46.1): drains the durable outbox and
+    # runs cart/checkout/session expiry sweeps. On by default in production;
+    # SELLABLE_MAINTENANCE_WORKER=0|1 overrides explicitly (tests off).
+    maintenance_worker: bool | None = None
+    maintenance_interval_seconds: int = 60
     stripe_secret_key: str | None = None
     stripe_webhook_secret: str | None = None
 
@@ -156,6 +170,13 @@ class Settings:
         """
         return self.environment in ("development", "test")
 
+    @property
+    def maintenance_worker_enabled(self) -> bool:
+        """Explicit env flag wins; otherwise on in production only."""
+        if self.maintenance_worker is not None:
+            return self.maintenance_worker
+        return not self.is_dev_environment
+
     # CORS
     cors_origins: tuple[str, ...] = (
         "https://sellable.shop",
@@ -202,6 +223,16 @@ class Settings:
             admin_api_key=os.getenv("SELLABLE_ADMIN_API_KEY"),
             acp_enabled=os.getenv("SELLABLE_ACP_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            smtp_host=os.getenv("SMTP_HOST"),
+            smtp_port=int(os.getenv("SMTP_PORT", "587")),
+            smtp_from=os.getenv("SMTP_FROM"),
+            smtp_recipients=os.getenv("SMTP_RECIPIENTS"),
+            maintenance_worker=(
+                None
+                if os.getenv("SELLABLE_MAINTENANCE_WORKER") is None
+                else os.getenv("SELLABLE_MAINTENANCE_WORKER", "").lower()
+                in ("1", "true", "yes")
+            ),
             cors_origins=_parse_cors_origins(os.getenv("CORS_ORIGINS"))
             or (
                 ("https://sellable.shop", "https://www.sellable.shop")

@@ -229,12 +229,81 @@ class CustomerServiceAgent:
             )
             self.recorder.close_run(status="ERROR", outcome="DENIED", error=str(error)[:300])
             return self._stamped(result)
-        result = result.model_copy(
-            update={"guardrail_blocks": guard_recorder.blocks}
-        )
+        result = self._sanitize_output(result, request, guard_recorder)
+        result = result.model_copy(update={"guardrail_blocks": guard_recorder.blocks})
         self.recorder.close_run(status="COMPLETED", outcome=result.action.value)
         self._publish_run_completed(result)
         return self._stamped(result)
+
+    def _sanitize_output(
+        self,
+        result: CSDecision,
+        request: CSRequest,
+        guard_recorder: GuardrailRecorder,
+    ) -> CSDecision:
+        """POST_MODEL_GUARDS (§9.1 output sanitization): a support reply may
+        state only the order's own SKUs and amounts. The order's totals are
+        the known amount set; anything else in the reply is replaced with a
+        generic, amount-free acknowledgment."""
+        from agents.runtime.guardrails import (
+            GuardrailContext,
+            GuardrailVerdict,
+            POST_MODEL_GUARDS,
+        )
+
+        if not result.response_message:
+            return result
+        known_skus: set[str] = set()
+        known_amounts: set[int] = set()
+        if request.order_id:
+            try:
+                order = self.commerce.get_order(request.order_id)
+            except ValueError:
+                order = None
+            if order is not None:
+                known_amounts.add(order.amount_paise)
+                snapshot = getattr(order, "checkout_snapshot", None) or {}
+                for line in snapshot.get("lines", []) if isinstance(snapshot, dict) else []:
+                    sku = line.get("sku") if isinstance(line, dict) else None
+                    if isinstance(sku, str):
+                        known_skus.add(sku)
+        if request.amount_paise is not None:
+            known_amounts.add(int(request.amount_paise))
+        # Policy figures are authoritative too: the agent may quote the
+        # merchant's own caps and thresholds in policy answers (§7.3).
+        policy = self.commerce.policy
+        known_amounts.update(
+            {
+                policy.max_order_value_paise,
+                policy.max_single_item_value_paise,
+                policy.human_approval_threshold_paise,
+            }
+        )
+        context = GuardrailContext(
+            agent_id=self.versions.agent_id,
+            agent_type="SELLABLE_INTERNAL_AGENT",
+            merchant_id=self.commerce.merchant_scope,
+            customer_id=request.customer_id,
+            session_id=result.trace_id,
+            output_text=result.response_message,
+            known_skus=frozenset(known_skus),
+            known_amounts_paise=frozenset(known_amounts),
+        )
+        for guard in POST_MODEL_GUARDS:
+            outcome = guard(context)
+            guard_recorder.extend([outcome])
+            if outcome.verdict is GuardrailVerdict.BLOCK:
+                logger.warning(
+                    "cs output guardrail blocked the reply: %s %s",
+                    outcome.reason_code,
+                    outcome.detail,
+                )
+                fallback = (
+                    "I have updated your case. A support agent will follow up "
+                    "with the specific details."
+                )
+                return result.model_copy(update={"response_message": fallback})
+        return result
 
     def _stamped(self, decision: CSDecision) -> CSDecision:
         return decision.model_copy(
@@ -302,6 +371,18 @@ class CustomerServiceAgent:
     ) -> CSDecision:
         self.recorder.open_run(trace_id=trace_id, versions=self.versions)
         self.recorder.close_run(status="BLOCKED", outcome="DENIED")
+        # Ledger evidence like the seller agent records — safety metrics and
+        # replay must see CS guardrail blocks too (§29.2, §4.4).
+        try:
+            self.tools._record(
+                trace_id=trace_id,
+                action="cs.guardrail_blocked",
+                inputs={"blocks": guard_recorder.blocks},
+                output={"action": CSAction.DENIED.value},
+                explanation="Guardrail middleware blocked the customer-service run before tool use.",
+            )
+        except Exception:  # noqa: BLE001 — evidence is best-effort
+            pass
         return CSDecision(
             trace_id=trace_id,
             action=CSAction.DENIED,

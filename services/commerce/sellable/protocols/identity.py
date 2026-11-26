@@ -14,6 +14,8 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta
 
+from enum import StrEnum
+
 from sellable.contracts import (
     IdentityLink,
     IdentityLinkStatus,
@@ -38,6 +40,17 @@ class IdentityNotFoundError(IdentityError, LookupError):
 
 def _hash_code(link_code: str) -> str:
     return hashlib.sha256(link_code.encode("utf-8")).hexdigest()
+
+
+class IdentityLevel(StrEnum):
+    """Customer identity levels (§12.1). Higher-trust data is never revealed
+    just because an agent claims to know the customer: the level is derived
+    from platform evidence, not from assertions."""
+
+    ANONYMOUS = "anonymous"
+    KNOWN_CUSTOMER = "known_customer"
+    AUTHENTICATED_CUSTOMER = "authenticated_customer"
+    IDENTITY_LINKED_CUSTOMER = "identity_linked_customer"
 
 
 class IdentityLinkService:
@@ -140,3 +153,45 @@ class IdentityLinkService:
         # Sweeps run through linked_for_customer per customer; without a
         # customers table there is no merchant-wide scan yet (Phase 6).
         return 0
+
+    def resolve_identity_level(
+        self,
+        merchant_id: str,
+        customer_id: str,
+        *,
+        identity_repo=None,
+        delegation_repo=None,
+    ) -> IdentityLevel:
+        """Derive the §12.1 identity level from platform evidence.
+
+        - identity_linked_customer: a fresh LINKED link exists (expired
+          links are excluded by the repository).
+        - authenticated_customer: an ACTIVE delegation grants this
+          customer's authority to an agent.
+        - known_customer: any prior identity-link attempt (any status) —
+          the customer has engaged the linking flow before.
+        - anonymous: no evidence at all.
+        """
+        if not customer_id:
+            return IdentityLevel.ANONYMOUS
+        if identity_repo is not None:
+            linked = identity_repo.linked_for_customer(merchant_id, customer_id)
+            if linked:
+                return IdentityLevel.IDENTITY_LINKED_CUSTOMER
+            if hasattr(identity_repo, "any_for_customer") and identity_repo.any_for_customer(
+                merchant_id, customer_id
+            ):
+                known = True
+            else:
+                known = False
+        else:
+            known = False
+        if delegation_repo is not None:
+            grants = delegation_repo.history_for_principal(merchant_id, customer_id)
+            if any(
+                grant.is_usable() for grant in grants
+            ):
+                return IdentityLevel.AUTHENTICATED_CUSTOMER
+        if known:
+            return IdentityLevel.KNOWN_CUSTOMER
+        return IdentityLevel.ANONYMOUS

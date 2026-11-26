@@ -9,13 +9,13 @@ Common issues and how to fix them.
 ### `ModuleNotFoundError: No module named 'langgraph'`
 
 ```bash
-pip install langgraph
+python -m pip install --require-hashes -r requirements/runtime.txt
 ```
 
 ### `ModuleNotFoundError: No module named 'razorpay'`
 
 ```bash
-pip install razorpay
+python -m pip install --require-hashes -r requirements/runtime.txt
 ```
 
 ### `ModuleNotFoundError: No module named 'sellable'`
@@ -23,7 +23,8 @@ pip install razorpay
 Make sure you installed the package in editable mode:
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements/runtime.txt -r requirements/dev.txt
+python -m pip install --no-deps --no-build-isolation -e .
 ```
 
 Check that `pyproject.toml` has:

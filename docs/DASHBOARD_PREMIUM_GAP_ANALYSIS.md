@@ -1,6 +1,7 @@
 # Merchant Console — Premium Dashboard Gap Analysis
 
-**Status:** REPORT ONLY — no implementation until approved.
+**Status:** Historical baseline report. The gap list below reflects the read-only audit at the time it was written; several findings have since been implemented.
+**Last implementation check:** 2026-11-21, against `feat/platform-completion` / PR #14.
 **Scope:** `apps/merchant-console` (all 20 dashboard routes + shared components).
 **Method:** 4-track research — (1) premium SaaS feature taxonomy, (2) glassmorphism engineering,
 (3) data-table/analytics UX, (4) full read-only codebase audit — cross-referenced below.
@@ -12,21 +13,31 @@
 
 ---
 
+## Implementation status update (2026-11-21)
+
+The baseline findings below are not a current release checklist. The following items were verified
+in the current branch and are implemented: order fulfillment, payment failure category and policy
+explanation in transaction detail; pending-approval sidebar badge; sortable and paginated order and
+catalog tables; analytics charts and period comparisons; command-palette actions and real record
+search; confirmations for refunds, API-key revocation, and approval rejection; toast notifications;
+and removal of the listed dead mock-data components. The error/not-found surfaces and root viewport
+metadata also use the current dashboard theme settings.
+
+The toast system does not offer undo. Refunds, access revocation, and approval decisions are treated
+as irreversible operations and use explicit confirmation. Other baseline gaps, including incomplete
+table coverage on some routes, URL-persistent filters, and the Cloudflare Container deployment and target-account smoke verification,
+still need a fresh scoped review before launch. This report does not claim those are resolved.
+
+---
+
 ## 0. Executive summary
 
-The console is **functionally honest but structurally thin**. It does the hard parts well (real data
-everywhere, exceptional partial-failure handling on Home via `Promise.allSettled`, real ledger
-provenance), but it ships almost none of the interaction layer that separates a premium product from a
-generic CRUD admin: no sorting, no pagination, no date filtering, no toasts, no confirmations on
-irreversible money actions, no charts, no user menu, and **12 real backend capabilities the UI never
-surfaces** (including "mark order fulfilled", which exists in the API and appears in every status
-badge — yet no button produces it).
+At the time of this baseline, the console was **functionally honest but structurally thin**. The
+findings in this report described missing sorting, pagination, toasts, confirmations, charts, and
+order fulfillment, along with four unused components containing hardcoded fixtures. See the
+implementation status update above before treating any finding or proposed phase as open work.
 
-Worse, four dead components in `components/dashboard/` ship **hardcoded mock data** (`order-feed.tsx`,
-`ledger-view.tsx`, `catalog-table.tsx`, `auth-form.tsx`) — direct violations of the no-fake-data rule
-waiting to be resurrected. They get deleted in Phase 0.
-
-Priority split: **7 P0 items** (premium blockers), **13 P1** (premium depth), **10 P2** (polish).
+The priority counts below are historical counts from the baseline report, not a current backlog.
 
 ---
 
@@ -74,15 +85,15 @@ sand `#ede6d9`) are replaced wholesale.
 ## 2. Current state — what exists (audited)
 
 **Chrome:** sidebar (grouped nav, collapse w/ localStorage, mobile drawer) + topbar (store name,
-search pill → ⌘K CommandMenu, 3 live status pills) + DashboardGuard. Command palette is
-**navigation-only**.
+search pill → ⌘K CommandMenu, 3 live status pills) + DashboardGuard. At the time of this
+baseline, the command palette was **navigation-only**; see the implementation status update above.
 
 **Pages:** Home (9 real sections, best-in-class partial failure), Products (create-only CRUD, table/grid,
 search+sort+filters+CSV), Product detail (read-only), Inventory (read-only + CSV), Orders (7 status tabs,
 search/sort/saved views/CSV), Order detail (6 tabs incl. negotiation & ledger), Replay (stage-bucketed
 ledger audit trail), Buyers (client-derived from orders), Buyer detail, Approvals (approve/reject +
 auto-resume buyer missions, 12s poll), Live Activity (SSE stream, buyer-mission runner, CSV), Analytics
-(4 tabs of aggregates, **no charts**), Payments (read-only), Selling Rules (policy editor + simulator),
+(4 tabs of aggregates, **no charts at the time of this baseline**), Payments (read-only), Selling Rules (policy editor + simulator),
 Settings (6 sections, duplicate policy editor), AI Storefront (manifest + API keys), Developers (duplicate
 API keys), AI Sales chat (3-pane checkout state machine — deepest surface in the app), Onboarding.
 

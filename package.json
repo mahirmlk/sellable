@@ -1,0 +1,17 @@
+{
+  "name": "sellable-cloudflare-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
+    "cf:types": "wrangler types"
+  },
+  "devDependencies": {
+    "wrangler": "4.166.0"
+  },
+  "overrides": {
+    "undici": "7.30.2"
+  }
+}
+

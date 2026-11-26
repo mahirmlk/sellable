@@ -40,6 +40,7 @@ from sellable.main import (
     app,
     get_checkout_repo,
 )
+from sellable.middleware import MAX_REQUEST_BODY_BYTES
 from sellable.agents.seller import SellerAgent, SellerRequest
 from sellable.repositories import CheckoutSessionRepository, NonceRepository
 
@@ -232,6 +233,15 @@ def test_checkout_small_snapshots_still_save(checkout_client: TestClient) -> Non
     assert response.status_code == 200
 
 
+def test_global_request_body_limit_is_413(checkout_client: TestClient) -> None:
+    response = checkout_client.post(
+        "/console/checkout/session",
+        json={"buyer_ref": "human_chat", "cart": {"blob": "x" * MAX_REQUEST_BODY_BYTES}},
+        headers=DEMO_H,
+    )
+    assert response.status_code == 413
+
+
 # ---------------------------------------------------------------------------
 # P3-05: fail-closed offer amounts
 # ---------------------------------------------------------------------------
@@ -272,14 +282,90 @@ def test_health_production_hides_origins_and_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        main_module, "settings", Settings(environment="production")
+        main_module,
+        "settings",
+        Settings(
+            environment="production",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
+            supabase_url="https://example.supabase.co",
+            supabase_anon_key="anon-test-key",
+            supabase_service_role_key="service-test-key",
+            agent_api_key_hashes=("a" * 64,),
+            agent_hmac_secret="h" * 32,
+        ),
     )
+    monkeypatch.setenv("CORS_ORIGINS", "https://console.example.com")
     with TestClient(app) as client:
         body = client.get("/health").json()
     assert body == {"status": "ok", "database": "connected"}
     assert "cors_origins" not in body
     assert "environment" not in body
     assert "razorpay_configured" not in body
+
+
+def test_production_startup_guard_rejects_sqlite(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(environment="production", database_url="sqlite+pysqlite:///./data/app.db"),
+    )
+    monkeypatch.setenv("CORS_ORIGINS", "https://console.example.com")
+    with pytest.raises(RuntimeError, match="PostgreSQL"):
+        main_module._assert_production_configuration()
+
+
+def test_production_startup_guard_requires_explicit_cors(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            environment="production",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
+        ),
+    )
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+        main_module._assert_production_configuration()
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ("http://console.example.com", "https://console.example.com/dashboard"),
+)
+def test_production_startup_guard_requires_exact_https_origins(
+    monkeypatch, origin: str
+) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            environment="production",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
+        ),
+    )
+    monkeypatch.setenv("CORS_ORIGINS", origin)
+
+    with pytest.raises(RuntimeError, match="exact HTTPS origins"):
+        main_module._assert_production_configuration()
+
+
+def test_production_startup_guard_requires_strong_agent_auth(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            environment="production",
+            database_url="postgresql+psycopg://sellable:test@db.example.com/sellable?sslmode=require",
+            supabase_url="https://example.supabase.co",
+            supabase_anon_key="anon-test-key",
+            supabase_service_role_key="service-test-key",
+            agent_api_key_hashes=("not-a-sha256-digest",),
+            agent_hmac_secret="short",
+        ),
+    )
+    monkeypatch.setenv("CORS_ORIGINS", "https://console.example.com")
+    with pytest.raises(RuntimeError, match="SHA-256"):
+        main_module._assert_production_configuration()
 
 
 def test_health_dev_keeps_full_payload() -> None:

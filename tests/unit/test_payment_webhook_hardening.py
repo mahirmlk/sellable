@@ -14,6 +14,7 @@ import json
 from datetime import timedelta
 
 import pytest
+import requests
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
@@ -32,12 +33,34 @@ from sellable.core import CommerceCore, IdempotencyReuseError
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
 from sellable.orders import InvalidOrderTransitionError
-from sellable.payments.razorpay import RazorpayAdapter, RazorpayRequestError
+from sellable.payments.razorpay import (
+    RazorpayAdapter,
+    RazorpayRequestError,
+    _ProviderTimeoutSession,
+)
 from sellable.payments.service import PaymentService, UnexpectedOrderStateError
 from sellable.refunds import RefundService
 from sellable.repositories import RefundRepository
 
 ORDER_TOTAL = 69_900
+
+
+def test_refund_idempotency_conflict_remains_retryable(monkeypatch) -> None:
+    response = requests.Response()
+    response.status_code = 409
+
+    def conflict_response(_session, _method, _url, **_kwargs):
+        return response
+
+    monkeypatch.setattr(requests.Session, "request", conflict_response)
+    session = _ProviderTimeoutSession()
+
+    with pytest.raises(requests.exceptions.HTTPError, match="still processing"):
+        session.request(
+            "POST",
+            "https://api.razorpay.com/v1/payments/pay_test/refund",
+            headers={"X-Refund-Idempotency": "rfnd_test_key"},
+        )
 
 
 def razorpay_settings() -> Settings:
@@ -77,20 +100,48 @@ class FakeRazorpayRefunds:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.fail_next = False
+        self.fail_retryably = False
+        self.status = "processed"
+        self.statuses: list[str] = []
+        self.amount_override: int | None = None
+        self.currency_override = "INR"
+        self.refund_ids_by_key: dict[str, str] = {}
 
-    def refund(self, payment_id: str, data: dict[str, object]) -> dict[str, object]:
+    def refund(
+        self,
+        payment_id: str,
+        data: dict[str, object],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, object]:
         from razorpay.errors import BadRequestError
 
-        self.calls.append((payment_id, data))
+        # Match razorpay==1.4.2's effective method signature: the later
+        # refund(payment_id, data={}, **kwargs) definition shadows its earlier
+        # amount overload.
+        payload = dict(data)
+        amount = payload["amount"]
+        if headers:
+            payload["_headers"] = headers
+        self.calls.append((payment_id, payload))
+        if self.fail_retryably:
+            self.fail_retryably = False
+            raise RazorpayRequestError("simulated ambiguous timeout", retryable=True)
         if self.fail_next:
             self.fail_next = False
             raise BadRequestError("refund failed in test mode")
+        idempotency_key = (headers or {}).get("X-Refund-Idempotency")
+        refund_id = self.refund_ids_by_key.get(idempotency_key or "")
+        if refund_id is None:
+            refund_id = f"rfnd_test_{len(self.refund_ids_by_key) + 1:04d}"
+            if idempotency_key:
+                self.refund_ids_by_key[idempotency_key] = refund_id
         return {
-            "id": f"rfnd_test_{len(self.calls):04d}",
+            "id": refund_id,
             "payment_id": payment_id,
-            "amount": data["amount"],
-            "currency": "INR",
-            "status": "processed",
+            "amount": self.amount_override if self.amount_override is not None else amount,
+            "currency": self.currency_override,
+            "status": self.statuses.pop(0) if self.statuses else self.status,
         }
 
 
@@ -370,6 +421,28 @@ def test_captured_without_amount_does_not_settle(
 # ---------------------------------------------------------------------------
 
 
+def test_captured_with_wrong_currency_does_not_settle(
+    commerce_core: CommerceCore,
+) -> None:
+    """§45 payment invariants: currency must match — a foreign-currency
+    capture never settles, with ledger evidence."""
+    order, payments = start_paid_flow(commerce_core, "trc_h_currency", "idem_hardening_cur_01")
+    payload = link_paid(order.order_id, payment_id="pay_cur_01", amount=ORDER_TOTAL)
+    payload["payload"]["payment"]["entity"]["currency"] = "USD"
+    body, signature = signed(payload)
+
+    result = payments.handle_webhook(body, signature)
+
+    assert result.status is PaymentStatus.PAYMENT_PENDING
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+    assert "webhook.currency_mismatch" in ledger_actions(commerce_core, order.trace_id)
+
+
+# ---------------------------------------------------------------------------
+# H1: pre-existing live link is reused, never re-minted
+# ---------------------------------------------------------------------------
+
+
 def test_start_with_live_link_reuses_instead_of_minting(
     commerce_core: CommerceCore,
 ) -> None:
@@ -616,6 +689,7 @@ def test_full_refund_calls_provider_and_settles(core_and_engine) -> None:
     payment_id, data = client.payment.calls[0]
     assert payment_id == f"pay_idem_hardening_rf_01"
     assert data["amount"] == ORDER_TOTAL
+    assert data["_headers"]["X-Refund-Idempotency"].startswith("rfnd_")
     assert result["provider_refund_id"] == "rfnd_test_0001"
     assert result["refund_status"] == "processed"
     assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
@@ -643,6 +717,97 @@ def test_refund_is_idempotent_per_key(core_and_engine) -> None:
     assert len(client.payment.calls) == 1
 
 
+def test_refund_retry_after_ambiguous_failure_reuses_provider_key(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_retry", "idem_hardening_rf_02_retry")
+    refunds, client = refund_service_for(core, engine)
+    client.payment.fail_retryably = True
+    key = "idem_hardening_rfk_retry_01"
+
+    with pytest.raises(RazorpayRequestError):
+        refunds.initiate_refund(order_id=order.order_id, reason="retry", idempotency_key=key)
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+    result = refunds.initiate_refund(order_id=order.order_id, reason="retry", idempotency_key=key)
+
+    assert result["refund_status"] == "processed"
+    assert len(client.payment.calls) == 2
+    assert client.payment.calls[0][1]["_headers"] == client.payment.calls[1][1]["_headers"]
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
+
+
+def test_refund_key_cannot_be_reused_for_different_request(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_key", "idem_hardening_rf_02_key")
+    refunds, client = refund_service_for(core, engine)
+    key = "idem_hardening_rfk_reuse_01"
+    refunds.initiate_refund(order_id=order.order_id, reason="original", idempotency_key=key)
+
+    with pytest.raises(ValueError, match="different refund request"):
+        refunds.initiate_refund(order_id=order.order_id, reason="changed", idempotency_key=key)
+    assert len(client.payment.calls) == 1
+
+
+def test_pending_provider_refund_does_not_settle_order(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_pending", "idem_hardening_rf_02_pending")
+    refunds, client = refund_service_for(core, engine)
+    client.payment.status = "pending"
+
+    result = refunds.initiate_refund(order_id=order.order_id, reason="pending provider result")
+
+    assert result["refund_status"] == "initiated"
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+
+@pytest.mark.parametrize(
+    ("bad_amount", "bad_currency"),
+    [(49_999, "INR"), (50_000, "USD")],
+)
+def test_inconsistent_refund_response_reserves_balance_until_idempotent_retry(
+    core_and_engine, bad_amount: int, bad_currency: str
+) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_ambiguous", "idem_hardening_rf_02_ambiguous")
+    refunds, client = refund_service_for(core, engine)
+    key = "idem_hardening_rf_ambiguous_500"
+    client.payment.amount_override = bad_amount
+    client.payment.currency_override = bad_currency
+
+    with pytest.raises(RazorpayRequestError) as error:
+        refunds.initiate_refund(
+            order_id=order.order_id,
+            reason="provider response mismatch",
+            amount_paise=50_000,
+            idempotency_key=key,
+        )
+    assert error.value.retryable is True
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+    pending = RefundRepository(engine).for_idempotency_key(order.merchant_id, key)
+    assert pending is not None and pending.status.value == "PENDING"
+    with pytest.raises(ValueError, match="remaining refundable balance"):
+        refunds.initiate_refund(
+            order_id=order.order_id,
+            reason="additional refund",
+            amount_paise=20_000,
+            idempotency_key="idem_hardening_rf_ambiguous_200",
+        )
+
+    # Reconcile by retrying with the same key after the provider response is
+    # consistent. The fake provider returns the same provider refund ID.
+    client.payment.amount_override = None
+    client.payment.currency_override = "INR"
+    retried = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="provider response mismatch",
+        amount_paise=50_000,
+        idempotency_key=key,
+    )
+    assert retried["refund_status"] == "processed"
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+    assert len(client.payment.calls) == 2
+
+
 def test_partial_refund_keeps_order_paid(core_and_engine) -> None:
     core, engine = core_and_engine
     order = settle_paid(core, "trc_h_rf3", "idem_hardening_rf_03")
@@ -655,6 +820,58 @@ def test_partial_refund_keeps_order_paid(core_and_engine) -> None:
     assert result["amount_paise"] == 9_900
     assert core.get_order(order.order_id).status is OrderStatus.PAID
     assert "refund.partial_settled" in ledger_actions(core, order.trace_id)
+
+
+def test_refunds_cannot_exceed_order_total_and_final_partial_closes_order(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf3_balance", "idem_hardening_rf_03_balance")
+    refunds, _ = refund_service_for(core, engine)
+
+    refunds.initiate_refund(order_id=order.order_id, reason="first", amount_paise=50_000)
+    with pytest.raises(ValueError, match="remaining refundable balance"):
+        refunds.initiate_refund(order_id=order.order_id, reason="too much", amount_paise=20_000)
+
+    refunds.initiate_refund(order_id=order.order_id, reason="final balance", amount_paise=19_900)
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
+
+
+def test_pending_partial_reserves_balance_but_only_processed_refunds_close_order(
+    core_and_engine,
+) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf_pending_balance", "idem_hardening_rf_pending_balance")
+    refunds, client = refund_service_for(core, engine)
+    client.payment.statuses = ["pending", "processed", "processed"]
+    first_key = "idem_hardening_pending_500_01"
+    second_key = "idem_hardening_processed_199_01"
+
+    first = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="first partial",
+        amount_paise=50_000,
+        idempotency_key=first_key,
+    )
+    assert first["refund_status"] == "initiated"
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+    second = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="second partial",
+        amount_paise=19_900,
+        idempotency_key=second_key,
+    )
+    assert second["refund_status"] == "processed"
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+    retried_first = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="first partial",
+        amount_paise=50_000,
+        idempotency_key=first_key,
+    )
+    assert retried_first["refund_status"] == "processed"
+    assert retried_first["provider_refund_id"] == first["provider_refund_id"]
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
 
 
 def test_refund_rejects_unpaid_over_amount_and_missing_payment(
@@ -748,3 +965,4 @@ def test_cancel_provider_link_before_abort(core_and_engine) -> None:
         idempotency_key="idem_hardening_cxl_02",
     )
     assert payments.cancel_provider_link(unlinkable.order_id, commerce=core) is False
+

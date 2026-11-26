@@ -147,10 +147,13 @@ class StripeAdapter:
 
     def validate_configuration(self) -> None:
         key = self.config.stripe_secret_key
-        if not key or key in ("", "replace_me"):
+        if not key or key == "replace_me":
             raise StripeConfigurationError("Stripe secret key is not configured")
-        if key.startswith("sk_live_"):
-            raise StripeConfigurationError("Live Stripe keys are refused; test mode only")
+        if not key.startswith("sk_test_"):
+            raise StripeConfigurationError("SELLABLE only accepts Stripe test-mode credentials")
+        webhook_secret = self.config.stripe_webhook_secret
+        if not webhook_secret or not webhook_secret.startswith("whsec_"):
+            raise StripeConfigurationError("Stripe test-mode webhook secret is not configured")
 
     # ------------------------------------------------------------------
 
@@ -198,7 +201,12 @@ def _parse_signature_header(header: str) -> tuple[int, list[str]]:
     for part in header.split(","):
         name, _, value = part.partition("=")
         if name.strip() == "t":
-            timestamp = int(value)
+            try:
+                timestamp = int(value)
+            except ValueError as error:
+                raise InvalidStripeSignatureError(
+                    "Malformed Stripe signature header"
+                ) from error
         elif name.strip() == "v1":
             signatures.append(value)
     if not timestamp or not signatures:

@@ -8,7 +8,17 @@ from typing import Any
 
 import threading
 
-from sqlalchemy import JSON, Boolean, DateTime, Index, Integer, String, UniqueConstraint, create_engine
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    create_engine,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from sellable.config import Settings, settings
@@ -44,6 +54,16 @@ class LedgerEventRecord(Base):
     outcome_effect_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     provider_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
     flags_json: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    # §28.2 attribution columns (nullable for rows written before they
+    # existed; ``_migrate`` adds them to live databases).
+    customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    agent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    risk_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    authorization_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(96), nullable=True)
 
 
 class OrderRecord(Base):
@@ -919,6 +939,9 @@ class NotificationRecord(Base):
     trace_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # At-least-once bus delivery redelivers events: the dedupe key makes the
+    # feed idempotent per (event, rule) instead of duplicating rows.
+    dedupe_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
 
 class WebhookSubscriptionRecord(Base):
@@ -1080,12 +1103,29 @@ def _build_engine(config: Settings = settings):
             if str(parent) not in ("", "."):
                 Path(parent).mkdir(parents=True, exist_ok=True)
         connect_args: dict[str, object] = {"check_same_thread": False}
+        is_sqlite = True
     elif "pooler.supabase.com" in config.database_url or "pgbouncer=true" in config.database_url:
         # Supabase pooler (PgBouncer transaction mode) does not support prepared statements
         connect_args = {"prepare_threshold": None}
     else:
         connect_args = {}
-    return create_engine(config.database_url, connect_args=connect_args, pool_pre_ping=True)
+        is_sqlite = False
+    engine = create_engine(config.database_url, connect_args=connect_args, pool_pre_ping=True)
+    if is_sqlite:
+        # Concurrent writers (request threadpool + the maintenance worker)
+        # need SQLite's busy handler: without it the loser of a write lock
+        # fails immediately with "database is locked" instead of waiting.
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - env-specific
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA busy_timeout = 5000")
+            if ":memory:" not in config.database_url:
+                cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.close()
+
+    return engine
 
 
 def _migrate_sqlite(engine) -> None:
@@ -1180,12 +1220,58 @@ def _migrate_sqlite(engine) -> None:
                 )
 
 
-def _migrate(engine) -> None:
+
+#: §28.2 ledger attribution columns added after the initial schema. Any
+#: missing column is added to a live database at startup, on every dialect,
+#: without dropping data.
+_LEDGER_ATTRIBUTION_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("customer_id", "VARCHAR(128)"),
+    ("agent_id", "VARCHAR(128)"),
+    ("agent_version", "VARCHAR(64)"),
+    ("resource_type", "VARCHAR(64)"),
+    ("resource_id", "VARCHAR(128)"),
+    ("risk_ref", "VARCHAR(128)"),
+    ("authorization_ref", "VARCHAR(128)"),
+    ("reason_code", "VARCHAR(96)"),
+)
+
+
+#: Post-initial columns per table: {table: ((name, ddl), ...)}.
+_LATE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    "ledger_events": _LEDGER_ATTRIBUTION_COLUMNS,
+    "notifications": (("dedupe_key", "VARCHAR(160)"),),
+}
+
+
+def _ensure_ledger_attribution_columns(engine) -> None:
+    """Add missing late columns to live databases (SQLite + Postgres)."""
+    import logging
+
+    from sqlalchemy import inspect as sa_inspect, text
+
+    log = logging.getLogger("sellable.migrate")
+    inspector = sa_inspect(engine)
+    for table, columns in _LATE_COLUMNS.items():
+        try:
+            existing = {c["name"] for c in inspector.get_columns(table)}
+        except Exception:  # noqa: BLE001 — fresh databases get them from create_all
+            continue
+        missing = [(name, ddl) for name, ddl in columns if name not in existing]
+        if not missing:
+            continue
+        with engine.begin() as connection:
+            for name, ddl in missing:
+                connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                log.info("%s: added column %s", table, name)
+
+
+def _migrate(engine, *, require_invariants: bool = False) -> None:
     """Add columns introduced after the initial schema without dropping data."""
     import logging
 
     from sqlalchemy import text
 
+    _ensure_ledger_attribution_columns(engine)
     if engine.dialect.name == "sqlite":
         _migrate_sqlite(engine)
         return
@@ -1299,18 +1385,24 @@ def _migrate(engine) -> None:
                 "UPDATE ledger_events SET merchant_id = 'mrc_demo_store' WHERE merchant_id IS NULL"
             ))
 
-    # Separate transaction: pre-existing duplicate keys must not roll back
-    # the column migrations above — worst case the core in-memory guard
-    # remains the only protection and a warning is logged.
+    # Separate transactions: duplicate legacy data must not roll back the
+    # schema migrations above. Production startup fails closed if either
+    # required uniqueness invariant cannot be established.
     try:
         with engine.begin() as connection:
             connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_merchant_idempotency "
                 "ON orders (merchant_id, idempotency_key)"
             ))
-    except Exception as error:  # noqa: BLE001 — startup must survive legacy data
+    except Exception as error:  # noqa: BLE001 — legacy duplicate rows may block the index
+        if require_invariants:
+            raise RuntimeError(
+                "Production startup could not establish the unique order idempotency "
+                f"index ({type(error).__name__}); check database permissions and "
+                "resolve duplicate merchant/idempotency keys before restarting."
+            ) from None
         logging.getLogger("sellable.migrate").warning(
-            "Skipping orders idempotency unique index: %s", error
+            "Skipping orders idempotency unique index (%s)", type(error).__name__
         )
 
     # Same tolerance for the single-ACTIVE-session invariant.
@@ -1321,13 +1413,95 @@ def _migrate(engine) -> None:
                 "ON checkout_sessions (merchant_id, buyer_ref) "
                 "WHERE status = 'ACTIVE'"
             ))
-    except Exception as error:  # noqa: BLE001 — startup must survive legacy data
+    except Exception as error:  # noqa: BLE001 — legacy duplicate rows may block the index
+        if require_invariants:
+            raise RuntimeError(
+                "Production startup could not establish the active checkout-session "
+                f"unique index ({type(error).__name__}); check database permissions "
+                "and resolve duplicate active sessions before restarting."
+            ) from None
         logging.getLogger("sellable.migrate").warning(
-            "Skipping active-session unique index: %s", error
+            "Skipping active-session unique index (%s)", type(error).__name__
         )
 
 
 def initialise_database(config: Settings = settings) -> None:
     engine = make_engine(config)
     Base.metadata.create_all(engine)
-    _migrate(engine)
+    _migrate(
+        engine,
+        require_invariants=(
+            not config.is_dev_environment and engine.dialect.name == "postgresql"
+        ),
+    )
+    _harden_supabase_data_api(engine)
+
+
+def _harden_supabase_data_api(engine) -> None:
+    """Block direct Supabase Data API access to backend-owned commerce tables.
+
+    The console uses Supabase Auth but loads business data through this API.
+    Revoke browser roles' table/sequence privileges and enable RLS as defense
+    in depth; the backend's database owner and server-only service role retain
+    their existing access. Repeat after schema creation and revoke default
+    privileges so future SQLAlchemy tables inherit the same boundary.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+
+    preparer = engine.dialect.identifier_preparer
+    api_roles = {"PUBLIC"}
+    with engine.begin() as connection:
+        existing_roles = set(
+            connection.execute(
+                text("SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated')")
+            ).scalars()
+        )
+        api_roles.update(existing_roles)
+        roles_sql = ", ".join(
+            "PUBLIC" if role == "PUBLIC" else preparer.quote(role)
+            for role in sorted(api_roles)
+        )
+
+        for table in Base.metadata.sorted_tables:
+            qualified_table = (
+                f"{preparer.quote('public')}.{preparer.quote(table.name)}"
+            )
+            connection.execute(
+                text(f"ALTER TABLE {qualified_table} ENABLE ROW LEVEL SECURITY")
+            )
+            connection.execute(
+                text(
+                    f"REVOKE ALL PRIVILEGES ON TABLE {qualified_table} "
+                    f"FROM {roles_sql}"
+                )
+            )
+            for column in table.columns:
+                if not (column.primary_key and column.autoincrement is True):
+                    continue
+                sequence_name = connection.execute(
+                    text("SELECT pg_get_serial_sequence(:table_name, :column_name)"),
+                    {
+                        "table_name": f"public.{table.name}",
+                        "column_name": column.name,
+                    },
+                ).scalar_one_or_none()
+                if sequence_name:
+                    schema_name, name = sequence_name.split(".", 1)
+                    qualified_sequence = (
+                        f"{preparer.quote(schema_name)}.{preparer.quote(name)}"
+                    )
+                    connection.execute(
+                        text(
+                            f"REVOKE ALL PRIVILEGES ON SEQUENCE {qualified_sequence} "
+                            f"FROM {roles_sql}"
+                        )
+                    )
+
+        for object_type in ("TABLES", "SEQUENCES"):
+            connection.execute(
+                text(
+                    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+                    f"REVOKE ALL PRIVILEGES ON {object_type} FROM {roles_sql}"
+                )
+            )

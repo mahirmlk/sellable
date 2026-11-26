@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 import razorpay
+import hashlib
+import requests
 from razorpay.errors import BadRequestError, GatewayError, ServerError, SignatureVerificationError
 
 from sellable.config import Settings
@@ -23,6 +25,27 @@ class RazorpayRequestError(RuntimeError):
 
 class InvalidWebhookSignatureError(ValueError):
     pass
+
+
+class _ProviderTimeoutSession(requests.Session):
+    """Bound SDK calls and preserve pending refunds during idempotency conflicts."""
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", 15)
+        response = super().request(method, url, **kwargs)
+        headers = kwargs.get("headers") or {}
+        has_refund_idempotency = any(
+            str(name).lower() == "x-refund-idempotency" for name in headers
+        )
+        # Razorpay returns 409 while the original request with this key is
+        # still processing. Keep this as a retryable transport-level failure:
+        # the refund repository must continue reserving its balance.
+        if has_refund_idempotency and getattr(response, "status_code", None) == 409:
+            raise requests.exceptions.HTTPError(
+                "Razorpay refund idempotency request is still processing",
+                response=response,
+            )
+        return response
 
 
 class ProviderOrder(StrictModel):
@@ -93,17 +116,134 @@ class RazorpayAdapter:
             payload["callback_url"] = callback_url
             payload["callback_method"] = "get"
         response = self._create(self._sdk_client.payment_link, payload)
+        if not isinstance(response, dict):
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid payment-link response",
+                retryable=True,
+            )
+        amount_paise = response.get("amount")
+        if (
+            not isinstance(amount_paise, int)
+            or isinstance(amount_paise, bool)
+            or amount_paise != order.amount_paise
+        ):
+            # The provider may have created the link even if its response is
+            # malformed. Treat this as uncertain so recovery can inspect the
+            # stable order reference instead of creating another link.
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid payment-link amount",
+                retryable=True,
+            )
         return ProviderPaymentLink(
             provider_link_id=response["id"],
             short_url=response["short_url"],
-            amount_paise=response["amount"],
+            amount_paise=amount_paise,
             currency=response["currency"],
             status=response["status"],
             provider_order_id=response.get("order_id"),
         )
 
+    def find_payment_link(self, order: Order) -> ProviderPaymentLink | None:
+        """Look up a prior link by the stable local order reference.
+
+        This reconciles a create request whose response was lost before its
+        provider ID and URL could be persisted. Razorpay enforces unique
+        reference IDs, so recovery is safer than posting a second link.
+        """
+        self.validate_configuration()
+        try:
+            response = self._sdk_client.payment_link.all(
+                {"reference_id": order.order_id}
+            )
+        except BadRequestError as error:
+            raise RazorpayRequestError(
+                "Razorpay rejected the payment-link recovery lookup",
+                retryable=False,
+            ) from error
+        except (GatewayError, ServerError, requests.exceptions.RequestException) as error:
+            raise RazorpayRequestError(
+                "Razorpay could not complete the payment-link recovery lookup",
+                retryable=True,
+            ) from error
+
+        if not isinstance(response, dict):
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid payment-link recovery response",
+                retryable=True,
+            )
+        items = response.get("items", response.get("payment_links", []))
+        if not isinstance(items, list):
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid payment-link recovery response",
+                retryable=True,
+            )
+        matches = [
+            item for item in items
+            if isinstance(item, dict)
+            and item.get("reference_id") == order.order_id
+        ]
+        if not matches:
+            return None
+        if len(matches) != 1:
+            raise RazorpayRequestError(
+                "Razorpay returned multiple links for one order reference",
+                retryable=False,
+            )
+
+        item = matches[0]
+        try:
+            amount_paise = item["amount"]
+            if not isinstance(amount_paise, int) or isinstance(amount_paise, bool):
+                raise TypeError("payment-link amount must be an integer")
+            currency = str(item["currency"]).upper()
+            link_id = item["id"]
+            short_url = item["short_url"]
+            status = str(item["status"]).lower()
+        except (KeyError, TypeError, ValueError) as error:
+            raise RazorpayRequestError(
+                "Razorpay returned an incomplete payment-link recovery response",
+                retryable=True,
+            ) from error
+        if (
+            not isinstance(link_id, str)
+            or not link_id
+            or not isinstance(short_url, str)
+            or not short_url.startswith("https://")
+        ):
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid recovered payment link",
+                retryable=True,
+            )
+        if amount_paise != order.amount_paise or currency != "INR":
+            raise RazorpayRequestError(
+                "Recovered Razorpay link does not match the local order",
+                retryable=False,
+            )
+        if status in {"cancelled", "expired"}:
+            raise RazorpayRequestError(
+                "Recovered Razorpay payment link is no longer payable",
+                retryable=False,
+            )
+        return ProviderPaymentLink(
+            provider_link_id=link_id,
+            short_url=short_url,
+            amount_paise=amount_paise,
+            currency=currency,
+            status=status,
+            provider_order_id=(
+                item.get("order_id")
+                if isinstance(item.get("order_id"), str)
+                else None
+            ),
+        )
+
     def refund(
-        self, payment_id: str, amount_paise: int, *, notes: dict[str, str] | None = None
+        self,
+        payment_id: str,
+        amount_paise: int,
+        *,
+        notes: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
     ) -> ProviderRefund:
         """Refund a captured payment through Razorpay (test mode only).
 
@@ -117,8 +257,20 @@ class RazorpayAdapter:
         payload: dict[str, Any] = {"amount": amount_paise}
         if notes:
             payload["notes"] = notes
+        headers = None
+        if idempotency_key:
+            # Razorpay requires an opaque, stable request key. Hash arbitrary
+            # caller keys so the provider header is always valid and bounded.
+            digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+            headers = {"X-Refund-Idempotency": f"rfnd_{digest}"}
         try:
-            response = self._sdk_client.payment.refund(payment_id, payload)
+            # razorpay==1.4.2's effective (last-defined) method signature is
+            # refund(payment_id, data={}, **kwargs); the earlier overload is
+            # shadowed in that release. Pass the complete request body as the
+            # second positional argument so the SDK sends the expected JSON.
+            response = self._sdk_client.payment.refund(
+                payment_id, payload, **({"headers": headers} if headers else {})
+            )
         except BadRequestError as error:
             raise RazorpayRequestError(
                 f"Razorpay rejected the refund: {error}", retryable=False
@@ -127,12 +279,45 @@ class RazorpayAdapter:
             raise RazorpayRequestError(
                 f"Razorpay could not complete the refund: {error}", retryable=True
             ) from error
+        except requests.exceptions.RequestException as error:
+            raise RazorpayRequestError(
+                "Razorpay refund response was unavailable", retryable=True
+            ) from error
+        if not isinstance(response, dict):
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid refund response", retryable=True
+            )
+        status = response.get("status")
+        if not isinstance(status, str) or status not in {"pending", "processed", "failed"}:
+            raise RazorpayRequestError("Razorpay returned an unknown refund status", retryable=True)
+        returned_amount = response.get("amount")
+        if (
+            not isinstance(returned_amount, int)
+            or isinstance(returned_amount, bool)
+            or returned_amount != amount_paise
+        ):
+            # A malformed response does not prove that the provider declined
+            # or rolled back the refund. Keep the local balance reserved until
+            # the same idempotent request can be reconciled.
+            raise RazorpayRequestError(
+                "Razorpay returned a different or missing refund amount", retryable=True
+            )
+        returned_currency = response.get("currency")
+        if not isinstance(returned_currency, str) or returned_currency.upper() != "INR":
+            raise RazorpayRequestError(
+                "Razorpay returned a different or missing refund currency", retryable=True
+            )
+        refund_id = response.get("id")
+        if not isinstance(refund_id, str) or not refund_id:
+            raise RazorpayRequestError(
+                "Razorpay returned a refund without an identifier", retryable=True
+            )
         return ProviderRefund(
-            provider_refund_id=response["id"],
+            provider_refund_id=refund_id,
             provider_payment_id=payment_id,
-            amount_paise=response.get("amount", amount_paise),
-            currency=response.get("currency", "INR"),
-            status=response.get("status", "processed"),
+            amount_paise=returned_amount,
+            currency=returned_currency.upper(),
+            status=status,
         )
 
     def cancel_payment_link(self, link_id: str) -> None:
@@ -168,7 +353,8 @@ class RazorpayAdapter:
     def _sdk_client(self) -> Any:
         if self._client is None:
             self._client = razorpay.Client(
-                auth=(self.config.razorpay_key_id, self.config.razorpay_key_secret)
+                auth=(self.config.razorpay_key_id, self.config.razorpay_key_secret),
+                session=_ProviderTimeoutSession(),
             )
             self._client.set_app_details({"title": "SELLABLE", "version": "0.1.0"})
         return self._client
@@ -183,7 +369,7 @@ class RazorpayAdapter:
                 return resource.create(payload)
             except BadRequestError as error:
                 raise RazorpayRequestError("Razorpay rejected the request", retryable=False) from error
-            except (GatewayError, ServerError) as error:
+            except (GatewayError, ServerError):
                 last_error = RazorpayRequestError(
                     f"Razorpay could not complete the request (attempt {attempt + 1})",
                     retryable=True,

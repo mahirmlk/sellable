@@ -92,8 +92,11 @@ class OpenCodeGoAdapter(_OpenAICompatibleAdapter):
 
     Go keys are scoped to ``opencode.ai/zen/go/v1`` (OpenAI-compatible
     ``chat/completions`` for DeepSeek/GLM/Kimi/Qwen models). Per the Go docs
-    the client must properly identify itself, so we send a product
-    User-Agent plus the app identity headers.
+    the client must properly identify itself: a product User-Agent, app
+    identity headers, and a stable ``x-opencode-session`` id per
+    conversation (each ``complete`` call is one conversation) so the
+    request can be routed and prompt-cached. Without the session header
+    the endpoint rejects every call with HTTP 400 MissingSessionID.
     """
 
     provider_name = "opencode-go"
@@ -104,3 +107,44 @@ class OpenCodeGoAdapter(_OpenAICompatibleAdapter):
         "HTTP-Referer": "https://sellable.shop",
         "X-Title": "SELLABLE",
     }
+
+    def _headers(self) -> dict[str, str]:
+        import uuid
+
+        return {
+            **self.default_headers,
+            "x-opencode-session": f"sellable-{uuid.uuid4().hex}",
+        }
+
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        timeout: int = 90,
+    ) -> str:
+        self._require_key()
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature if temperature is not None else self.config.temperature,
+        }
+        if tools:
+            payload["tools"] = tools
+        headers = {"Authorization": f"Bearer {self.config.api_key}", **self._headers()}
+        data = post_json(f"{self.base_url}/chat/completions", payload, headers, timeout=timeout)
+        message = data["choices"][0]["message"]
+        return message.get("content") or ""
+
+    def probe(self, *, timeout: int = 10) -> None:
+        """Confirm the provider accepts our credentials with a tiny request."""
+        self._require_key()
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "temperature": 0,
+            "max_tokens": 4,
+        }
+        headers = {"Authorization": f"Bearer {self.config.api_key}", **self._headers()}
+        post_json(f"{self.base_url}/chat/completions", payload, headers, timeout=timeout)

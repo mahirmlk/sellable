@@ -10,6 +10,7 @@ events for audit.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from enum import StrEnum
 
 from sellable.contracts import TrustAssessment, TrustTier, new_id, utc_now
 
@@ -27,6 +28,48 @@ def _as_aware(value: datetime) -> datetime:
         return value.replace(tzinfo=timezone.utc)
     return value
 
+
+
+class AgentAccessTier(StrEnum):
+    """Agent access tiers (§32.3): stronger tiers require stronger trust
+    and authorization. Derived deterministically from trust + authority
+    evidence; never the sole authorization mechanism (§13.3)."""
+
+    PUBLIC_DISCOVERY = "PUBLIC_DISCOVERY"
+    AUTHENTICATED_BROWSE = "AUTHENTICATED_BROWSE"
+    CUSTOMER_LINKED = "CUSTOMER_LINKED"
+    TRANSACTION_CAPABLE = "TRANSACTION_CAPABLE"
+    HIGH_VALUE_TRANSACTION = "HIGH_VALUE_TRANSACTION"
+    SENSITIVE_SUPPORT = "SENSITIVE_SUPPORT"
+
+
+def derive_access_tier(
+    assessment: TrustAssessment,
+    *,
+    has_active_delegation: bool = False,
+    identity_linked: bool = False,
+    agent_type: str = "",
+) -> AgentAccessTier:
+    """Map trust evidence to the §32.3 access-tier ladder.
+
+    Order matters: the highest evidence wins. FLAGGED/UNDER_REVIEW subjects
+    stay at PUBLIC_DISCOVERY regardless of history — risk and authorization
+    gate the actual action.
+    """
+    tier = assessment.tier
+    if agent_type in ("SELLABLE_INTERNAL_AGENT", "PLATFORM_AGENT") and tier is not TrustTier.FLAGGED:
+        return AgentAccessTier.SENSITIVE_SUPPORT
+    if tier in (TrustTier.FLAGGED, TrustTier.UNDER_REVIEW):
+        return AgentAccessTier.PUBLIC_DISCOVERY
+    if tier is TrustTier.TRUSTED:
+        return AgentAccessTier.HIGH_VALUE_TRANSACTION
+    if tier is TrustTier.ESTABLISHED or has_active_delegation:
+        return AgentAccessTier.TRANSACTION_CAPABLE
+    if identity_linked:
+        return AgentAccessTier.CUSTOMER_LINKED
+    if tier in (TrustTier.NEW, TrustTier.PROVISIONAL):
+        return AgentAccessTier.AUTHENTICATED_BROWSE
+    return AgentAccessTier.PUBLIC_DISCOVERY
 
 class TrustService:
     def __init__(

@@ -214,11 +214,95 @@ class SellerAgent:
                 "agent_id": self.versions.agent_id,
                 "agent_version": self.versions.agent_version,
                 "prompt_version": self.versions.prompt_version,
-                "guardrail_blocks": guard_recorder.blocks,
             }
         )
+        result = self._sanitize_output(result, request.intent, guard_recorder)
+        result = result.model_copy(update={"guardrail_blocks": guard_recorder.blocks})
         self.recorder.close_run(status="COMPLETED", outcome=result.action.value)
         self._publish_run_completed(result)
+        return result
+
+    def _sanitize_output(
+        self,
+        result: SellerDecision,
+        intent: IntentMandate,
+        guard_recorder: GuardrailRecorder,
+    ) -> SellerDecision:
+        """POST_MODEL_GUARDS (§9.1 output sanitization): the final
+        buyer-facing message may state only known SKUs and authoritative
+        amounts, whether it came from the LLM or the deterministic builder.
+        On block the message is replaced with a grounded summary — the
+        decision data itself is already policy-validated, so the run fails
+        safe instead of failing."""
+        from agents.runtime.guardrails import (
+            GuardrailContext,
+            GuardrailVerdict,
+            POST_MODEL_GUARDS,
+        )
+
+        if not result.response_message:
+            return result
+        known_skus = {item.sku for item in result.cart.items} if result.cart else set()
+        # Price queries quote the selected product without a cart: the
+        # product itself and its catalog figures are authoritative (§19.4).
+        for product in (result.selected_product, result.upsell_product):
+            if product is not None:
+                known_skus.add(product.sku)
+        known_skus.update(p.sku for p in result.recommendations)
+        known_amounts = self._authoritative_paise(result, intent)
+        policy = self.commerce.policy
+        known_amounts.update(
+            {
+                policy.max_order_value_paise,
+                policy.max_single_item_value_paise,
+                policy.human_approval_threshold_paise,
+            }
+        )
+        for product in (result.selected_product, result.upsell_product):
+            if product is not None:
+                # The price-query floor is derived from the same policy math
+                # as the negotiation engine (_safe_offer at offer=0), so the
+                # quoted figure is authoritative.
+                discount_percentage = 100 - policy.max_discount_percent
+                max_discount_floor = (
+                    product.price_paise * discount_percentage + 99
+                ) // 100
+                known_amounts.update(
+                    {
+                        product.price_paise,
+                        product.floor_paise,
+                        max(product.floor_paise, max_discount_floor),
+                    }
+                )
+        context = GuardrailContext(
+            agent_id=self.versions.agent_id,
+            agent_type="SELLABLE_INTERNAL_AGENT",
+            merchant_id=self.commerce.merchant_scope,
+            session_id=result.trace_id,
+            output_text=result.response_message,
+            known_skus=frozenset(known_skus),
+            known_amounts_paise=frozenset(known_amounts),
+        )
+        for guard in POST_MODEL_GUARDS:
+            outcome = guard(context)
+            guard_recorder.extend([outcome])
+            if outcome.verdict is GuardrailVerdict.BLOCK:
+                logger.warning(
+                    "seller output guardrail blocked the reply: %s %s",
+                    outcome.reason_code,
+                    outcome.detail,
+                )
+                cart = result.cart
+                if cart is not None:
+                    fallback = (
+                        f"Your quote is ready: {len(cart.items)} item(s), "
+                        f"total {cart.total_paise} paise."
+                    )
+                else:
+                    fallback = (
+                        "I could not complete that request safely, so no quote was created."
+                    )
+                return result.model_copy(update={"response_message": fallback})
         return result
 
     def _publish_run_completed(self, result: SellerDecision) -> None:

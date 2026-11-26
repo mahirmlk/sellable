@@ -578,6 +578,37 @@ class CommerceCore:
         )
         return priced
 
+    def _promotion_redemptions_for_customer(
+        self, customer_id: str | None, *, window_minutes: int = 24 * 60
+    ) -> int:
+        """Redemptions by one customer inside the window (§24.4 input).
+
+        Redemption rows carry a checkout, not a customer, so the window scan
+        maps through the checkout's customer attribution. Bounded and
+        best-effort: a lookup failure counts zero, never blocks commerce.
+        """
+        if not customer_id:
+            return 0
+        try:
+            from datetime import timedelta
+
+            from sellable.contracts import utc_now
+
+            since = utc_now() - timedelta(minutes=window_minutes)
+            redemptions = self.promotion_repo.redemptions_since(
+                self.merchant_scope, since
+            )
+            count = 0
+            for redemption in redemptions[:200]:
+                checkout = self.checkout_repo.get(
+                    redemption.checkout_id, self.merchant_scope
+                )
+                if checkout is not None and checkout.customer_id == customer_id:
+                    count += 1
+            return count
+        except Exception:  # noqa: BLE001 — risk inputs are additive
+            return 0
+
     @traced("checkout.authorize")
     def checkout_authorize(self, checkout_id: str, *, trace_id: str) -> Checkout:
         from sellable.contracts import CheckoutStatus as _CheckoutStatus
@@ -594,6 +625,9 @@ class CommerceCore:
             trust_tier=self._risk_tier_for(pending),
             approval_threshold_paise=self.policy.human_approval_threshold_paise,
             max_order_paise=self.policy.max_order_value_paise,
+            promotion_redemptions_recent=self._promotion_redemptions_for_customer(
+                pending.customer_id
+            ),
             trace_id=trace_id,
         )
         self._record(
@@ -612,6 +646,10 @@ class CommerceCore:
             },
             reasoning_summary="Evaluated transaction risk before authorization.",
             policy_refs=[f"RISK.{reason}" for reason in assessment.reasons[:5]],
+            resource_type="checkout",
+            resource_id=checkout_id,
+            risk_ref=assessment.decision_id,
+            reason_code=assessment.level.value,
         )
         if assessment.level is RiskLevel.BLOCK:
             self.checkout_service.reject(checkout_id, self.merchant_scope)
@@ -829,6 +867,8 @@ class CommerceCore:
             output={"outcome": outcome, "reason_code": decision.reason_code},
             reasoning_summary=f"Gateway resolved delegation for {route}: {outcome}.",
             policy_refs=decision.matched_policies,
+            authorization_ref=decision.decision_id,
+            reason_code=decision.reason_code,
         )
         return decision
 
@@ -961,10 +1001,38 @@ class CommerceCore:
         onboarding = self.onboarding_repo.get(self.merchant_scope) or MerchantOnboarding(
             merchant_id=self.merchant_scope
         )
+        previous_stage = onboarding.stage
         for check, passed in results.items():
             if passed:
                 onboarding = onboarding.record_check(check)
+        # §10.1: the stage machine is driven, not decorative. When every
+        # §10.3 check passes, the lifecycle advances (one stage per step) to
+        # READY_FOR_REVIEW. LIVE stays a human decision — sandbox approval
+        # and activation remain explicit operator actions.
+        if (
+            onboarding.is_activation_ready
+            and onboarding.stage.value not in ("READY_FOR_REVIEW", "LIVE")
+        ):
+            advanced = onboarding
+            while advanced.stage.value not in ("READY_FOR_REVIEW", "LIVE"):
+                advanced = advanced.advance()
+            onboarding = advanced
         self.onboarding_repo.save(onboarding)
+        if onboarding.stage is not previous_stage:
+            self._record(
+                trace_id=trace_id,
+                actor=LedgerActor.COMMERCE_CORE,
+                action="onboarding.advanced",
+                inputs={"merchant_id": self.merchant_scope},
+                output={
+                    "from_stage": previous_stage.value,
+                    "to_stage": onboarding.stage.value,
+                },
+                reasoning_summary="Onboarding stage advanced after readiness checks.",
+                resource_type="merchant",
+                resource_id=self.merchant_scope,
+                reason_code=onboarding.stage.value,
+            )
         self._record(
             trace_id=trace_id,
             actor=LedgerActor.COMMERCE_CORE,
@@ -974,6 +1042,7 @@ class CommerceCore:
                 "passed": sorted(c for c, ok in results.items() if ok),
                 "failed": sorted(c for c, ok in results.items() if not ok),
                 "activation_ready": onboarding.is_activation_ready,
+                "stage": onboarding.stage.value,
             },
             reasoning_summary="Ran automated merchant readiness checks before activation.",
         )
@@ -1515,6 +1584,10 @@ class CommerceCore:
                     },
                     reasoning_summary="Resolved the customer delegation for the checkout order.",
                     policy_refs=auth_decision.matched_policies,
+                    resource_type="order",
+                    resource_id=None,
+                    authorization_ref=auth_decision.decision_id,
+                    reason_code=auth_decision.reason_code,
                 )
                 if auth_decision.outcome is AuthorizationOutcome.DENY:
                     self._record_trust_outcome(
@@ -1663,6 +1736,10 @@ class CommerceCore:
             output={"verdict": decision.verdict, "reason_code": decision.reason_code},
             reasoning_summary=decision.reasoning_summary,
             policy_refs=decision.policy_refs,
+            resource_type="cart",
+            resource_id=cart.mandate_id,
+            reason_code=decision.reason_code,
+            agent_id=intent.buyer_agent_id,
         )
         return decision
 
@@ -1721,6 +1798,10 @@ class CommerceCore:
                         "Resolved the customer delegation before touching commerce state."
                     ),
                     policy_refs=decision.matched_policies,
+                    resource_type="order",
+                    authorization_ref=decision.decision_id,
+                    reason_code=decision.reason_code,
+                    agent_id=intent.buyer_agent_id,
                 )
                 if decision.outcome is AuthorizationOutcome.DENY:
                     self._record_trust_outcome(
@@ -2290,6 +2371,14 @@ class CommerceCore:
         policy_refs: list[str] | None = None,
         outcome_effect: dict[str, object] | None = None,
         provider_ref: str | None = None,
+        customer_id: str | None = None,
+        agent_id: str | None = None,
+        agent_version: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        risk_ref: str | None = None,
+        authorization_ref: str | None = None,
+        reason_code: str | None = None,
     ) -> None:
         self.ledger.append(
             LedgerEvent(
@@ -2303,6 +2392,14 @@ class CommerceCore:
                 policy_refs=policy_refs or [],
                 outcome_effect=outcome_effect,
                 provider_ref=provider_ref,
+                customer_id=customer_id,
+                agent_id=agent_id,
+                agent_version=agent_version,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                risk_ref=risk_ref,
+                authorization_ref=authorization_ref,
+                reason_code=reason_code,
             )
         )
 

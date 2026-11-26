@@ -1,7 +1,7 @@
 """Provider-agnostic payment surface (target §25): checkout code depends
 on this protocol, never on a concrete provider. Razorpay ships first;
-Stripe (test mode) second; the simulated adapter serves the sandbox.
-Select with ``PAYMENT_PROVIDER`` (razorpay|stripe|simulated).
+The Stripe test adapter and simulated rail are available only in development/test.
+Deployments outside those environments accept Razorpay Test Mode only.
 """
 
 from __future__ import annotations
@@ -24,17 +24,26 @@ class PaymentProvider(Protocol):
 
 
 def build_provider(config, name: str | None = None):
-    """Construct the configured provider (stdlib only, no new deps)."""
+    """Construct the configured provider.
+
+    Stripe and simulated rails are limited to development/test. Non-development
+    deployments accept only Razorpay, whose adapter rejects live-mode keys.
+    """
     from sellable.payments.simulated import SimulatedPaymentAdapter
     from sellable.payments.stripe import StripeAdapter
 
     selected = (name or getattr(config, "payment_provider", None) or "razorpay").lower()
     if selected == "stripe":
-        from sellable.payments.stripe import StripeAdapter
-
+        if not getattr(config, "is_dev_environment", False):
+            raise ValueError("Stripe is only available in development and test; use Razorpay Test Mode.")
         return StripeAdapter(config)
     if selected == "simulated":
+        if not getattr(config, "is_dev_environment", False):
+            raise ValueError("simulated payments are only available in development and test")
         return SimulatedPaymentAdapter()
+    if selected != "razorpay":
+        raise ValueError(f"unsupported payment provider: {selected}")
+
     from sellable.payments.razorpay import RazorpayAdapter
 
     return RazorpayAdapter(config)

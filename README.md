@@ -130,7 +130,8 @@ cd sellable
 # Backend
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements/runtime.txt -r requirements/dev.txt
+python -m pip install --no-deps --no-build-isolation -e .
 
 # Frontend
 cd apps/merchant-console

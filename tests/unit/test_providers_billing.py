@@ -19,6 +19,7 @@ from sellable.connectors.shipping import (
     carrier_for,
 )
 from sellable.contracts import FulfillmentStatus
+from sellable.config import Settings
 from sellable.core import CommerceCore
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
@@ -29,6 +30,7 @@ from sellable.payments.stripe import (
     StripeAdapter,
     StripeConfigurationError,
 )
+from sellable.payments.razorpay import _ProviderTimeoutSession
 
 
 @pytest.fixture
@@ -91,12 +93,29 @@ def test_all_adapters_satisfy_the_protocol() -> None:
 
 
 def test_factory_selection() -> None:
-    config = SimpleNamespace(payment_provider="stripe")
+    config = SimpleNamespace(payment_provider="stripe", is_dev_environment=True)
     assert isinstance(build_provider(config), StripeAdapter)
     assert build_provider(SimpleNamespace()).provider_name == "razorpay"
-    assert build_provider(SimpleNamespace(payment_provider="simulated")).provider_name == (
+    assert build_provider(Settings(environment="development", payment_provider="simulated")).provider_name == (
         "simulated"
     )
+
+
+def test_razorpay_session_sets_default_timeout(monkeypatch) -> None:
+    calls = []
+
+    def fake_request(_session, method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return object()
+
+    monkeypatch.setattr("requests.Session.request", fake_request)
+    session = _ProviderTimeoutSession()
+
+    session.get("https://api.razorpay.com/v1/orders")
+    session.post("https://api.razorpay.com/v1/orders", timeout=3)
+
+    assert calls[0][2]["timeout"] == 15
+    assert calls[1][2]["timeout"] == 3
 
 
 # --- Stripe --------------------------------------------------------------------------------------
@@ -144,9 +163,11 @@ def test_stripe_signature_and_config() -> None:
         adapter.verify_webhook(body, sign("whsec_wrong"))
     with pytest.raises(InvalidStripeSignatureError):
         adapter.verify_webhook(body, None)
+    with pytest.raises(InvalidStripeSignatureError, match="Malformed"):
+        adapter.verify_webhook(body, "t=not-a-timestamp,v1=abc")
     with pytest.raises(StripeConfigurationError):
         StripeAdapter(_stripe_config(stripe_secret_key=None)).validate_configuration()
-    with pytest.raises(StripeConfigurationError, match="Live"):
+    with pytest.raises(StripeConfigurationError, match="test-mode"):
         StripeAdapter(_stripe_config(stripe_secret_key="sk_live_x")).validate_configuration()
 
 
@@ -162,9 +183,13 @@ def test_stripe_webhook_route() -> None:
         stripe_webhook_secret="whsec_123",
     )
     original = main_module.settings
-    main_module.settings = monkey_settings
+    main_module.settings = Settings(environment="production")
     client = TestClient(main_module.app)
     try:
+        disabled = client.post("/webhooks/stripe", content=b"not json")
+        assert disabled.status_code == 404
+
+        main_module.settings = monkey_settings
         body = b'{"id":"evt_test","type":"charge.refunded"}'
         timestamp = int(time.time())
         digest = hmac.new(

@@ -59,7 +59,9 @@ def _trace() -> str:
 def _grant(merchant: str, **overrides) -> DelegationGrant:
     base = {
         "principal_customer_id": "cust_1",
-        "subject_agent_id": "agent_gw",
+        # The demo key authenticates as buyer_demo_01: the grant must
+        # belong to the presenting agent (§45 impersonation protection).
+        "subject_agent_id": "buyer_demo_01",
         "merchant_scope": merchant,
         "operation_scopes": [OperationScope.CHECKOUT_WRITE, OperationScope.CART_WRITE],
         "amount_limit_paise": 500_000,
@@ -186,7 +188,7 @@ def test_enforce_allow_deny_hold(commerce_core: CommerceCore) -> None:
     core.delegation_repo.save(_grant(merchant))
     decision = enforce_delegation(
         core,
-        delegation_id=core.delegation_repo.active_for_agent(merchant, "agent_gw")[0].delegation_id,
+        delegation_id=core.delegation_repo.active_for_agent(merchant, "buyer_demo_01")[0].delegation_id,
         scope=OperationScope.CART_WRITE,
         trace_id=trace_id,
         route="agent.quotes.create",
@@ -243,11 +245,21 @@ def test_enforce_allow_deny_hold(commerce_core: CommerceCore) -> None:
 def _overridden_client(commerce_core: CommerceCore) -> TestClient:
     from sellable.agents.seller import SellerAgent
     from sellable.gateway import AgentGateway
-    from sellable.main import app, get_agent_gateway, get_commerce
+    from sellable.main import (
+        app,
+        get_agent_gateway,
+        get_commerce,
+        get_scoped_commerce,
+        get_scoped_commerce_signed,
+    )
 
     gateway = AgentGateway(commerce_core, SellerAgent(commerce_core))
     app.dependency_overrides[get_agent_gateway] = lambda: gateway
     app.dependency_overrides[get_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     return TestClient(app)
 
 

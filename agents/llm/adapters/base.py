@@ -58,6 +58,12 @@ def reply_amounts_known(reply: str, allowed_paise: set[int]) -> bool:
     return True
 
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover — annotation-only
+    from agents.llm.config import LLMConfig
+
+
 class LLMError(RuntimeError):
     """Raised when a provider cannot satisfy a completion request."""
 

@@ -1,0 +1,57 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sellable-commerce-api",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-11-21",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "api.sellable.shop",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "SellableBackend",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "./Dockerfile"
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SELLABLE_BACKEND",
+        "class_name": "SellableBackend"
+      }
+    ]
+  },
+  "exports": {
+    "SellableBackend": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "vars": {
+    "SELLABLE_ENVIRONMENT": "production",
+    "PORT": "8000",
+    "WEB_CONCURRENCY": "1",
+    "UVICORN_WORKERS": "1",
+    "SELLABLE_MAINTENANCE_WORKER": "1",
+    "TRUST_PROXY_HEADERS": "1",
+    "PAYMENT_PROVIDER": "razorpay",
+    "LLM_PROVIDER": "mock",
+    "LLM_TEMPERATURE": "0",
+    "CORS_ORIGINS": "https://sellable.shop,https://www.sellable.shop"
+  }
+}

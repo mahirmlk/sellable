@@ -171,7 +171,6 @@ class AgentApiKeyRepository:
 
 class OrderRepository:
     def __init__(self, engine: object | None = None) -> None:
-        from sqlalchemy import Engine
         self._engine = engine or make_engine()
 
     def save(self, order: Order) -> None:
@@ -446,6 +445,14 @@ class RefundRepository:
                 .order_by(RefundRecord.created_at)
             )
             return [self._to_refund(r) for r in session.scalars(query).all()]
+
+    def get(self, refund_id: str, merchant_id: str) -> Refund | None:
+        """One refund, merchant-scoped; foreign ids stay invisible."""
+        with Session(self._engine) as session:
+            record = session.get(RefundRecord, refund_id)
+            if record is None or record.merchant_id != merchant_id:
+                return None
+            return self._to_refund(record)
 
 
 class NonceRepository:
@@ -985,7 +992,6 @@ class BuyerMissionRepository:
 
 class ConsentRepository:
     def __init__(self, engine: object | None = None) -> None:
-        from sqlalchemy import Engine
         self._engine = engine or make_engine()
 
     def save(self, consent: Consent) -> None:
@@ -1160,6 +1166,22 @@ class DelegationRepository:
             record.revoked_at = datetime.now(timezone.utc)
             session.commit()
             return _delegation_to_grant(record)
+
+    def list_for_merchant(
+        self, merchant_id: str, *, customer_id: str | None = None
+    ) -> list[Any]:
+        """All grants for a merchant, newest first (console lifecycle surface)."""
+        with Session(self._engine) as session:
+            query = (
+                select(self._record_cls)
+                .where(self._record_cls.merchant_id == merchant_id)
+                .order_by(self._record_cls.created_at.desc())
+            )
+            if customer_id is not None:
+                query = query.where(
+                    self._record_cls.principal_customer_id == customer_id
+                )
+            return [_delegation_to_grant(r) for r in session.scalars(query).all()]
 
     def history_for_principal(self, merchant_id: str, customer_id: str) -> list[Any]:
         """All grants (active and revoked) where the customer is principal —
@@ -1855,6 +1877,17 @@ class PromotionRepository:
                 )
             )
             return [_promotion_to_contract(r) for r in session.scalars(query).all()]
+
+    def redemptions_since(self, merchant_id: str, since) -> list[Any]:
+        """Redemption rows in a window (§24.4 promotion-abuse input)."""
+        with Session(self._engine) as session:
+            query = (
+                select(self._redemption_cls)
+                .where(self._redemption_cls.merchant_id == merchant_id)
+                .where(self._redemption_cls.created_at >= since)
+                .order_by(self._redemption_cls.created_at.desc())
+            )
+            return list(session.scalars(query).all())
 
     def record_redemption(
         self, *, promotion_id: str, merchant_id: str, checkout_id: str, discount_paise: int
@@ -2769,6 +2802,36 @@ class ObservabilityRepository:
                 "tool_failures": sum(1 for t in tools if t.status != "OK"),
             }
 
+    def list_model_calls(self, merchant_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Model-level telemetry rows (§29.1), newest first, merchant-scoped
+        via the owning run."""
+        from sqlalchemy import select
+
+        with Session(self._engine) as session:
+            rows = session.scalars(
+                select(self._model_cls)
+                .where(self._model_cls.merchant_id == merchant_id)
+                .order_by(self._model_cls.created_at.desc())
+                .limit(limit)
+            ).all()
+            return [
+                {
+                    "call_id": r.call_id,
+                    "run_id": r.run_id,
+                    "provider": r.provider,
+                    "model": r.model,
+                    "input_tokens": r.input_tokens,
+                    "output_tokens": r.output_tokens,
+                    "estimated_cost_usd": r.estimated_cost_usd,
+                    "latency_ms": r.latency_ms,
+                    "finish_reason": r.finish_reason,
+                    "error": r.error,
+                    "retry_count": r.retry_count,
+                    "fallback_used": r.fallback_used,
+                }
+                for r in rows
+            ]
+
     def list_runs(self, merchant_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         """Recent agent runs for operations triage, newest first."""
         with Session(self._engine) as session:
@@ -3237,16 +3300,33 @@ class IdentityLinkRepository:
                 return None
             return _link_to_contract(record)
 
+    def any_for_customer(self, merchant_id: str, customer_id: str) -> bool:
+        """True when the customer has any identity-link row (any status) —
+        the §12.1 known_customer evidence."""
+        with Session(self._engine) as session:
+            record = session.scalars(
+                select(self._record_cls)
+                .where(self._record_cls.merchant_id == merchant_id)
+                .where(self._record_cls.customer_id == customer_id)
+                .limit(1)
+            ).first()
+            return record is not None
+
     def linked_for_customer(
         self, merchant_id: str, customer_id: str, *, agent_id: str | None = None
     ) -> list[Any]:
-        """LINKED identities for a customer (optionally via one agent)."""
+        """LINKED identities for a customer (optionally via one agent).
+
+        Expired links are excluded here so a stale LINKED row can never
+        re-authenticate a customer (§12.1: trust levels require a live link).
+        """
         with Session(self._engine) as session:
             query = (
                 select(self._record_cls)
                 .where(self._record_cls.merchant_id == merchant_id)
                 .where(self._record_cls.customer_id == customer_id)
                 .where(self._record_cls.status == "LINKED")
+                .where(self._record_cls.expires_at > datetime.now(timezone.utc))
             )
             if agent_id is not None:
                 query = query.where(self._record_cls.agent_id == agent_id)
@@ -3374,11 +3454,24 @@ class NotificationRepository:
         body: str = "",
         urgency: str = "NORMAL",
         trace_id: str | None = None,
-    ) -> str:
+        dedupe_key: str | None = None,
+    ) -> str | None:
+        """Persist one feed entry. With a ``dedupe_key``, an existing row for
+        the same (merchant, key) wins: at-least-once bus delivery must not
+        duplicate the merchant feed. Returns None on a duplicate."""
         from sellable.contracts import new_id
 
-        notification_id = new_id("ntf")
         with Session(self._engine) as session:
+            if dedupe_key is not None:
+                existing = session.scalars(
+                    select(self._record_cls)
+                    .where(self._record_cls.merchant_id == merchant_id)
+                    .where(self._record_cls.dedupe_key == dedupe_key)
+                    .limit(1)
+                ).first()
+                if existing is not None:
+                    return None
+            notification_id = new_id("ntf")
             session.add(
                 self._record_cls(
                     notification_id=notification_id,
@@ -3390,6 +3483,7 @@ class NotificationRepository:
                     urgency=urgency,
                     status="SENT" if channel == "inapp" else "PENDING",
                     trace_id=trace_id,
+                    dedupe_key=dedupe_key,
                     created_at=datetime.now(timezone.utc),
                 )
             )

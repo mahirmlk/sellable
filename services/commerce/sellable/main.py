@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -10,12 +11,14 @@ import re
 import secrets
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.engine import make_url
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -32,7 +35,7 @@ from agents.runtime.versions import CUSTOMER_SERVICE_AGENT_ID, SELLER_AGENT_ID
 from agents.seller.intent import TurnKind, classify_buyer_message
 from sellable.auth import AgentApiKey, get_agent_api_key, get_agent_api_key_signed
 from sellable.buyer_missions import BuyerMissionService, UnknownBuyerMissionError
-from sellable.config import settings
+from sellable.config import _parse_cors_origins, settings
 from sellable.contracts import (
     AgentProfile,
     BuyerMission,
@@ -66,8 +69,10 @@ from sellable.contracts import (
     Product,
     RefundCreateRequest,
 )
+from sellable.checkout import CheckoutHoldError
 from sellable.core import CommerceCore, IdempotencyReuseError
 from sellable.delegations import OperationScope
+from sellable.contracts import utc_now
 from sellable.protocols import a2a, dispatch, mcp, ucp
 from sellable.protocols.capabilities import build_merchant_profile
 from sellable.protocols.dispatch import ProtocolContext, ProtocolError
@@ -88,6 +93,7 @@ from sellable.merchant_auth import (
     get_merchant_session,
 )
 from sellable.middleware import RequestBodyCaptureMiddleware
+from sellable.tracing import trace_middleware
 from sellable.payments.razorpay import (
     InvalidWebhookSignatureError,
     RazorpayAdapter,
@@ -123,7 +129,32 @@ logging.basicConfig(
 )
 logger = logging.getLogger("sellable")
 
-limiter = Limiter(key_func=get_remote_address)
+class TypedLimiter(Limiter):
+    """Preserve endpoint annotations when SlowAPI wraps route functions.
+
+    FastAPI evaluates postponed annotations using the wrapped function's
+    globals. SlowAPI's wrapper lives in its own module, so Pydantic request
+    models can otherwise be misclassified as query parameters. An evaluated
+    signature keeps request bodies and dependency types intact.
+    """
+
+    def limit(self, *args, **kwargs):
+        apply_limit = super().limit(*args, **kwargs)
+
+        def decorate(endpoint):
+            wrapped = apply_limit(endpoint)
+            try:
+                wrapped.__signature__ = inspect.signature(endpoint, eval_str=True)
+            except (NameError, TypeError, ValueError):
+                # Leave the original signature path in place for dynamically
+                # generated endpoints whose annotations cannot be evaluated.
+                pass
+            return wrapped
+
+        return decorate
+
+
+limiter = TypedLimiter(key_func=get_remote_address)
 
 
 def _assert_single_worker() -> None:
@@ -177,11 +208,178 @@ def _assert_no_demo_key_configured() -> None:
         )
 
 
+def _assert_production_configuration() -> None:
+    """Reject configuration that would make a production deploy unsafe.
+
+    SQLite is suitable for a local demo, but the container filesystem is not a
+    durable system of record and the application has single-process money
+    invariants. Production therefore requires Postgres and an explicit browser
+    origin allowlist instead of silently accepting the development defaults.
+    """
+    if settings.is_dev_environment:
+        return
+
+    if not settings.maintenance_worker_enabled:
+        raise RuntimeError(
+            "Production requires the maintenance worker for durable outbox delivery "
+            "and checkout/session expiry."
+        )
+
+    if not settings.database_url.lower().startswith("postgresql+psycopg://"):
+        raise RuntimeError(
+            "Production requires a PostgreSQL DATABASE_URL using the installed "
+            "psycopg driver; SQLite is only supported for development and tests."
+        )
+    database_sslmode = make_url(settings.database_url).query.get("sslmode")
+    if database_sslmode not in ("require", "verify-ca", "verify-full"):
+        raise RuntimeError(
+            "Production DATABASE_URL must require TLS with sslmode=require, "
+            "verify-ca, or verify-full."
+        )
+    cors_origins = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
+    if not cors_origins:
+        raise RuntimeError(
+            "Production requires CORS_ORIGINS with explicit trusted frontend origins."
+        )
+    for origin in cors_origins:
+        try:
+            parsed_origin = urlsplit(origin)
+            _ = parsed_origin.port  # validate malformed ports
+        except ValueError as error:
+            raise RuntimeError("Production CORS_ORIGINS contains an invalid origin.") from error
+        if (
+            parsed_origin.scheme != "https"
+            or not parsed_origin.hostname
+            or parsed_origin.username is not None
+            or parsed_origin.password is not None
+            or parsed_origin.path not in ("", "/")
+            or parsed_origin.query
+            or parsed_origin.fragment
+            or parsed_origin.hostname.startswith("*.")
+        ):
+            raise RuntimeError(
+                "Production CORS_ORIGINS must contain exact HTTPS origins without paths or wildcards."
+            )
+    if not settings.supabase_url or not settings.supabase_url.startswith("https://"):
+        raise RuntimeError("Production requires an HTTPS SUPABASE_URL.")
+    if not settings.supabase_anon_key or not settings.supabase_service_role_key:
+        raise RuntimeError(
+            "Production requires SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY."
+        )
+    if not settings.agent_api_key_hashes:
+        raise RuntimeError("Production requires BUYER_AGENT_API_KEY_HASH entries.")
+    if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in settings.agent_api_key_hashes):
+        raise RuntimeError(
+            "Every BUYER_AGENT_API_KEY_HASH entry must be a lowercase SHA-256 hex digest."
+        )
+    if not settings.agent_hmac_secret or len(settings.agent_hmac_secret.encode("utf-8")) < 32:
+        raise RuntimeError(
+            "Production requires BUYER_AGENT_HMAC_SECRET with at least 32 UTF-8 bytes."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Background maintenance worker (§46.1): the durable outbox must drain and
+# carts/checkouts/sessions must expire even with no inbound traffic. A
+# daemon thread is enough while the deployment stays single-process
+# (enforced at startup); a queue worker can replace it without changing
+# the touched interfaces.
+# ---------------------------------------------------------------------------
+
+_MAINTENANCE_STOP = threading.Event()
+_MAINTENANCE_LOCK = threading.Lock()
+_MAINTENANCE_THREAD: threading.Thread | None = None
+_MAINTENANCE_LAST_SUCCESS: datetime | None = None
+_MAINTENANCE_LAST_ERROR: str | None = None
+
+
+def _maintenance_tick() -> bool:
+    """Run one expiry/outbox sweep and report whether every merchant succeeded."""
+    _drain_bus_best_effort()
+    merchants = MerchantRepository().list_all(limit=1000)
+    failed = False
+    for record in merchants:
+        merchant_id = record.merchant_id
+        try:
+            core = registry.get(merchant_id)
+            core.cart_service.expire_due(merchant_id)
+            core.checkout_service.expire_due(merchant_id)
+            session_service.expire_due(merchant_id)
+        except Exception as error:  # noqa: BLE001 — sweeps never kill the worker
+            failed = True
+            logger.warning(
+                "Maintenance sweep failed for %s (%s)",
+                merchant_id,
+                type(error).__name__,
+            )
+    return failed
+
+
+def _maintenance_loop() -> None:
+    interval = max(10, settings.maintenance_interval_seconds)
+    while not _MAINTENANCE_STOP.is_set():
+        failed = False
+        try:
+            failed = _maintenance_tick()
+        except Exception as error:  # noqa: BLE001 — keep worker alive and expose failure
+            failed = True
+            logger.warning("Maintenance tick failed (%s)", type(error).__name__)
+        with _MAINTENANCE_LOCK:
+            global _MAINTENANCE_LAST_SUCCESS, _MAINTENANCE_LAST_ERROR
+            if failed:
+                _MAINTENANCE_LAST_ERROR = "sweep_failed"
+            else:
+                _MAINTENANCE_LAST_SUCCESS = utc_now()
+                _MAINTENANCE_LAST_ERROR = None
+        if _MAINTENANCE_STOP.wait(interval):
+            return
+
+
+def _maintenance_readiness() -> str:
+    """Return an operator-safe maintenance status without exposing exceptions."""
+    if not settings.maintenance_worker_enabled:
+        return "ok" if settings.is_dev_environment else "unavailable"
+    with _MAINTENANCE_LOCK:
+        thread = _MAINTENANCE_THREAD
+        last_success = _MAINTENANCE_LAST_SUCCESS
+        last_error = _MAINTENANCE_LAST_ERROR
+    if thread is None or not thread.is_alive():
+        return "unavailable"
+    if last_error:
+        return "degraded"
+    if last_success is None:
+        return "initializing"
+    max_age = max(120, 3 * settings.maintenance_interval_seconds)
+    if (utc_now() - last_success).total_seconds() > max_age:
+        return "stale"
+    return "ok"
+
+
+def _start_maintenance_worker() -> None:
+    global _MAINTENANCE_THREAD
+    if not settings.maintenance_worker_enabled:
+        logger.info("Maintenance worker disabled (env=%s)", settings.environment)
+        return
+    _MAINTENANCE_STOP.clear()
+    thread = threading.Thread(
+        target=_maintenance_loop, name="sellable-maintenance", daemon=True
+    )
+    thread.start()
+    with _MAINTENANCE_LOCK:
+        _MAINTENANCE_THREAD = thread
+    logger.info(
+        "Maintenance worker started (interval=%ss)", settings.maintenance_interval_seconds
+    )
+
+
+
 @asynccontextmanager
+
 async def lifespan(_: FastAPI):
     logger.info("Starting SELLABLE Commerce Core")
     _assert_single_worker()
     _assert_no_demo_key_configured()
+    _assert_production_configuration()
     initialise_database()
     logger.info("Database initialized")
     # Non-blocking JWKS warm: daemon thread only, startup never waits on it.
@@ -191,7 +389,12 @@ async def lifespan(_: FastAPI):
         warm_jwks_cache()
     except Exception as exc:  # noqa: BLE001 — warm must never break startup
         logger.debug("JWKS warm skipped: %s", exc)
+    # Checkout expiry releases inventory only after cancelling unpaid payment
+    # links. If maintenance cannot start, production must not accept orders that
+    # may hold stock indefinitely.
+    _start_maintenance_worker()
     yield
+    _MAINTENANCE_STOP.set()
     logger.info("Shutting down SELLABLE Commerce Core")
 
 
@@ -216,8 +419,6 @@ app.add_middleware(
 )
 
 app.add_middleware(RequestBodyCaptureMiddleware)
-
-from sellable.tracing import trace_middleware
 
 app.middleware("http")(trace_middleware)
 
@@ -263,7 +464,7 @@ def _make_llm() -> tuple[object | None, str | None]:
     try:
         return get_llm(), None
     except Exception as exc:
-        logger.error("LLM adapter initialization failed: %s", exc)
+        logger.error("LLM adapter initialization failed (%s)", type(exc).__name__)
         return None, str(exc)
 
 
@@ -279,6 +480,11 @@ def _agent_recorder(core: CommerceCore, agent_id: str):
 _seller_llm, _llm_init_error = _make_llm()
 
 # Create tables and the real demo-merchant records before wiring components.
+# Enforce the single-process money invariant and production storage/origin
+# settings before any database is opened; this module initializes repositories
+# during import for the current runtime.
+_assert_single_worker()
+_assert_production_configuration()
 initialise_database()
 registry = MerchantRegistry()
 registry.ensure_demo_merchant()
@@ -364,11 +570,14 @@ def _gate_delegation(
     trace_id: str,
     route: str,
     hold_status: int = 409,
+    agent_id: str | None = None,
 ) -> None:
     """Resolve an optional delegation header: DENY → 403, hold → ``hold_status``.
 
-    No header → legacy behavior unchanged. Amount binding stays at the
-    commerce layer, which re-resolves with exact totals.
+    No header → legacy behavior unchanged. ``agent_id`` is the authenticated
+    caller's agent identity; a delegation granted to another agent is denied
+    (§45). Amount binding stays at the commerce layer, which re-resolves
+    with exact totals.
     """
     try:
         enforce_delegation(
@@ -378,6 +587,7 @@ def _gate_delegation(
             amount_paise=amount_paise,
             trace_id=trace_id,
             route=route,
+            agent_id=agent_id,
         )
     except DelegationDeniedError as error:
         raise HTTPException(
@@ -423,6 +633,40 @@ def get_commerce() -> CommerceCore:
     return commerce_core
 
 
+def get_scoped_commerce(_api_key: AgentApiKey = Depends(get_agent_api_key)) -> CommerceCore:
+    """Machine-facing canonical surface resolves the *caller's* merchant core
+    (§37.2 tenant isolation): a merchant-issued agent key transacts its own
+    store, never the demo merchant. Static/env keys map to the demo merchant,
+    preserving legacy behavior. FastAPI caches the ``get_agent_api_key``
+    dependency, so authentication runs exactly once per request."""
+    return registry.get(_api_key.merchant_id)
+
+
+def get_scoped_commerce_signed(
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+) -> CommerceCore:
+    """Scoped core for mutating canonical routes (HMAC-enforced outside dev)."""
+    return registry.get(_api_key.merchant_id)
+
+
+def _seller_agent_for_key(api_key: AgentApiKey) -> SellerAgent:
+    """The platform seller agent, bound to the caller's merchant."""
+    if api_key.merchant_id == DEMO_MERCHANT_ID:
+        return seller_agent
+    core = registry.get(api_key.merchant_id)
+    return SellerAgent(core, llm=_seller_llm, recorder=_agent_recorder(core, SELLER_AGENT_ID))
+
+
+def _cs_agent_for_key(api_key: AgentApiKey) -> CustomerServiceAgent:
+    """The platform customer-service agent, bound to the caller's merchant."""
+    if api_key.merchant_id == DEMO_MERCHANT_ID:
+        return customer_service_agent
+    core = registry.get(api_key.merchant_id)
+    return CustomerServiceAgent(
+        core, llm=_seller_llm, recorder=_agent_recorder(core, CUSTOMER_SERVICE_AGENT_ID)
+    )
+
+
 def get_ledger() -> LedgerRepository:
     return commerce_core.ledger
 
@@ -454,11 +698,11 @@ def health() -> dict[str, str | bool | list[str]]:
 def seller_respond(
     request: Request,
     body: SellerRequest,
-    agent: SellerAgent = Depends(get_seller_agent),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
 ) -> SellerDecision:
     """Never creates an order, issues consent, or executes a payment."""
+    agent = _seller_agent_for_key(_api_key)
     return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
 
 
@@ -472,11 +716,11 @@ def seller_respond(
 def service_respond(
     request: Request,
     body: CSRequest,
-    agent: CustomerServiceAgent = Depends(get_customer_service_agent),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
 ) -> CSDecision:
     """Never executes refunds, mutates account security, or overrides policy."""
+    agent = _cs_agent_for_key(_api_key)
     return agent.respond(body, trace_id=resolve_trace_id(x_trace_id))
 
 
@@ -526,6 +770,11 @@ def _protocol_result(result: object) -> object:
 def _protocol_call(fn, *args, **kwargs):
     try:
         return _protocol_result(fn(*args, **kwargs))
+    except CheckoutHoldError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"outcome": error.outcome, "reason_code": error.reason_code},
+        ) from error
     except ProtocolError as error:
         raise HTTPException(
             status_code=error.status_code,
@@ -535,32 +784,67 @@ def _protocol_call(fn, *args, **kwargs):
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
+def _discovery_core(merchant: str | None) -> CommerceCore:
+    """Resolve the merchant core for a public discovery surface.
+
+    The surfaces are multi-tenant now: a caller may name a merchant with
+    ``?merchant=<id>``; without the parameter the demo store answers.
+    Unknown merchants 404 rather than fabricating a profile (§37.2)."""
+    if not merchant or merchant == DEMO_MERCHANT_ID:
+        return commerce_core
+    from sellable.repositories import MerchantRepository
+
+    if MerchantRepository().get(merchant) is None:
+        raise HTTPException(status_code=404, detail="Unknown merchant")
+    return registry.get(merchant)
+
+
 @app.get("/.well-known/ucp", tags=["protocol-ucp"])
 @limiter.exempt
-def ucp_well_known(request: Request) -> dict[str, object]:
+def ucp_well_known(
+    request: Request, merchant: str | None = None
+) -> dict[str, object]:
     return ucp.discovery_document(
-        commerce_core, base_url=str(request.base_url).rstrip("/")
+        _discovery_core(merchant), base_url=str(request.base_url).rstrip("/")
     )
 
 
 @app.get("/agent/profile", tags=["protocol-discovery"])
 @limiter.exempt
-def agent_profile() -> dict[str, object]:
-    """Merchant agent profile: the two platform agents and versions."""
+def agent_profile(merchant: str | None = None) -> dict[str, object]:
+    """Merchant agent profile: the two platform agents, versions, and the
+    §32.3 access tier each agent's trust evidence supports."""
     from agents.runtime.versions import VersionRegistry, seed_registry
+    from sellable.trust import AgentAccessTier, derive_access_tier
 
-    versions = seed_registry(VersionRegistry(), commerce_core.policy)
+    core = _discovery_core(merchant)
+    versions = seed_registry(VersionRegistry(), core.policy)
+    agents = []
+    for version in versions.all():
+        entry = version.as_dict()
+        tier = AgentAccessTier.PUBLIC_DISCOVERY
+        try:
+            assessment = core.trust_service.agent_assessment(
+                version.agent_id, core.merchant_scope
+            )
+            tier = derive_access_tier(assessment, agent_type="SELLABLE_INTERNAL_AGENT")
+        except Exception:  # noqa: BLE001 — discovery degrades, never fails
+            pass
+        entry["access_tier"] = tier.value
+        agents.append(entry)
     return {
-        "merchant_id": commerce_core.merchant_scope,
-        "agents": [version.as_dict() for version in versions.all()],
+        "merchant_id": core.merchant_scope,
+        "agents": agents,
     }
 
 
 @app.get("/agent/capabilities", tags=["protocol-discovery"])
 @limiter.exempt
-def agent_capabilities() -> dict[str, object]:
+def agent_capabilities(merchant: str | None = None) -> dict[str, object]:
     """Merchant capability profile for negotiation (§15.1)."""
-    return build_merchant_profile(commerce_core.merchant_scope).model_dump(mode="json")
+    return build_merchant_profile(_discovery_core(merchant).merchant_scope).model_dump(
+        mode="json"
+    )
 
 
 @app.post("/commerce/sessions/negotiate", tags=["protocol-sessions"])
@@ -568,7 +852,7 @@ def agent_capabilities() -> dict[str, object]:
 def session_negotiate(
     request: Request,
     body: AgentProfile,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -587,7 +871,7 @@ def session_negotiate(
 def session_get(
     session_id: str,
     request: Request,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -602,7 +886,7 @@ def session_get(
 def ucp_negotiate(
     request: Request,
     body: AgentProfile,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -673,7 +957,7 @@ def acp_checkout_session(
 def identity_link_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
 ) -> dict:
@@ -698,7 +982,7 @@ def identity_link_create(
 def identity_link_approve(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     if not body.get("link_id"):
@@ -722,7 +1006,7 @@ def identity_link_approve(
 def identity_me(
     request: Request,
     link_id: str,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
@@ -731,10 +1015,18 @@ def identity_me(
         raise HTTPException(status_code=404, detail=str(error)) from error
     if link.status.value != "LINKED":
         raise HTTPException(status_code=404, detail="No linked identity")
+    core = commerce
+    level = identity_service.resolve_identity_level(
+        core.merchant_scope,
+        link.customer_id,
+        identity_repo=core.identity_repo,
+        delegation_repo=core.delegation_repo,
+    )
     return {
         "customer_id": link.customer_id,
         "agent_id": link.agent_id,
         "scopes": list(link.scopes),
+        "identity_level": level.value,
         "expires_at": link.expires_at.isoformat(),
     }
 
@@ -771,7 +1063,7 @@ def _require(body: dict, *fields: str) -> None:
 def commerce_search(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -795,7 +1087,7 @@ def commerce_search(
 def commerce_lookup(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -818,7 +1110,7 @@ def commerce_lookup(
 def commerce_recommendations(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -842,7 +1134,7 @@ def commerce_recommendations(
 def commerce_cart_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -866,7 +1158,7 @@ def commerce_cart_create(
 def commerce_cart_items(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -893,7 +1185,7 @@ def commerce_cart_items(
 def commerce_quote_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -917,7 +1209,7 @@ def commerce_quote_create(
 def commerce_quote_negotiate(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -944,7 +1236,7 @@ def commerce_quote_negotiate(
 def commerce_promotions_evaluate(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -970,7 +1262,7 @@ def commerce_promotions_evaluate(
 def commerce_checkout_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -998,7 +1290,7 @@ def commerce_checkout_create(
 def commerce_checkout_authorize(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1029,7 +1321,7 @@ def commerce_checkout_authorize(
 def commerce_order_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1060,7 +1352,7 @@ def commerce_order_create(
 def commerce_order_get(
     order_id: str,
     request: Request,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1082,7 +1374,7 @@ def commerce_order_get(
 def commerce_shipping_quote(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1107,7 +1399,7 @@ def commerce_shipping_quote(
 def commerce_return_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1133,7 +1425,7 @@ def commerce_return_create(
 def commerce_refund_request(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1158,7 +1450,7 @@ def commerce_refund_request(
 def commerce_support_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
     x_trace_id: str | None = Header(default=None),
     x_protocol: str | None = Header(default=None),
@@ -1178,6 +1470,654 @@ def commerce_support_create(
         category=str(body.get("category") or "other"),
     )
 
+@app.post("/console/evals/gates/check", tags=["console"])
+@limiter.limit("10/minute")
+def eval_gates_check(
+    request: Request,
+    body: dict,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    """Apply the §30.6 regression gates to the latest recorded run of each
+    requested suite (default: the P0-bearing suites). Gates were previously
+    defined but wired to nothing; this is the release-check surface."""
+    from evals.datasets.v1 import SUITES
+    from evals.regression.gates import check_gates
+    from evals.runner.harness import CaseReport, SuiteReport
+    from sellable.repositories import EvaluationRepository
+
+    repo = EvaluationRepository()
+    suite_ids = body.get("suite_ids") or [
+        "seller-safety-v1",
+        "adversarial-v1",
+        "invariants-v1",
+    ]
+    reports: list[SuiteReport] = []
+    per_suite: dict[str, object] = {}
+    for suite_id in suite_ids:
+        if suite_id not in SUITES:
+            raise HTTPException(status_code=400, detail=f"Unknown suite: {suite_id}")
+        run = repo.latest_run_for_suite(suite_id)
+        if run is None:
+            per_suite[suite_id] = {"run_id": None, "note": "no recorded run; run the suite first"}
+            continue
+        cases = {c["case_id"]: c for c in repo.cases_for_suite(suite_id)}
+        report = SuiteReport(suite_id=suite_id, run_id=run["run_id"])
+        for result in repo.results_for_run(run["run_id"]):
+            case_meta = cases.get(result["case_id"], {})
+            report.results.append(
+                CaseReport(
+                    case_id=result["case_id"],
+                    category=case_meta.get("category", "commerce"),
+                    severity=case_meta.get("severity", "P1"),
+                    passed=bool(result["passed"]),
+                    score_bps=int(result.get("score_bps") or 0),
+                    duration_ms=int(result.get("duration_ms") or 0),
+                    error=result.get("error"),
+                )
+            )
+        reports.append(report)
+        per_suite[suite_id] = {"run_id": run["run_id"], "results": len(report.results)}
+    if not reports:
+        return {"gates_passed": False, "failures": ["no recorded eval runs"], "metrics": {}, "suites": per_suite}
+    gate_report = check_gates(reports)
+    return {
+        "gates_passed": gate_report.passed,
+        "failures": gate_report.failures,
+        "metrics": gate_report.metrics,
+        "suites": per_suite,
+    }
+
+
+@app.get("/agents/status", tags=["console"])
+@limiter.limit("60/minute")
+def agents_status(
+    request: Request,
+    commerce: CommerceCore = Depends(get_commerce),
+    ledger: LedgerRepository = Depends(get_ledger),
+    seller_agent: SellerAgent = Depends(get_seller_agent),
+    buyer_agent: BuyerAgent = Depends(get_buyer_agent),
+    gateway: AgentGateway = Depends(get_agent_gateway),
+    session: MerchantSession = Depends(get_merchant_session),
+) -> Response:
+    """Report real, backend-driven component state (never hardcoded green).
+
+    Aggregate health only, served from a short per-merchant snapshot cache
+    with single-flight rebuilds. Per-stage durations go out as a
+    Server-Timing header (stage names only — never secrets or tokens).
+    """
+    import time as _time
+
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.responses import JSONResponse
+
+    from sellable.status import get_cached_status_snapshot
+
+    timings: dict[str, float] = {}
+    start = _time.perf_counter()
+    core = merchant_core(session)
+    timings["merchant"] = (_time.perf_counter() - start) * 1000.0
+
+    def _build() -> dict[str, object]:
+        return build_status(
+            commerce=core,
+            ledger=ledger,
+            seller_agent=seller_agent,
+            buyer_agent=buyer_agent,
+            gateway=gateway,
+            llm_adapter=_seller_llm,
+            llm_init_error=_llm_init_error,
+            timings=timings,
+        )
+
+    payload, cached = get_cached_status_snapshot(session.merchant_id, _build)
+    timings["total"] = (_time.perf_counter() - start) * 1000.0
+    server_timing = "; ".join(
+        f"{name};dur={value:.1f}" for name, value in sorted(timings.items())
+    )
+    return JSONResponse(
+        content=jsonable_encoder(payload),
+        headers={"Server-Timing": server_timing, "X-Status-Cached": "1" if cached else "0"},
+    )
+
+
+
+# ---------------------------------------------------------------------------
+# Canonical API completion (§42): delegation lifecycle, agent registry,
+# identity sessions, and the remaining canonical commerce reads/writes.
+# Machine routes resolve the caller's own merchant core (§37.2); console
+# mutations are owner-gated and ledgered.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/delegations", tags=["delegations"])
+@limiter.limit("30/minute")
+def delegation_create(
+    request: Request,
+    body: dict,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    """Register a bounded customer→agent delegation for this store.
+
+    Merchant-mediated issuance, owner role only: agents can never grant
+    themselves scopes (§4.2), so the grant is created through the merchant
+    console with the customer recorded as principal.
+    """
+    require_owner(session)
+    core = merchant_core(session)
+    _require(body, "principal_customer_id", "subject_agent_id", "operation_scopes", "expires_at")
+    from sellable.delegations import ApprovalMode, DelegationGrant
+
+    try:
+        grant = DelegationGrant(
+            principal_customer_id=str(body["principal_customer_id"]),
+            subject_agent_id=str(body["subject_agent_id"]),
+            merchant_scope=core.merchant_scope,
+            operation_scopes=[OperationScope(scope) for scope in body["operation_scopes"]],
+            category_scopes=[str(c) for c in body.get("category_scopes") or []],
+            amount_limit_paise=body.get("amount_limit_paise"),
+            currency=str(body.get("currency") or "INR"),
+            frequency_limit=body.get("frequency_limit"),
+            approval_mode=ApprovalMode(str(body.get("approval_mode") or "AUTO")),
+            expires_at=datetime.fromisoformat(str(body["expires_at"])),
+        )
+    except Exception as error:  # noqa: BLE001 — contract validation is the 400
+        raise HTTPException(status_code=400, detail=f"Invalid delegation: {error}") from error
+    core.delegation_repo.save(grant)
+    core._record(
+        trace_id=resolve_trace_id(x_trace_id),
+        actor=LedgerActor.HUMAN,
+        action="delegation.created",
+        inputs={
+            "delegation_id": grant.delegation_id,
+            "principal_customer_id": grant.principal_customer_id,
+            "subject_agent_id": grant.subject_agent_id,
+            "operation_scopes": [scope.value for scope in grant.operation_scopes],
+            "amount_limit_paise": grant.amount_limit_paise,
+            "approval_mode": grant.approval_mode.value,
+        },
+        output={"status": grant.status.value, "expires_at": grant.expires_at.isoformat()},
+        reasoning_summary="Merchant registered a bounded customer delegation via console.",
+    )
+    return grant.model_dump(mode="json")
+
+
+@app.get("/delegations", tags=["delegations"])
+@limiter.limit("60/minute")
+def delegation_list(
+    request: Request,
+    customer_id: str | None = None,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> list[dict]:
+    core = merchant_core(session)
+    grants = core.delegation_repo.list_for_merchant(
+        core.merchant_scope, customer_id=customer_id
+    )
+    return [grant.model_dump(mode="json") for grant in grants]
+
+
+@app.get("/delegations/{delegation_id}", tags=["delegations"])
+@limiter.limit("60/minute")
+def delegation_get(
+    request: Request,
+    delegation_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    """Fetch one grant via the machine surface: the key's own merchant
+    scope only; foreign ids stay invisible (404)."""
+    grant = core.delegation_repo.get(delegation_id)
+    if grant is None or grant.merchant_scope != core.merchant_scope:
+        raise HTTPException(status_code=404, detail="Unknown delegation")
+    return grant.model_dump(mode="json")
+
+
+@app.post("/delegations/{delegation_id}/revoke", tags=["delegations"])
+@limiter.limit("30/minute")
+def delegation_revoke(
+    request: Request,
+    delegation_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    """Revoke a grant: revoked delegations invalidate future actions (§45)."""
+    require_owner(session)
+    core = merchant_core(session)
+    try:
+        grant = core.delegation_repo.revoke(delegation_id, core.merchant_scope)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    core._record(
+        trace_id=resolve_trace_id(x_trace_id),
+        actor=LedgerActor.HUMAN,
+        action="delegation.revoked",
+        inputs={"delegation_id": grant.delegation_id},
+        output={"status": grant.status.value},
+        reasoning_summary="Merchant revoked a customer delegation via console.",
+    )
+    return grant.model_dump(mode="json")
+
+
+@app.post("/agents/register", tags=["agents"])
+@limiter.limit("30/minute")
+def agent_register(
+    request: Request,
+    body: dict,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    """Register a first-class agent identity (§13): merchant-owned by default."""
+    require_owner(session)
+    core = merchant_core(session)
+    _require(body, "agent_type", "issuer")
+    from sellable.agent_identity import AgentIdentity, AgentType, CredentialStatus
+    from sellable.repositories import AgentIdentityRepository
+
+    try:
+        identity = AgentIdentity(
+            agent_type=AgentType(str(body["agent_type"])),
+            owner_id=str(body.get("owner_id") or core.merchant_scope),
+            issuer=str(body["issuer"]),
+            client_id=body.get("client_id"),
+            credential_status=CredentialStatus.ACTIVE,
+            credential_expires_at=(
+                datetime.fromisoformat(str(body["credential_expires_at"]))
+                if body.get("credential_expires_at")
+                else None
+            ),
+            capability_profile=body.get("capability_profile"),
+        )
+    except Exception as error:  # noqa: BLE001 — contract validation is the 400
+        raise HTTPException(status_code=400, detail=f"Invalid agent identity: {error}") from error
+    AgentIdentityRepository().register(identity)
+    core._record(
+        trace_id=resolve_trace_id(x_trace_id),
+        actor=LedgerActor.HUMAN,
+        action="agent.registered",
+        inputs={"agent_id": identity.agent_id, "agent_type": identity.agent_type.value},
+        output={"owner_id": identity.owner_id, "issuer": identity.issuer},
+        reasoning_summary="Merchant registered an agent identity via console.",
+    )
+    return identity.model_dump(mode="json")
+
+
+def _owned_agent_or_404(core: CommerceCore, agent_id: str):
+    from sellable.agent_identity import AgentType
+    from sellable.repositories import AgentIdentityRepository
+
+    identity = AgentIdentityRepository().get(agent_id)
+    if identity is None:
+        raise HTTPException(status_code=404, detail="Unknown agent")
+    platform_owned = identity.agent_type in (
+        AgentType.SELLABLE_INTERNAL_AGENT,
+        AgentType.PLATFORM_AGENT,
+    )
+    if identity.owner_id != core.merchant_scope and not platform_owned:
+        # Foreign agents stay invisible to this merchant (§37.2).
+        raise HTTPException(status_code=404, detail="Unknown agent")
+    return identity
+
+
+@app.get("/agents/{agent_id}", tags=["agents"])
+@limiter.limit("60/minute")
+def agent_get(
+    request: Request,
+    agent_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    return _owned_agent_or_404(merchant_core(session), agent_id).model_dump(mode="json")
+
+
+@app.get("/agents/{agent_id}/reputation", tags=["agents"])
+@limiter.limit("60/minute")
+def agent_reputation(
+    request: Request,
+    agent_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict:
+    _owned_agent_or_404(merchant_core(session), agent_id)
+    from sellable.repositories import AgentIdentityRepository
+
+    reputation = AgentIdentityRepository().reputation(agent_id)
+    if reputation is None:
+        # No history yet: an explicit empty record, not a 404 — the identity
+        # exists, reputation simply has no evidence (§13.3).
+        return {"agent_id": agent_id, "has_history": False}
+    dumped = reputation.model_dump(mode="json")
+    dumped["has_history"] = True
+    return dumped
+
+
+@app.post("/agents/{agent_id}/credentials/rotate", tags=["agents"])
+@limiter.limit("30/minute")
+def agent_credentials_rotate(
+    request: Request,
+    agent_id: str,
+    body: dict,
+    session: MerchantSession = Depends(get_merchant_session),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    """Re-issue the agent's registry credential window (§37.1 rotation).
+
+    Secret-material rotation for a caller's key lives at the API-key layer
+    (``/console/agent-keys/{key_id}/rotate``); this rotates the registry
+    credential status/expiry.
+    """
+    require_owner(session)
+    core = merchant_core(session)
+    identity = _owned_agent_or_404(core, agent_id)
+    from sellable.agent_identity import CredentialStatus
+    from sellable.repositories import AgentIdentityRepository
+
+    ttl_hours = int(body.get("credential_ttl_hours") or 24 * 90)
+    rotated = identity.model_copy(
+        update={
+            "credential_status": CredentialStatus.ACTIVE,
+            "credential_expires_at": utc_now() + timedelta(hours=ttl_hours),
+        }
+    )
+    AgentIdentityRepository().register(rotated)
+    core._record(
+        trace_id=resolve_trace_id(x_trace_id),
+        actor=LedgerActor.HUMAN,
+        action="agent.credential_rotated",
+        inputs={"agent_id": agent_id},
+        output={"credential_expires_at": rotated.credential_expires_at.isoformat()},
+        reasoning_summary="Merchant rotated an agent credential window via console.",
+    )
+    return rotated.model_dump(mode="json")
+
+
+@app.post("/identity/sessions", tags=["protocol-identity"])
+@limiter.limit("30/minute")
+def identity_session_create(
+    request: Request,
+    body: dict,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    """Issue a negotiated protocol session bound to a LINKED customer
+    identity (§12.1 identity_linked_customer): the session carries the
+    customer in auth_context and the merchant-negotiated capabilities."""
+    _require(body, "link_id")
+    try:
+        link = identity_service.get_link(str(body["link_id"]), core.merchant_scope)
+    except Exception as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if link.status.value != "LINKED":
+        raise HTTPException(status_code=409, detail="identity link is not LINKED")
+    if utc_now() >= link.expires_at:
+        raise HTTPException(status_code=409, detail="identity link has expired")
+    merchant_profile = build_merchant_profile(core.merchant_scope)
+    profile = AgentProfile(
+        agent_id=link.agent_id or _api_key.buyer_agent_id or "unknown",
+        protocol="rest",
+        capabilities=[c.capability_id for c in merchant_profile.capabilities],
+        identity={
+            "customer_id": link.customer_id,
+            "identity_link_id": link.link_id,
+            "scopes": list(link.scopes),
+        },
+    )
+    try:
+        session = session_service.negotiate(
+            core.merchant_scope,
+            profile,
+            merchant_profile,
+            ttl=link.expires_at - utc_now(),
+        )
+    except Exception as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return session.model_dump(mode="json")
+
+
+@app.get("/carts/{cart_id}", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_cart_get(
+    request: Request,
+    cart_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    from sellable.cart import CartNotFoundError
+
+    try:
+        cart = core.cart_service.get_cart(cart_id, core.merchant_scope)
+    except (CartNotFoundError, LookupError) as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if cart is None:
+        raise HTTPException(status_code=404, detail="Unknown cart")
+    return cart.model_dump(mode="json")
+
+
+@app.get("/checkouts/{checkout_id}", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_checkout_get(
+    request: Request,
+    checkout_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    from sellable.checkout import CheckoutNotFoundError
+
+    try:
+        checkout = core.checkout_service.get_checkout(checkout_id, core.merchant_scope)
+    except CheckoutNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return checkout.model_dump(mode="json")
+
+
+@app.get("/orders/{order_id}/timeline", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_order_timeline(
+    request: Request,
+    order_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    try:
+        order = core.get_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    events = core.ledger.for_trace(order.trace_id, merchant_id=core.merchant_scope)
+    return {
+        "order_id": order_id,
+        "trace_id": order.trace_id,
+        "status": order.status.value,
+        "events": [
+            {
+                "event_id": e.event_id,
+                "timestamp": e.timestamp.isoformat(),
+                "actor": e.actor,
+                "action": e.action,
+                "outcome_effect": e.outcome_effect_json,
+                "provider_ref": e.provider_ref,
+            }
+            for e in events
+        ],
+    }
+
+
+@app.get("/orders/{order_id}/receipt", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_order_receipt(
+    request: Request,
+    order_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    """Normalized §25.3 payment receipt for a settled order: provider state
+    bound to authorization, risk, and trace evidence."""
+    try:
+        receipt = core.payment_receipt(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return receipt.model_dump(mode="json")
+
+
+@app.post("/orders/{order_id}/cancel-request", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_order_cancel_request(
+    request: Request,
+    order_id: str,
+    body: dict,
+    core: CommerceCore = Depends(get_scoped_commerce_signed),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    """Agent cancel-request (§42): unpaid orders abort directly; an order
+    with a live provider link or settled money stays merchant-owned (console
+    reject / returns-refunds flows)."""
+    trace_id = resolve_trace_id(x_trace_id)
+    try:
+        order = core.get_order(order_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    if order.status in (OrderStatus.PAID, OrderStatus.FULFILLED, OrderStatus.REFUNDED):
+        raise HTTPException(
+            status_code=409,
+            detail="settled orders cannot be cancelled by an agent; use returns/refunds",
+        )
+    if order.provider_link_id:
+        raise HTTPException(
+            status_code=409,
+            detail="a live payment link exists; only the merchant can cancel this order",
+        )
+    try:
+        aborted = core.mark_aborted(
+            order_id, reason=str(body.get("reason") or "cancel requested by agent")
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"order_id": aborted.order_id, "status": aborted.status.value, "trace_id": trace_id}
+
+
+@app.post("/exchanges", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_exchange_create(
+    request: Request,
+    body: dict,
+    core: CommerceCore = Depends(get_scoped_commerce_signed),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+    x_delegation_id: str | None = Header(default=None),
+) -> dict:
+    _require(body, "return_id", "replacement_sku", "replacement_quantity")
+    trace_id = resolve_trace_id(x_trace_id)
+    _gate_delegation(
+        core,
+        delegation_id=x_delegation_id,
+        scope=OperationScope.RETURN_CREATE,
+        amount_paise=None,
+        trace_id=trace_id,
+        route="commerce.exchanges.create",
+        agent_id=_api_key.buyer_agent_id,
+    )
+    try:
+        exchange = core.request_exchange(
+            str(body["return_id"]),
+            str(body["replacement_sku"]),
+            int(body["replacement_quantity"]),
+            trace_id=trace_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return exchange.model_dump(mode="json")
+
+
+@app.get("/refunds/{refund_id}", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_refund_get(
+    request: Request,
+    refund_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    from sellable.repositories import RefundRepository
+
+    refund = RefundRepository().get(refund_id, core.merchant_scope)
+    if refund is None:
+        raise HTTPException(status_code=404, detail="Unknown refund")
+    return refund.model_dump(mode="json")
+
+
+@app.get("/support/cases/{case_id}", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_case_get(
+    request: Request,
+    case_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    from sellable.support import CaseError
+
+    try:
+        case = core.case_service.get_case(case_id, core.merchant_scope)
+    except (CaseError, LookupError) as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return case.model_dump(mode="json")
+
+
+@app.post("/support/cases/{case_id}/escalate", tags=["protocol-commerce"])
+@limiter.limit("30/minute")
+def commerce_case_escalate(
+    request: Request,
+    case_id: str,
+    body: dict,
+    core: CommerceCore = Depends(get_scoped_commerce_signed),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
+    x_trace_id: str | None = Header(default=None),
+) -> dict:
+    """Human handoff with the §26.3 payload so staff never reconstruct
+    the conversation manually."""
+    from sellable.contracts import EscalationPayload
+    from sellable.support import CaseError
+
+    try:
+        payload = EscalationPayload.model_validate(body)
+    except Exception as error:  # noqa: BLE001 — payload validation is the 400
+        raise HTTPException(status_code=400, detail=f"Invalid escalation payload: {error}") from error
+    try:
+        case = core.case_service.escalate(case_id, core.merchant_scope, payload)
+    except (CaseError, LookupError) as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return case.model_dump(mode="json")
+
+
+@app.get("/shipping/{tracking_id}", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_shipping_track(
+    request: Request,
+    tracking_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    from sellable.shipping import FulfillmentNotFoundError
+
+    try:
+        fulfillment = core.fulfillment_service.get(tracking_id, core.merchant_scope)
+        timeline = core.fulfillment_service.timeline(tracking_id, core.merchant_scope)
+    except FulfillmentNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {
+        "fulfillment": fulfillment.model_dump(mode="json"),
+        "timeline": [event.model_dump(mode="json") for event in timeline],
+    }
+
+
+@app.get("/promotions/{promotion_id}", tags=["protocol-commerce"])
+@limiter.limit("60/minute")
+def commerce_promotion_get(
+    request: Request,
+    promotion_id: str,
+    core: CommerceCore = Depends(get_scoped_commerce),
+    _api_key: AgentApiKey = Depends(get_agent_api_key),
+) -> dict:
+    promotion = core.promotion_repo.get(promotion_id, core.merchant_scope)
+    if promotion is None:
+        raise HTTPException(status_code=404, detail="Unknown promotion")
+    return promotion.model_dump(mode="json")
+
 
 @app.get("/mcp/tools", tags=["protocol-mcp"])
 @limiter.limit("60/minute")
@@ -1193,7 +2133,7 @@ def mcp_tools(
 def mcp_call(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_commerce),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None),
@@ -1305,7 +2245,7 @@ def _drain_bus_best_effort(*, merchant_id: str | None = None) -> None:
 
         drain_once(_build_bus(), merchant_id=merchant_id)
     except Exception as exc:  # noqa: BLE001 — drains never break webhooks
-        logger.warning("Event bus drain failed: %s", exc)
+        logger.warning("Event bus drain failed (%s)", type(exc).__name__)
 
 
 @app.post(
@@ -1782,6 +2722,7 @@ def console_webhook_subscribe(
     import secrets as _secrets
 
     from sellable.notifications import SUBSCRIBABLE_EVENTS
+    from sellable.outbound import validate_outbound_url
     from sellable.repositories import WebhookRepository
 
     url = body.get("url")
@@ -1795,6 +2736,15 @@ def console_webhook_subscribe(
         )
     if not events:
         raise HTTPException(status_code=400, detail="At least one event is required")
+    try:
+        validate_outbound_url(
+            str(url),
+            allow_private=settings.is_dev_environment,
+            require_https=not settings.is_dev_environment,
+            resolve=not settings.is_dev_environment,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     secret = _secrets.token_urlsafe(32)
     try:
         subscription = WebhookRepository().create_subscription(
@@ -1885,7 +2835,7 @@ def console_commerce_metrics(
     days: int = 30,
 ) -> dict:
     from sellable.metrics import commerce_metrics
-    from sellable.repositories import AnalyticsRepository, PromotionRepository
+    from sellable.repositories import AnalyticsRepository
 
     core = merchant_core(session)
     return commerce_metrics(
@@ -1906,30 +2856,35 @@ def readiness() -> dict:
     checks: dict[str, object] = {}
     ready = True
     try:
-        pending = OutboxRepository().pending_count()
-        dead = OutboxRepository().dead_letter_count()
-        checks["outbox"] = {"pending": pending, "dead_lettered": dead}
+        OutboxRepository().pending_count()
+        OutboxRepository().dead_letter_count()
+        checks["outbox"] = {"status": "ok"}
     except Exception as error:  # noqa: BLE001 — readiness reports, never crashes
         ready = False
-        checks["outbox"] = {"error": str(error)[:200]}
+        logger.warning("Readiness outbox check failed (%s)", type(error).__name__)
+        checks["outbox"] = {"status": "unavailable"}
     try:
-        checks["payments"] = {
-            "provider": getattr(settings, "payment_provider", "razorpay"),
-            "razorpay_configured": settings.razorpay_is_configured,
-            "stripe_configured": bool(settings.stripe_secret_key),
-        }
+        from sellable.payments import provider_is_valid
+
+        payment_ready = provider_is_valid(settings)
+        checks["payments"] = {"status": "ok" if payment_ready else "unavailable"}
+        ready = ready and payment_ready
     except Exception as error:  # noqa: BLE001
         ready = False
-        checks["payments"] = {"error": str(error)[:200]}
+        logger.warning("Readiness payments check failed (%s)", type(error).__name__)
+        checks["payments"] = {"status": "unavailable"}
     try:
         from sellable.repositories import MerchantRepository
 
-        checks["database"] = {
-            "merchants": len(MerchantRepository().list_all(limit=5))
-        }
+        MerchantRepository().list_all(limit=1)
+        checks["database"] = {"status": "ok"}
     except Exception as error:  # noqa: BLE001
         ready = False
-        checks["database"] = {"error": str(error)[:200]}
+        logger.warning("Readiness database check failed (%s)", type(error).__name__)
+        checks["database"] = {"status": "unavailable"}
+    maintenance_status = _maintenance_readiness()
+    checks["maintenance"] = {"status": maintenance_status}
+    ready = ready and maintenance_status == "ok"
     status_code = 200 if ready else 503
     return JSONResponse(status_code=status_code, content={"ready": ready, "checks": checks})
 
@@ -2066,6 +3021,8 @@ async def stripe_webhook(
         StripeConfigurationError,
     )
 
+    if not settings.is_dev_environment:
+        raise HTTPException(status_code=404, detail="Not found")
     body = await request.body()
     try:
         payload = json.loads(body.decode("utf-8"))
@@ -2115,6 +3072,7 @@ def console_connector_register(
     x_trace_id: str | None = Header(default=None),
 ) -> dict:
     from sellable.connectors.base import ConnectorConfig
+    from sellable.outbound import validate_outbound_url
 
     for field_name in ("connector_id", "provider"):
         if not body.get(field_name):
@@ -2136,6 +3094,12 @@ def console_connector_register(
             field_map=dict(body.get("field_map") or {}),
             timeout_seconds=int(body.get("timeout_seconds") or 15),
             active=True,
+        )
+        validate_outbound_url(
+            f"{config.base_url.rstrip('/')}{config.products_path}",
+            allow_private=settings.is_dev_environment,
+            require_https=not settings.is_dev_environment,
+            resolve=not settings.is_dev_environment,
         )
         return core.connector_register(
             config, trace_id=resolve_trace_id(x_trace_id)
@@ -2279,6 +3243,7 @@ def agent_quote_create(
         trace_id=trace_id,
         route="agent.quotes.create",
         hold_status=403,
+        agent_id=_api_key.buyer_agent_id,
     )
     return gateway.create_quote(body, trace_id=trace_id)
 
@@ -2303,6 +3268,7 @@ def agent_quote_negotiate(
         trace_id=trace_id,
         route="agent.quotes.negotiate",
         hold_status=403,
+        agent_id=_api_key.buyer_agent_id,
     )
     return gateway.create_quote(body, trace_id=trace_id)
 
@@ -2317,14 +3283,16 @@ def agent_quote_negotiate(
 def buyer_run(
     request: Request,
     mission: BuyerMission,
-    agent: BuyerAgent = Depends(get_buyer_agent),
-    # The reference buyer creates real orders + consents: signed-only
-    # outside dev/test, like every mutating agent route.
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
 ) -> BuyerResult:
+    # The reference buyer creates real orders + consents: signed-only
+    # outside dev/test, like every mutating agent route, and always bound
+    # to the caller's own merchant core (§37.2).
+    buyer_core = registry.get(_api_key.merchant_id)
+    agent = BuyerAgent(AgentGateway(buyer_core, SellerAgent(buyer_core, llm=_seller_llm)), llm=_seller_llm)
     result = agent.run(mission, trace_id=resolve_trace_id(x_trace_id))
-    return _with_mission_id(commerce_core.merchant_scope, mission, result)
+    return _with_mission_id(_api_key.merchant_id, mission, result)
 
 
 @app.post("/agent/consents.request", tags=["agent-gateway"])
@@ -2349,6 +3317,7 @@ def agent_consents_request(
         amount_paise=order.amount_paise,
         trace_id=trace_id,
         route="agent.consents.request",
+        agent_id=_api_key.buyer_agent_id,
     )
     try:
         consent = commerce.issue_consent(body.order_id)
@@ -2392,6 +3361,7 @@ def agent_order_create(
         amount_paise=None,
         trace_id=trace_id,
         route="agent.orders.create",
+        agent_id=_api_key.buyer_agent_id,
     )
     pre_existing = commerce.get_order_by_idempotency_key(body.idempotency_key)
     if pre_existing is not None and pre_existing.trace_id == trace_id:
@@ -2756,7 +3726,6 @@ def _summarize_order(
     dead consent as ISSUED — the exact bug behind the stale START PAYMENT
     button and the "Consent is not available for use" 409 loop.
     """
-    order_id = getattr(order, "order_id")
     status = getattr(order, "status")
 
     items: list[dict[str, object]] = []
@@ -2772,6 +3741,7 @@ def _summarize_order(
     payment_order_id: str | None = None
     payment_status: str | None = None
     payment_id: str | None = None
+    failure_reason: str | None = None
 
     for e in events:
         output = e.output_json or {}
@@ -2795,6 +3765,9 @@ def _summarize_order(
         elif e.action in ("webhook.reconciled", "payment.captured", "payment.failed"):
             payment_status = output.get("status") or payment_status
             payment_id = e.provider_ref or payment_id
+            candidate_reason = output.get("failure_reason")
+            if isinstance(candidate_reason, str):
+                failure_reason = candidate_reason
         elif e.action == "order.paid":
             payment_status = payment_status or "CAPTURED"
             payment_id = e.provider_ref or payment_id
@@ -2805,6 +3778,8 @@ def _summarize_order(
         payment_status = "CAPTURED"
     if payment_status is None and status in ("PAYMENT_FAILED", "ABORTED", "REFUNDED"):
         payment_status = "FAILED"
+    if status == "PAYMENT_FAILED" and failure_reason is None:
+        failure_reason = "payment_failed"
 
     # Display vocabulary: the Consent record enum uses USED, but every
     # order/transaction summary surfaces the same state as CONSUMED (the
@@ -2863,6 +3838,7 @@ def _summarize_order(
         "payment_status": payment_status,
         "payment_order_id": payment_order_id,
         "payment_id": payment_id,
+        "failure_reason": failure_reason,
     }
 
 
@@ -3223,7 +4199,7 @@ def console_approve_order(
             )
             mission_id = mission_row.mission_id if mission_row else None
         except Exception as exc:  # noqa: BLE001 — pointer refresh is additive
-            logger.warning("Buyer mission approval refresh failed: %s", exc)
+            logger.warning("Buyer mission approval refresh failed (%s)", type(exc).__name__)
         return {
             "status": "approved",
             "order_id": order_id,
@@ -3492,58 +4468,6 @@ def transaction_events(
     }
 
 
-@app.get("/agents/status", tags=["console"])
-@limiter.limit("60/minute")
-def agents_status(
-    request: Request,
-    commerce: CommerceCore = Depends(get_commerce),
-    ledger: LedgerRepository = Depends(get_ledger),
-    seller_agent: SellerAgent = Depends(get_seller_agent),
-    buyer_agent: BuyerAgent = Depends(get_buyer_agent),
-    gateway: AgentGateway = Depends(get_agent_gateway),
-    session: MerchantSession = Depends(get_merchant_session),
-) -> Response:
-    """Report real, backend-driven component state (never hardcoded green).
-
-    Aggregate health only, served from a short per-merchant snapshot cache
-    with single-flight rebuilds. Per-stage durations go out as a
-    Server-Timing header (stage names only — never secrets or tokens).
-    """
-    import time as _time
-
-    from fastapi.encoders import jsonable_encoder
-    from fastapi.responses import JSONResponse
-
-    from sellable.status import get_cached_status_snapshot
-
-    timings: dict[str, float] = {}
-    start = _time.perf_counter()
-    core = merchant_core(session)
-    timings["merchant"] = (_time.perf_counter() - start) * 1000.0
-
-    def _build() -> dict[str, object]:
-        return build_status(
-            commerce=core,
-            ledger=ledger,
-            seller_agent=seller_agent,
-            buyer_agent=buyer_agent,
-            gateway=gateway,
-            llm_adapter=_seller_llm,
-            llm_init_error=_llm_init_error,
-            timings=timings,
-        )
-
-    payload, cached = get_cached_status_snapshot(session.merchant_id, _build)
-    timings["total"] = (_time.perf_counter() - start) * 1000.0
-    server_timing = "; ".join(
-        f"{name};dur={value:.1f}" for name, value in sorted(timings.items())
-    )
-    return JSONResponse(
-        content=jsonable_encoder(payload),
-        headers={"Server-Timing": server_timing, "X-Status-Cached": "1" if cached else "0"},
-    )
-
-
 @app.post("/catalog/products", response_model=Product, tags=["console"])
 @limiter.limit("10/minute")
 def console_create_product(
@@ -3740,7 +4664,7 @@ def console_onboarding(
                 db.query(MerchantUserRecord).filter_by(auth_user_id=user.auth_user_id).first()
             )
     except Exception as exc:
-        logger.error("Onboarding membership check failed: %s", exc)
+        logger.error("Onboarding membership check failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Database error during onboarding") from exc
     if existing is not None:
         raise HTTPException(
@@ -3764,7 +4688,7 @@ def console_onboarding(
             )
             db.commit()
     except Exception as exc:
-        logger.error("Onboarding membership write failed: %s", exc)
+        logger.error("Onboarding membership write failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Could not link merchant membership") from exc
     record = MerchantRepository().get(merchant_id)
     return {
@@ -3819,7 +4743,7 @@ def _with_mission_id(
             merchant_id=merchant_id, mission=mission, result=result
         )
     except Exception as exc:  # noqa: BLE001 — mission persistence is additive
-        logger.warning("Buyer mission persistence failed: %s", exc)
+        logger.warning("Buyer mission persistence failed (%s)", type(exc).__name__)
         return result
     if mission_id:
         result = result.model_copy(update={"mission_id": mission_id})

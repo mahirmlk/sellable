@@ -52,12 +52,24 @@ def agent_metrics(
 
     guardrail_blocks = policy_denials = auth_denials = risk_blocks = 0
     escalations = support_cases = 0
+    injection_blocks = data_access_denials = 0
+    guardrail_block_breakdown: dict[str, int] = {}
     for record in ledger.all_events(limit=1000, merchant_id=merchant_id):
         if _aware(record.timestamp) < since:
             continue
         action = record.action
-        if action in ("seller.guardrail_blocked",):
+        if action in ("seller.guardrail_blocked", "cs.guardrail_blocked"):
             guardrail_blocks += 1
+            for reason in (record.inputs_json or {}).get("blocks", []) or []:
+                if not isinstance(reason, str):
+                    continue
+                guardrail_block_breakdown[reason] = (
+                    guardrail_block_breakdown.get(reason, 0) + 1
+                )
+                if "PROMPT_INJECTION" in reason:
+                    injection_blocks += 1
+                if reason.startswith("SCOPE") or "TOOL_SCOPE" in reason:
+                    data_access_denials += 1
         elif action == "support.case.escalated":
             escalations += 1
         elif action == "support.case_created":
@@ -69,6 +81,14 @@ def agent_metrics(
         elif action == "policy.checked" and (record.output_json or {}).get("verdict") == "DENY":
             policy_denials += 1
 
+    model_rows = []
+    try:
+        model_rows = observability_repo.list_model_calls(merchant_id, limit=500)
+    except Exception:  # noqa: BLE001 — telemetry is additive
+        pass
+    retried_calls = sum(1 for r in model_rows if r.get("retry_count", 0) > 0)
+    errored_calls = sum(1 for r in model_rows if r.get("finish_reason") == "error")
+
     denominators = max(len(runs), 1)
     return {
         "window_days": days,
@@ -77,6 +97,9 @@ def agent_metrics(
             "run_success_rate_bps": (len(runs) - error_runs) * 10_000 // denominators,
             "tool_failure_rate_bps": tool_failures * 10_000 // max(tool_calls, 1),
             "blocked_run_rate_bps": blocked_runs * 10_000 // denominators,
+            "escalation_rate_bps": escalations * 10_000 // denominators,
+            "model_retry_rate_bps": retried_calls * 10_000 // max(len(model_rows), 1),
+            "model_error_rate_bps": errored_calls * 10_000 // max(len(model_rows), 1),
         },
         "quality": {
             "policy_denials": policy_denials,
@@ -91,6 +114,9 @@ def agent_metrics(
         },
         "safety": {
             "guardrail_blocks": guardrail_blocks,
+            "guardrail_block_breakdown": guardrail_block_breakdown,
+            "prompt_injection_blocks": injection_blocks,
+            "data_access_denials": data_access_denials,
             "risk_blocks": risk_blocks,
             "auth_denials": auth_denials,
         },

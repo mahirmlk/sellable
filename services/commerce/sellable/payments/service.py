@@ -26,6 +26,33 @@ from sellable.payments.razorpay import (
 logger = logging.getLogger("sellable.payments")
 
 
+_PAYMENT_FAILURE_CODES = frozenset(
+    {
+        "authentication_required",
+        "card_declined",
+        "do_not_honor",
+        "expired_card",
+        "incorrect_cvc",
+        "insufficient_funds",
+        "payment_cancelled",
+        "processing_error",
+    }
+)
+
+
+def _failure_reason_code(event_name: str, *provider_codes: object) -> str:
+    """Return a safe, stable category; never expose provider error prose."""
+    if event_name in ("payment_link.cancelled", "checkout.session.async_payment_failed"):
+        return "payment_cancelled"
+    for value in provider_codes:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in _PAYMENT_FAILURE_CODES:
+            return normalized
+    return "payment_failed"
+
+
 class UnknownProviderOrderError(ValueError):
     pass
 
@@ -61,6 +88,17 @@ class PaymentService:
 
         self.commerce = commerce
         self.rail = rail
+        # §46.2: the provider is behind a circuit breaker so a down provider
+        # fails fast instead of every caller paying the network timeout.
+        from sellable.resilience import CircuitBreaker
+
+        self.provider_breaker = CircuitBreaker(
+            name=f"payment:{getattr(rail, 'provider_name', 'provider')}",
+            failure_threshold=5,
+            cooldown_seconds=30.0,
+        )
+        # Webhook settlement serialization (single-process invariant).
+        self._settlement_lock = threading.Lock()
         self._core_resolver = core_resolver
         # Guards start_payment / retry_payment check-and-set so concurrent
         # calls cannot mint two live provider links for one order.
@@ -156,9 +194,16 @@ class PaymentService:
                 if order.provider_link_id in self._local_order_by_link_id:
                     self._local_order_by_link_id[order.provider_link_id] = order_id
                 return self._rebuild_attempt(order)
-            consented_order = core.consume_consent(consent_id, order_id=order_id)
-            pending_order = core.mark_payment_pending(order_id)
             self._core_by_order_id[order_id] = core
+            if order.status is OrderStatus.PAYMENT_PENDING:
+                # Consent was already consumed before the prior provider call.
+                # Reconcile by the stable order reference, then create only if
+                # the provider confirms that no matching link exists.
+                return self._create_provider_attempt(
+                    order_id, order.trace_id, core, reconcile_first=True
+                )
+            core.consume_consent(consent_id, order_id=order_id)
+            pending_order = core.mark_payment_pending(order_id)
             return self._create_provider_attempt(order_id, pending_order.trace_id, core)
 
     def cancel_provider_link(
@@ -173,7 +218,9 @@ class PaymentService:
         order = core.get_order(order_id)
         if not order.provider_link_id:
             return False
-        self.rail.cancel_payment_link(order.provider_link_id)
+        self.provider_breaker.call(
+            self.rail.cancel_payment_link, order.provider_link_id
+        )
         self._record(
             core=core,
             trace_id=order.trace_id,
@@ -230,44 +277,110 @@ class PaymentService:
             try:
                 return self._create_provider_attempt(order_id, pending_order.trace_id, core)
             except RazorpayRequestError as error:
-                core.mark_payment_failed(order_id, reason=str(error))
+                if not error.retryable:
+                    core.mark_payment_failed(order_id, reason=str(error))
                 self._record(
                     core=core,
                     trace_id=order.trace_id,
-                    action="retry.failed",
+                    action=(
+                        "retry.reconciliation_required"
+                        if error.retryable
+                        else "retry.failed"
+                    ),
                     inputs={"order_id": order_id, "attempt": retries + 1},
-                    output={"retryable": error.retryable},
-                    explanation="The bounded retry also failed; no duplicate settlement was created.",
+                    output={
+                        "retryable": error.retryable,
+                        "order_status": (
+                            "PAYMENT_PENDING" if error.retryable else "PAYMENT_FAILED"
+                        ),
+                    },
+                    explanation=(
+                        "The provider outcome is uncertain. The order remains pending "
+                        "so the next start can reconcile the existing link."
+                        if error.retryable
+                        else "The bounded retry failed; no duplicate settlement was created."
+                    ),
                 )
                 raise
 
-    def _create_provider_attempt(self, order_id: str, trace_id: str, core: CommerceCore) -> PaymentAttempt:
+    def _find_provider_link(self, order: Order) -> Any | None:
+        finder = getattr(self.rail, "find_payment_link", None)
+        if not callable(finder):
+            return None
+        return self.provider_breaker.call(finder, order)
+
+    def _create_provider_attempt(
+        self,
+        order_id: str,
+        trace_id: str,
+        core: CommerceCore,
+        *,
+        reconcile_first: bool = False,
+    ) -> PaymentAttempt:
         pending_order = core.get_order(order_id)
+        recovered = False
         try:
-            # Human checkout uses a hosted Razorpay Payment Link (spec §10):
-            # the browser receives only a public short_url — no keys, no SDK,
-            # and the provider never confirms through the frontend.
-            provider_link = self.rail.create_payment_link(pending_order)
+            provider_link = (
+                self._find_provider_link(pending_order) if reconcile_first else None
+            )
+            recovered = provider_link is not None
+            if provider_link is None:
+                try:
+                    provider_link = self.provider_breaker.call(
+                        self.rail.create_payment_link, pending_order
+                    )
+                except RazorpayRequestError as create_error:
+                    # A timeout or duplicate-reference response can happen
+                    # after the provider committed the link. Query the stable
+                    # reference before treating the payment attempt as failed.
+                    try:
+                        provider_link = self._find_provider_link(pending_order)
+                    except RazorpayRequestError as lookup_error:
+                        raise RazorpayRequestError(
+                            "Payment-link creation outcome is uncertain; retry to reconcile it",
+                            retryable=True,
+                        ) from lookup_error
+                    if provider_link is None:
+                        raise create_error
+                    recovered = True
+
             if (
                 provider_link.amount_paise != pending_order.amount_paise
-                or provider_link.currency != "INR"
+                or provider_link.currency.upper() != "INR"
             ):
                 raise RazorpayRequestError(
                     "Razorpay response does not match the local order amount or currency"
                 )
         except RazorpayRequestError as error:
-            core.mark_payment_failed(order_id, reason=str(error))
-            self._record(
-                core=core,
-                trace_id=trace_id,
-                action="payment.failure_classified",
-                inputs={"order_id": order_id},
-                output={"retryable": error.retryable},
-                explanation=(
-                    "The provider request failed. A single bounded retry is available "
-                    "when the failure is retryable; otherwise the transaction aborts."
-                ),
-            )
+            if error.retryable:
+                # Do not move an ambiguous remote create into PAYMENT_FAILED:
+                # the link may be live and payable. A repeat start re-runs the
+                # provider lookup without consuming consent again.
+                self._record(
+                    core=core,
+                    trace_id=trace_id,
+                    action="payment.reconciliation_required",
+                    inputs={"order_id": order_id},
+                    output={"retryable": True, "order_status": "PAYMENT_PENDING"},
+                    explanation=(
+                        "The provider outcome could not be confirmed. The order "
+                        "stays pending so a repeat start can reconcile its stable "
+                        "provider reference before creating another link."
+                    ),
+                )
+            else:
+                core.mark_payment_failed(order_id, reason=str(error))
+                self._record(
+                    core=core,
+                    trace_id=trace_id,
+                    action="payment.failure_classified",
+                    inputs={"order_id": order_id},
+                    output={"retryable": False},
+                    explanation=(
+                        "The provider rejected the payment request. A single "
+                        "bounded retry is available after a verified failure."
+                    ),
+                )
             raise
 
         attempt = PaymentAttempt(
@@ -278,12 +391,8 @@ class PaymentService:
         )
         self._attempt_by_order_id[order_id] = attempt
         self._local_order_by_link_id[provider_link.provider_link_id] = order_id
-        # Razorpay creates an internal order for every payment link; mapping
-        # it lets payment.captured webhooks (which reference payment.order_id)
-        # resolve even when only the captured event arrives.
         if provider_link.provider_order_id:
             self._local_order_by_provider_order_id[provider_link.provider_order_id] = order_id
-        # Persisted references: webhook settlement must survive restarts.
         core.attach_provider_refs(
             order_id,
             link_id=provider_link.provider_link_id,
@@ -295,9 +404,18 @@ class PaymentService:
             trace_id=trace_id,
             action="payment.attempted",
             inputs={"order_id": order_id, "amount_paise": pending_order.amount_paise},
-            output={"provider_link_id": provider_link.provider_link_id, "payment_url": provider_link.short_url},
+            output={
+                "provider_link_id": provider_link.provider_link_id,
+                "payment_url": provider_link.short_url,
+                "recovered": recovered,
+            },
             provider_ref=provider_link.provider_link_id,
-            explanation="Created a Razorpay test-mode Payment Link after policy approval and consent.",
+            explanation=(
+                "Recovered the existing Razorpay test-mode Payment Link by its "
+                "unique order reference."
+                if recovered
+                else "Created a Razorpay test-mode Payment Link after policy approval and consent."
+            ),
         )
         return attempt
 
@@ -318,7 +436,19 @@ class PaymentService:
         ``extra_flags`` marks synthetic provenance (e.g. ``["simulated"]``) on
         the resulting ledger events so demo money is never narrated as
         verified provider money.
+
+        Settlement is serialized per process: the delivery claim is PK-atomic
+        across processes (Postgres), but concurrent in-process deliveries of
+        the same event must not interleave claim-check-then-settle windows.
+        The single-worker deployment invariant makes the process lock the
+        whole story.
         """
+        with self._settlement_lock:
+            return self._handle_webhook_locked(body, signature, extra_flags)
+
+    def _handle_webhook_locked(
+        self, body: bytes, signature: str | None, extra_flags: list[str] | None = None
+    ) -> PaymentAttempt:
         self.rail.verify_webhook(body, signature)
         try:
             payload = json.loads(body)
@@ -393,6 +523,7 @@ class PaymentService:
             else ""
         )
 
+        failure_reason_code: str | None = None
         if event_name in ("payment.captured", "payment_link.paid"):
             try:
                 raw_amount = payment.get("amount")
@@ -417,6 +548,29 @@ class PaymentService:
                     explanation=(
                         "The captured amount does not match the local order amount (or is "
                         "missing); the order was not settled." + provenance_note
+                    ),
+                    flags=flags,
+                )
+                return attempt
+            provider_currency = (
+                payment.get("currency") or link_entity.get("currency")
+            )
+            if provider_currency is not None and str(provider_currency) != "INR":
+                # §45 payment invariants: currency must match. The platform
+                # settles INR only; a foreign-currency capture never settles.
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.currency_mismatch",
+                    inputs={"event": event_name, "provider_payment_id": provider_payment_id},
+                    output={
+                        "provider_currency": str(provider_currency),
+                        "expected_currency": "INR",
+                    },
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        "The captured currency does not match the platform "
+                        "currency; the order was not settled." + provenance_note
                     ),
                     flags=flags,
                 )
@@ -487,6 +641,11 @@ class PaymentService:
                 + provenance_note
             )
         else:  # payment.failed / payment_link.cancelled
+            failure_reason_code = _failure_reason_code(
+                event_name,
+                payment.get("error_code"),
+                payment.get("error_reason"),
+            )
             reason = (
                 str(payment.get("error_description") or "")
                 or (
@@ -541,7 +700,11 @@ class PaymentService:
             trace_id=local_order.trace_id,
             action="webhook.reconciled",
             inputs={"event": event_name, "provider_order_id": attempt.provider_order_id},
-            output={"order_id": local_order_id, "status": updated_attempt.status},
+            output={
+                "order_id": local_order_id,
+                "status": updated_attempt.status,
+                **({"failure_reason": failure_reason_code} if failure_reason_code else {}),
+            },
             provider_ref=provider_payment_id,
             explanation=explanation,
             flags=flags,
@@ -658,6 +821,7 @@ class PaymentService:
                 self._attempt_by_order_id[local_order.order_id] = attempt
             return attempt
 
+        failure_reason_code: str | None = None
         if event_type == "payment_intent.succeeded":
             if (
                 provider_payment_id is None
@@ -677,6 +841,27 @@ class PaymentService:
                     explanation=(
                         "The Stripe captured amount does not match the local order "
                         "amount (or is missing); the order was not settled."
+                    ),
+                    actor=LedgerActor.STRIPE,
+                )
+                return attempt
+            event_currency = entity.get("currency")
+            if event_currency is not None and str(event_currency).upper() != "INR":
+                # §45 payment invariants: currency must match (Stripe reports
+                # it lowercase); a foreign-currency intent never settles.
+                self._record(
+                    core=core,
+                    trace_id=local_order.trace_id,
+                    action="webhook.currency_mismatch",
+                    inputs={"event": event_type, "provider_payment_id": provider_payment_id},
+                    output={
+                        "provider_currency": str(event_currency),
+                        "expected_currency": "INR",
+                    },
+                    provider_ref=provider_payment_id,
+                    explanation=(
+                        "The Stripe captured currency does not match the platform "
+                        "currency; the order was not settled."
                     ),
                     actor=LedgerActor.STRIPE,
                 )
@@ -739,8 +924,14 @@ class PaymentService:
             )
             explanation = "Verified Stripe payment webhook and settled the local order."
         else:  # payment_intent.payment_failed
+            last_error = entity.get("last_payment_error") or {}
+            failure_reason_code = _failure_reason_code(
+                event_type,
+                last_error.get("decline_code"),
+                last_error.get("code"),
+            )
             reason = (
-                str((entity.get("last_payment_error") or {}).get("message") or "")
+                str(last_error.get("message") or "")
                 or "Stripe reported a failed payment"
             )
             if local_order.status is OrderStatus.PAYMENT_FAILED:
@@ -786,7 +977,11 @@ class PaymentService:
             trace_id=local_order.trace_id,
             action="webhook.reconciled",
             inputs={"event": event_type, "provider_order_id": attempt.provider_order_id},
-            output={"order_id": local_order.order_id, "status": updated_attempt.status},
+            output={
+                "order_id": local_order.order_id,
+                "status": updated_attempt.status,
+                **({"failure_reason": failure_reason_code} if failure_reason_code else {}),
+            },
             provider_ref=provider_payment_id,
             explanation=explanation,
             actor=LedgerActor.STRIPE,

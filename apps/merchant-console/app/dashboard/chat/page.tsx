@@ -21,7 +21,7 @@ import {
   CircleCheck,
   Info,
 } from "lucide-react";
-import { formatPaise } from "@/lib/formatters";
+import { formatPaise, paymentFailureLabel } from "@/lib/formatters";
 import {
   ApiError,
   getConsoleCatalog,
@@ -54,6 +54,7 @@ import {
   type ConsolePolicySettings,
 } from "@/lib/api";
 import ChatHistory from "@/components/dashboard/chat-history";
+import { ConfirmDialog } from "@/components/dashboard/confirm-dialog";
 import {
   Message,
   MessageAvatar,
@@ -227,11 +228,12 @@ export default function ChatPageInner() {
   const [categories, setCategories] = useState<string[]>(["accessories", "gifting", "snacks"]);
   const [upsellOn, setUpsellOn] = useState(true);
   const [decision, setDecision] = useState<SellerDecisionPayload | null>(null);
-  const [intent, setIntent] = useState<IntentMandate | null>(null);
   const [order, setOrder] = useState<OrderCreateResult | null>(null);
   const [consent, setConsent] = useState<ConsentInfo | null>(null);
   const [payment, setPayment] = useState<PaymentAttemptPayload | null>(null);
   const [orderStatus, setOrderStatus] = useState<string | null>(null);
+  const [refundConfirmOpen, setRefundConfirmOpen] = useState(false);
+  const [refundError, setRefundError] = useState<string | null>(null);
   const [negotiating, setNegotiating] = useState(false);
   const [offerInput, setOfferInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -314,7 +316,6 @@ export default function ChatPageInner() {
     setBudgetMsg(null);
     setMessages([]);
     setDecision(null);
-    setIntent(null);
     setOrder(null);
     setConsent(null);
     setPayment(null);
@@ -464,6 +465,13 @@ export default function ChatPageInner() {
         try {
           const detail = await getConsoleTransactionDetail(orderId);
           setOrderStatus(detail.status);
+          if (detail.status === "PAYMENT_FAILED") {
+            setPayment((prev) =>
+              prev
+                ? { ...prev, failure_reason: detail.failure_reason ?? prev.failure_reason }
+                : prev
+            );
+          }
           if (PAYMENT_TERMINAL.includes(detail.status)) {
             window.clearInterval(timer);
             if (detail.status === "PAID" || detail.status === "FULFILLED" || detail.status === "REFUNDED") {
@@ -585,7 +593,7 @@ export default function ChatPageInner() {
       // action retries.
       setSyncState("error");
     }
-  }, [checkoutSessionId, messages, decision, order, budgetPaise, phase, readOnly, refreshHistory, router]);
+  }, [checkoutSessionId, messages, decision, order, budgetPaise, readOnly, refreshHistory, router]);
 
   useEffect(() => {
     void persistSession();
@@ -983,7 +991,6 @@ export default function ChatPageInner() {
       setBusy(true);
       try {
         const i = buildIntent(message);
-        setIntent(i);
         const result = await consoleSellerRespond({
           message,
           intent: i,
@@ -1122,7 +1129,6 @@ export default function ChatPageInner() {
       // honored: the stored intent was minted when the quote was requested
       // and would otherwise carry a stale budget ceiling to order creation.
       const freshIntent = buildIntent(sessionMessageRef.current);
-      setIntent(freshIntent);
       // Checkout must re-evaluate the SAME negotiated quote the seller
       // returned. The in-session offer lives in offerRef; after a restore
       // it is reconstructed deterministically from the persisted cart
@@ -1361,12 +1367,16 @@ export default function ChatPageInner() {
   const handleRefund = useCallback(async () => {
     if (!order || busy) return;
     setBusy(true);
+    setRefundError(null);
     try {
       await refundOrder(order.order_id, "Merchant initiated refund from chat console");
       setPhase("receipt");
       setOrderStatus("REFUNDED");
+      setRefundConfirmOpen(false);
     } catch {
-      // ignore
+      setRefundError(
+        "We couldn't confirm the refund. Check the order status before retrying to avoid a duplicate action."
+      );
     } finally {
       setBusy(false);
     }
@@ -2059,6 +2069,11 @@ export default function ChatPageInner() {
                   </CardHeader>
                   <CardContent>
                     <FieldRow label="Final state">{orderStatus || "PAYMENT_FAILED"}</FieldRow>
+                    {paymentFailureLabel(payment?.failure_reason) && (
+                      <FieldRow label="Reason">
+                        {paymentFailureLabel(payment?.failure_reason)}
+                      </FieldRow>
+                    )}
                   </CardContent>
                 </Card>
                 <button onClick={handleRetry} disabled={busy} className="w-full h-9 border border-hairline bg-ink/10 text-[13px] text-ink hover:bg-accent/20 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
@@ -2107,7 +2122,14 @@ export default function ChatPageInner() {
                   </button>
                 )}
                 {orderStatus !== "REFUNDED" && (
-                  <button onClick={handleRefund} disabled={busy} className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-red-600 hover:border-red-600/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full">
+                  <button
+                    onClick={() => {
+                      setRefundError(null);
+                      setRefundConfirmOpen(true);
+                    }}
+                    disabled={busy}
+                    className="w-full h-9 border border-black/[0.06] text-[13px] text-neutral-600 hover:text-red-600 hover:border-red-600/30 transition-colors cursor-pointer disabled:opacity-50 font-medium rounded-full"
+                  >
                     Refund order
                   </button>
                 )}
@@ -2116,6 +2138,30 @@ export default function ChatPageInner() {
           </div>
         </div>
       </div>
+      <ConfirmDialog
+        open={refundConfirmOpen}
+        title={`Refund ${order ? formatPaise(order.amount_paise) : "this order"}?`}
+        description={
+          <div className="space-y-2">
+            <p>
+              {order
+                ? `Refund order ${order.order_id} for ${formatPaise(order.amount_paise)}? This cannot be undone.`
+                : "This refund cannot be undone."}
+            </p>
+            {refundError && (
+              <p role="alert" className="text-[13px] text-red-600">
+                {refundError}
+              </p>
+            )}
+          </div>
+        }
+        confirmLabel="Refund order"
+        tone="danger"
+        typeToConfirm="REFUND"
+        busy={busy}
+        onConfirm={() => void handleRefund()}
+        onCancel={() => setRefundConfirmOpen(false)}
+      />
     </div>
   );
 }

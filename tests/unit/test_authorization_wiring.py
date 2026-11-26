@@ -377,3 +377,89 @@ def test_outbox_lifecycle_events_and_claim(commerce_core: CommerceCore) -> None:
     for event in claimed:
         outbox.mark_published(event.event_id)
     assert outbox.pending_count(commerce_core.merchant_scope) == 0
+
+
+# --- Impersonation protection (§45) -------------------------------------------
+
+
+def test_decide_denies_delegation_presented_by_another_agent(
+    commerce_core: CommerceCore,
+) -> None:
+    decision = decide(
+        _grant(commerce_core.merchant_scope),
+        scope=OperationScope.CART_WRITE,
+        merchant_id=commerce_core.merchant_scope,
+        amount_paise=69_900,
+        agent_id="agent_someone_else",
+    )
+    assert decision.outcome == AuthorizationOutcome.DENY
+    assert decision.reason_code == "AGENT_MISMATCH"
+
+
+def test_decide_allows_delegation_for_its_own_subject(
+    commerce_core: CommerceCore,
+) -> None:
+    decision = decide(
+        _grant(commerce_core.merchant_scope),
+        scope=OperationScope.CART_WRITE,
+        merchant_id=commerce_core.merchant_scope,
+        amount_paise=69_900,
+        agent_id="agent_1",
+    )
+    assert decision.outcome == AuthorizationOutcome.ALLOW
+
+
+def test_service_authorize_forwards_agent_identity(commerce_core: CommerceCore) -> None:
+    grant = _grant(commerce_core.merchant_scope)
+    commerce_core.delegation_repo.save(grant)
+    decision = commerce_core.authorization_service.authorize(
+        delegation_id=grant.delegation_id,
+        scope=OperationScope.CART_WRITE,
+        merchant_id=commerce_core.merchant_scope,
+        agent_id="agent_impersonator",
+    )
+    assert decision.outcome == AuthorizationOutcome.DENY
+    assert decision.reason_code == "AGENT_MISMATCH"
+
+
+# --- Checkout-path approval holds (§14.4) --------------------------------------
+
+
+def _cart_in_core(commerce_core: CommerceCore) -> tuple[str, int]:
+    cart = commerce_core.create_cart(trace_id=_trace(), customer_id="cust_1")
+    updated = commerce_core.cart_add_item(
+        cart.cart_id,
+        "AUDIO-CASE-01",
+        1,
+        expected_version=cart.version,
+        trace_id=_trace(),
+    )
+    return updated.cart_id, updated.version
+
+
+def test_checkout_validate_allows_pricing_but_authorize_holds(
+    commerce_core: CommerceCore,
+) -> None:
+    from sellable.checkout import CheckoutHoldError
+
+    grant = _grant(
+        commerce_core.merchant_scope, approval_mode=ApprovalMode.REQUIRE_HUMAN
+    )
+    commerce_core.delegation_repo.save(grant)
+    cart_id, version = _cart_in_core(commerce_core)
+    commerce_core.cart_start_checkout(cart_id, expected_version=version, trace_id=_trace())
+    checkout = commerce_core.create_checkout(
+        cart_id, trace_id=_trace(), delegation_id=grant.delegation_id
+    )
+    # Pricing completes (approval needs the authoritative total)...
+    validated = commerce_core.checkout_validate(checkout.checkout_id, trace_id=_trace())
+    assert validated.status.value == "VALIDATED"
+    priced = commerce_core.checkout_price(checkout.checkout_id, trace_id=_trace())
+    assert priced.grand_total_paise > 0
+    # ...but the delegation gate holds at authorization (§14.4).
+    with pytest.raises(CheckoutHoldError):
+        commerce_core.checkout_authorize(checkout.checkout_id, trace_id=_trace())
+    held = commerce_core.checkout_service.get_checkout(
+        checkout.checkout_id, commerce_core.merchant_scope
+    )
+    assert held.status.value == "RISK_REVIEW"

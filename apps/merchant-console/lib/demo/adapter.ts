@@ -544,6 +544,7 @@ export function streamConsoleEvents(
   handlers: StreamHandlers,
   _opts: StreamOptions = {}
 ): () => void {
+  void _opts;
   let stopped = false;
   const all = events();
   let i = 0;
@@ -944,7 +945,8 @@ export async function consoleStartPayment(
   orderId: string,
   _consentId: string
 ): Promise<PaymentAttemptPayload> {
-  const order = findOrder(orderId);
+  void _consentId;
+  findOrder(orderId);
   const attempt: PaymentAttemptPayload = {
     attempt_id: demoId("att"),
     order_id: orderId,
@@ -1267,6 +1269,7 @@ export async function listDeadLetters(): Promise<
 }
 
 export async function retryDeadLetter(_eventId: string): Promise<unknown> {
+  void _eventId;
   return { status: "noop-demo" };
 }
 

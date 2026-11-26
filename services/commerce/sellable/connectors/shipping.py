@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from sellable.contracts import FulfillmentStatus
@@ -15,6 +16,9 @@ from sellable.contracts import FulfillmentStatus
 
 class CarrierError(RuntimeError):
     pass
+
+
+MAX_CARRIER_RESPONSE_BYTES = 1024 * 1024
 
 
 class ShipmentLabel:
@@ -111,7 +115,8 @@ class GenericHttpCarrier(CarrierAdapter):
         )
 
     def fetch_tracking(self, tracking_reference: str) -> tuple[FulfillmentStatus, str | None]:
-        payload = self._request("GET", f"/tracking/{tracking_reference}", {})
+        encoded_reference = urllib.parse.quote(tracking_reference, safe="")
+        payload = self._request("GET", f"/tracking/{encoded_reference}", {})
         status = _STATUS_MAP.get(str(payload.get("status", "")).lower())
         if status is None:
             raise CarrierError(f"unknown carrier status: {payload.get('status')}")
@@ -130,9 +135,29 @@ class GenericHttpCarrier(CarrierAdapter):
             },
             method=method,
         )
+        from sellable.config import settings
+        from sellable.outbound import open_outbound
+
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+            with open_outbound(
+                request,
+                timeout=self.timeout_seconds,
+                allow_private=settings.is_dev_environment,
+                require_https=not settings.is_dev_environment,
+            ) as response:
+                raw = response.read(MAX_CARRIER_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_CARRIER_RESPONSE_BYTES:
+                raise CarrierError("carrier response exceeds 1 MiB")
+            result = json.loads(raw.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise CarrierError("carrier response must be a JSON object")
+            return result
+        except CarrierError:
+            raise
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise CarrierError("carrier did not return valid UTF-8 JSON") from error
+        except ValueError as error:
+            raise CarrierError("unsafe carrier URL") from error
         except urllib.error.HTTPError as error:
             raise CarrierError(f"carrier returned HTTP {error.code}") from error
         except urllib.error.URLError as error:

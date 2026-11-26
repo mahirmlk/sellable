@@ -41,7 +41,7 @@ def run() -> dict:
         negotiation_round=0,
     )
 
-    trace_id = "eval_dup_consent_trace"
+    trace_id = "trc_a4e5f6d7a4e5f6d7a4e5f6d7a4e5f6d7"
     order = core.create_order(
         cart=cart, intent=intent, trace_id=trace_id, idempotency_key="eval_dup_consent_001"
     )

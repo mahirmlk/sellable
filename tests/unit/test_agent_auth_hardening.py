@@ -21,7 +21,7 @@ from sqlalchemy.pool import StaticPool
 import sellable.auth as agent_auth
 from sellable.auth import _sha256, sign_request
 from sellable.config import Settings
-from sellable.ledger.database import AgentNonceRecord, Base
+from sellable.ledger.database import Base
 from sellable.merchant_auth import MerchantSession, _verify_hs256
 from sellable.repositories import NonceRepository
 
@@ -105,6 +105,38 @@ def test_signed_write_accepted_in_production(monkeypatch, nonce_engine) -> None:
     resolved = signed_call(None, nonce=f"n_{uuid4().hex}")
     assert resolved.auth_method == "hmac"
     assert resolved.buyer_agent_id == "buyer_sec_01"
+
+
+def test_production_signed_write_fails_closed_when_nonce_store_is_unavailable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(agent_auth, "settings", prod_settings())
+    monkeypatch.setattr(agent_auth, "_nonce_repo", None)
+    monkeypatch.setattr(agent_auth, "_nonce_repo_failed_at", time.time())
+
+    with pytest.raises(HTTPException) as exc:
+        signed_call(None, nonce=f"n_{uuid4().hex}")
+
+    assert exc.value.status_code == 503
+    assert "replay protection" in exc.value.detail
+
+
+def test_development_signed_write_keeps_memory_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_auth,
+        "settings",
+        Settings(
+            environment="development",
+            agent_hmac_secret=PROD_SECRET,
+            agent_api_key_hashes=(_sha256(PROD_KEY),),
+        ),
+    )
+    monkeypatch.setattr(agent_auth, "_nonce_repo", None)
+    monkeypatch.setattr(agent_auth, "_nonce_repo_failed_at", time.time())
+
+    resolved = signed_call(None, nonce=f"n_{uuid4().hex}")
+
+    assert resolved.auth_method == "hmac"
 
 
 # ---------------------------------------------------------------------------

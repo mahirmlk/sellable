@@ -54,7 +54,9 @@ class Span:
             **self.attributes,
         }
         if exc_type is not None:
-            record["error"] = str(exc)[:300]
+            # Exceptions can embed database URLs, provider response bodies, or
+            # user input. Keep trace fields useful without persisting that data.
+            record["error_type"] = exc_type.__name__
         _emit(record)
         return False
 
