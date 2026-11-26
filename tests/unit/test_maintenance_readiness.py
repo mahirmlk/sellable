@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
+
 from sellable.config import Settings
 from sellable.contracts import utc_now
 from sellable import main
@@ -80,12 +82,8 @@ def test_production_startup_rejects_disabled_maintenance_worker(monkeypatch) -> 
         "settings",
         Settings(environment="production", maintenance_worker=False),
     )
-    try:
+    with pytest.raises(RuntimeError, match="requires the maintenance worker"):
         main._assert_production_configuration()
-    except RuntimeError as error:
-        assert "requires the maintenance worker" in str(error)
-    else:
-        raise AssertionError("production startup accepted a disabled maintenance worker")
 
 
 def test_development_startup_may_disable_maintenance_worker(monkeypatch) -> None:
