@@ -136,6 +136,9 @@ class QuoteService:
         return refreshed, True
 
     def accept(self, quote_id: str, merchant_id: str) -> Quote:
+        quote = self.get_quote(quote_id, merchant_id)
+        if quote.status is QuoteStatus.ACCEPTED:
+            return quote
         quote = self._require_open(quote_id, merchant_id)
         accepted = quote.model_copy(
             update={"status": QuoteStatus.ACCEPTED, "updated_at": utc_now()}
@@ -179,9 +182,10 @@ class QuoteService:
         if proposed_total_paise >= quote.negotiated_subtotal_paise:
             # Buyer meets (or beats) the standing offer: accept at the
             # standing offer, never above it.
-            accepted = self._with_negotiated_total(
+            accepted, _actual_total = self._with_negotiated_total(
                 quote, quote.negotiated_subtotal_paise, round_number
             )
+            accepted = accepted.model_copy(update={"status": QuoteStatus.ACCEPTED})
             self._quotes.save(accepted)
             return QuoteNegotiation(
                 outcome=QuoteNegotiationOutcome.ACCEPTED,
@@ -192,6 +196,7 @@ class QuoteService:
             accepted, actual_total = self._with_negotiated_total(
                 quote, proposed_total_paise, round_number
             )
+            accepted = accepted.model_copy(update={"status": QuoteStatus.ACCEPTED})
             self._quotes.save(accepted)
             return QuoteNegotiation(
                 outcome=QuoteNegotiationOutcome.ACCEPTED,
