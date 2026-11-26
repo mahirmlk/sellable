@@ -116,10 +116,23 @@ class RazorpayAdapter:
             payload["callback_url"] = callback_url
             payload["callback_method"] = "get"
         response = self._create(self._sdk_client.payment_link, payload)
+        amount_paise = response.get("amount")
+        if (
+            not isinstance(amount_paise, int)
+            or isinstance(amount_paise, bool)
+            or amount_paise != order.amount_paise
+        ):
+            # The provider may have created the link even if its response is
+            # malformed. Treat this as uncertain so recovery can inspect the
+            # stable order reference instead of creating another link.
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid payment-link amount",
+                retryable=True,
+            )
         return ProviderPaymentLink(
             provider_link_id=response["id"],
             short_url=response["short_url"],
-            amount_paise=response["amount"],
+            amount_paise=amount_paise,
             currency=response["currency"],
             status=response["status"],
             provider_order_id=response.get("order_id"),
@@ -174,7 +187,9 @@ class RazorpayAdapter:
 
         item = matches[0]
         try:
-            amount_paise = int(item["amount"])
+            amount_paise = item["amount"]
+            if not isinstance(amount_paise, int) or isinstance(amount_paise, bool):
+                raise TypeError("payment-link amount must be an integer")
             currency = str(item["currency"]).upper()
             link_id = item["id"]
             short_url = item["short_url"]
