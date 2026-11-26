@@ -5,7 +5,9 @@
   "scripts": {
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy",
-    "cf:types": "wrangler types"
+    "cf:types": "wrangler types",
+    "cf:dev:staging": "wrangler dev --config wrangler.staging.jsonc",
+    "cf:deploy:staging": "wrangler deploy --config wrangler.staging.jsonc"
   },
   "devDependencies": {
     "wrangler": "4.166.0"
@@ -14,4 +16,3 @@
     "undici": "7.30.2"
   }
 }
-

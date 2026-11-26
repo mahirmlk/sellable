@@ -8,13 +8,13 @@ core — over REST, MCP, A2A, or UCP.
 ## 1. Discover a merchant
 
 ```http
-GET /.well-known/ucp          # full merchant declaration (identity, capabilities,
+GET /.well-known/ucp?merchant=<merchant_id> # full merchant declaration (identity, capabilities,
                               # protocols, auth, identity linking, payments, shipping)
-GET /.well-known/agents.json  # lightweight manifest + delegation notice
-GET /agent/profile            # platform agents and versions
-GET /agent/capabilities       # negotiable capability profile
-GET /llms.txt                 # human/agent-readable instructions
-GET /catalog.ai.json          # machine-readable catalog
+GET /.well-known/agents.json?merchant=<merchant_id> # lightweight manifest + delegation notice
+GET /agent/profile?merchant=<merchant_id> # platform agents and versions
+GET /agent/capabilities?merchant=<merchant_id> # negotiable capability profile
+GET /llms.txt?merchant=<merchant_id> # human/agent-readable instructions
+GET /catalog.ai.json?merchant=<merchant_id> # machine-readable catalog
 GET /a2a/card                # A2A actor card (seller + service)
 GET /mcp/tools               # MCP-compatible tool list (agent key required)
 GET /acp/status              # ACP scaffold status (disabled by default; no placement claims)
@@ -26,16 +26,59 @@ no certification is claimed.
 
 ## 2. Authenticate
 
-Two mechanisms, usable together:
+Read requests accept a merchant-issued key in `X-Agent-Key`; its hash resolves
+the owning merchant and buyer identity. The demo key works only against local
+development data.
 
-- **API key**: `X-Agent-Key` header (merchant-issued; plaintext shown once
-  in the console under Storefront → Agent API Keys), or the demo key
-  outside production.
-- **Signed requests**: HMAC-SHA256 over
-  `timestamp.nonce.agent_id.method.path` with `X-Timestamp`, `X-Nonce`,
-  `X-Signature` headers and server-side replay protection.
+Mutating agent requests outside development/test must use a signed bearer
+request. Send the merchant-issued key as `Authorization: Bearer <key>`; do not
+send `X-Agent-Key` on a signed request, because that selects the legacy static
+key path. Build the HMAC canonical string from the exact request values:
 
-Mutating canonical routes require the signed variant; reads accept either.
+```text
+timestamp.nonce.agent_id.method.path.query.sha256(body)
+```
+
+`query` is the raw URL query without `?`; hash the exact body bytes with
+SHA-256, or use an empty string for an empty body. Join the seven fields with
+literal periods and HMAC-SHA256 the UTF-8 canonical bytes using the staging
+`BUYER_AGENT_HMAC_SECRET`. Send the lowercase hex digest in `X-Signature`,
+along with `X-Agent-Id`, `X-Timestamp`, and a unique `X-Nonce`. The timestamp
+window is five minutes, and a nonce can be used only once. For JSON writes, sign
+the exact serialized bytes that you send:
+
+```python
+import hashlib
+import hmac
+import secrets
+import time
+from urllib.parse import urlsplit
+
+def signed_headers(url, method, body, agent_key, hmac_secret, agent_id):
+    target = urlsplit(url)
+    timestamp = str(int(time.time()))
+    nonce = secrets.token_hex(16)
+    body_hash = hashlib.sha256(body).hexdigest() if body else ""
+    canonical = ".".join([
+        timestamp, nonce, agent_id, method.upper(),
+        target.path, target.query, body_hash,
+    ])
+    signature = hmac.new(
+        hmac_secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return {
+        "Authorization": f"Bearer {agent_key}",
+        "X-Agent-Id": agent_id,
+        "X-Timestamp": timestamp,
+        "X-Nonce": nonce,
+        "X-Signature": signature,
+        "Content-Type": "application/json",
+    }
+```
+
+Production and staging require this signed form for mutating agent routes;
+read-only requests may use the API key alone. Deployed payments accept
+Razorpay Test Mode only.
 
 ## 3. Negotiate capabilities
 
@@ -92,14 +135,15 @@ POST /commerce/support/cases           # case-managed support
 Every canonical path is mirrored under `/v1/*` (e.g.
 `POST /v1/commerce/cart`) — same implementation, versioned address.
 
-Money moves only on verified webhooks (signed agent auth on all three):
+Money moves only after a signed provider webhook; the webhook uses Razorpay's
+provider signature, not agent HMAC:
 
 ```http
 POST /agent/consents.request   # {order_id} → single-use, amount+payee-bound consent
 POST /orders/{id}/payment      # {consent_id} → provider attempt (PAYMENT_PENDING)
-# provider webhook, HMAC-verified → reconciled → PAID (Razorpay + Stripe
-# share the orchestrated boundary: idempotent delivery claims, exact amount
-# match, strict transitions; duplicates collapse to one settlement)
+# provider webhook, Razorpay-signature-verified → reconciled → PAID
+# (staging accepts Razorpay Test Mode only; delivery claims and strict
+# transitions make duplicates collapse to one settlement)
 ```
 
 Or drive one tool at a time:
@@ -128,9 +172,9 @@ idempotent — consumers must tolerate redelivery.
 
 ## 8. Onboard through the sandbox
 
-New agents prove themselves without real money or production data: a
-synthetic merchant, catalog, and simulated payments, then the gated
-workflow register → handshake → credential → connect → conformance →
-security → scenarios → trust → approval → production marker. Ask the
-merchant operator to run onboarding; bring your `agent_id` and capability
-list.
+Local development may use a synthetic merchant and simulated payments.
+Staging uses a disposable merchant and Razorpay Test Mode, following
+`docs/STAGING_SANDBOX_RUNBOOK.md`; do not use production data or live payment
+credentials. Live transactions and a production marker are outside this
+sandbox workflow. Ask the staging operator to run onboarding; bring your
+`agent_id` and capability list.
