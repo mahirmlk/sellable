@@ -181,6 +181,7 @@ def test_canonical_commerce_flow(commerce_core: CommerceCore) -> None:
             headers=H,
         )
         assert order.status_code == 200, order.text
+        assert order.json()["amount_paise"] == 65_000 + 11_700 + 4_900
         order_id = order.json()["order_id"]
 
         fetched = client.get(f"/commerce/orders/{order_id}", headers=H)
