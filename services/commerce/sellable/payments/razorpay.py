@@ -116,6 +116,11 @@ class RazorpayAdapter:
             payload["callback_url"] = callback_url
             payload["callback_method"] = "get"
         response = self._create(self._sdk_client.payment_link, payload)
+        if not isinstance(response, dict):
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid payment-link response",
+                retryable=True,
+            )
         amount_paise = response.get("amount")
         if (
             not isinstance(amount_paise, int)
