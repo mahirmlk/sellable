@@ -148,21 +148,27 @@ class BuyerTools:
         )
         return order
 
-    def request_consent(self, *, order_id: str, trace_id: str) -> Consent:
+    def request_consent(self, *, order_id: str, trace_id: str) -> None:
+        """Record a request for human consent without granting it."""
         order = self.gateway.commerce.get_order(order_id)
         if order.trace_id != trace_id:
             raise ValueError(
                 "Consent request trace does not match the order trace; "
                 "refusing to fork the audit trail"
             )
-        consent = self.gateway.commerce.issue_consent(order_id)
         self._record(
             trace_id=trace_id,
             action="buyer.consent_requested",
-            output={"consent_id": consent.consent_id, "order_id": order_id},
-            explanation="Requested single-use, transaction-bound consent for the order.",
+            output={
+                "order_id": order_id,
+                "amount_paise": order.amount_paise,
+                "status": "awaiting_human_authorization",
+            },
+            explanation=(
+                "The agent requested review of this exact order. Only an explicit "
+                "human authorization path may issue single-use consent."
+            ),
         )
-        return consent
 
     def _record(
         self,
