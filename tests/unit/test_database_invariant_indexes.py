@@ -119,7 +119,7 @@ def test_active_session_index_accepts_postgres_predicate_rendering() -> None:
         _record(
             table_name="checkout_sessions",
             columns=["merchant_id", "buyer_ref"],
-            predicate="\\"STATUS\\" = 'ACTIVE'",
+            predicate="\"STATUS\" = 'ACTIVE'",
         ),
     ],
 )
