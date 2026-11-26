@@ -253,7 +253,7 @@ def test_mcp_sandbox_purchase_end_to_end(
 ) -> None:
     from sellable.main import app
 
-    client = _client(commerce_core)
+    client = _client(commerce_core, monkeypatch)
     try:
 
         def call(tool: str, arguments: dict) -> dict:
