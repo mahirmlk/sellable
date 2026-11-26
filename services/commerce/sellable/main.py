@@ -4248,6 +4248,30 @@ def console_fulfill_order(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@app.post("/console/orders/{order_id}/inventory/acknowledge", tags=["console"])
+@limiter.limit("30/minute")
+def console_acknowledge_inventory_source(
+    request: Request,
+    order_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict[str, object]:
+    """Acknowledge source sync after the merchant owner confirms this order is applied."""
+    require_owner(session)
+    core = merchant_core(session)
+    try:
+        skus = core.acknowledge_inventory_source_order(
+            order_id,
+            acknowledged_by=session.auth_user_id or "demo-owner",
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {
+        "status": "acknowledged" if skus else "already_acknowledged",
+        "order_id": order_id,
+        "skus": skus,
+    }
+
+
 @app.get("/console/insights", response_model=ConsoleGrowthMetrics, tags=["console"])
 @app.get("/growth", response_model=ConsoleGrowthMetrics, tags=["console"])
 @limiter.limit("60/minute")
