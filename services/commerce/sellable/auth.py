@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from fastapi import Header, HTTPException, Request
 
 from sellable.config import settings
+from sellable.database_safety import is_local_database_url
 
 
 logger = logging.getLogger("sellable.auth")
@@ -96,13 +97,7 @@ def _configured_hashes() -> set[str]:
 
 
 def _database_is_local() -> bool:
-    lowered = (settings.database_url or "").lower()
-    if lowered.startswith("sqlite"):
-        return True
-    return any(
-        marker in lowered
-        for marker in ("@localhost", "@127.0.0.1", "@::1", "localhost:", "127.0.0.1:")
-    )
+    return is_local_database_url(settings.database_url)
 
 
 _issued_key_repo: object | None = None

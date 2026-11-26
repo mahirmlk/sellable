@@ -17,6 +17,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
@@ -194,3 +195,27 @@ def test_demo_gateway_key_rejected_against_remote_db(isolated_env, monkeypatch):
         ),
     )
     assert auth_mod._DEMO_KEY_HASH not in auth_mod._configured_hashes()
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql+psycopg://user:secret@localhost.attacker.example:5432/sellable",
+        "postgresql+psycopg://user:secret@127.0.0.1.example:5432/sellable",
+        "postgresql+psycopg://user:secret@localhost:5432/sellable?host=remote.example",
+    ],
+)
+def test_lookalike_database_hosts_do_not_enable_demo_access(
+    isolated_env, monkeypatch, database_url: str
+) -> None:
+    from sellable import auth as auth_mod
+    from sellable.config import Settings
+
+    config = Settings(environment="development", database_url=database_url)
+    monkeypatch.setattr(auth_mod, "settings", config)
+    monkeypatch.setattr(merchant_auth, "settings", config)
+
+    assert not auth_mod._database_is_local()
+    assert auth_mod._DEMO_KEY_HASH not in auth_mod._configured_hashes()
+    with pytest.raises(HTTPException, match="401"):
+        merchant_auth._dev_session("sellable_demo_key_001")

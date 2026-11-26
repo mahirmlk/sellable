@@ -33,6 +33,7 @@ from fastapi import Header, HTTPException
 
 from sellable.auth import _DEMO_KEY_HASH, _sha256
 from sellable.config import settings
+from sellable.database_safety import is_local_database_url
 
 _DEMO_MERCHANT_ID = "mrc_demo_store"
 
@@ -275,13 +276,7 @@ def _is_local_database(url: str | None) -> bool:
     development backend pointed at production Postgres would let the
     well-known demo key write the demo merchant's rows in production data.
     """
-    lowered = (url or "").lower()
-    if lowered.startswith("sqlite"):
-        return True
-    return any(
-        marker in lowered
-        for marker in ("@localhost", "@127.0.0.1", "@::1", "localhost:", "127.0.0.1:")
-    )
+    return is_local_database_url(url)
 
 
 def _reject_remote_demo() -> None:
