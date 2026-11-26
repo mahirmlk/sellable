@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from sellable.contracts import (
@@ -340,6 +341,55 @@ def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
         for p in catalog_repo.list(commerce_core.merchant_scope)
         if p.sku == "AUDIO-CASE-01"
     ) == 1
+
+
+def test_inventory_source_acknowledgement_is_owner_only_and_idempotent(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sellable import main as main_module
+    from sellable.main import app, get_merchant_session
+    from sellable.merchant_auth import MerchantSession
+
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    checkout = _authorized_checkout(commerce_core, _trace())
+    order = commerce_core.create_order_from_checkout(
+        checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_api_ack_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    consent = commerce_core.issue_consent(order.order_id)
+    commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
+    commerce_core.mark_payment_pending(order.order_id)
+    commerce_core.mark_paid(order.order_id, provider_ref="pay_stock_api_ack")
+
+    monkeypatch.setattr(main_module, "merchant_core", lambda _session: commerce_core)
+    app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
+        merchant_id=commerce_core.merchant_scope,
+        auth_user_id="usr_inventory_owner",
+        role="owner",
+    )
+    try:
+        with TestClient(app) as client:
+            path = f"/console/orders/{order.order_id}/inventory/acknowledge"
+            acknowledged = client.post(path)
+            assert acknowledged.status_code == 200, acknowledged.text
+            assert acknowledged.json()["status"] == "acknowledged"
+            replay = client.post(path)
+            assert replay.status_code == 200, replay.text
+            assert replay.json()["status"] == "already_acknowledged"
+
+            app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
+                merchant_id=commerce_core.merchant_scope,
+                auth_user_id="usr_inventory_member",
+                role="member",
+            )
+            denied = client.post(path)
+            assert denied.status_code == 403, denied.text
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_external_stock_decrease_does_not_acknowledge_local_sale(
