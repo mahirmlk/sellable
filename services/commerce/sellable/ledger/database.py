@@ -1269,30 +1269,50 @@ def _ensure_ledger_attribution_columns(engine) -> None:
 def _normalise_index_predicate(predicate: str | None) -> str | None:
     if predicate is None:
         return None
-    normalized = predicate.replace('"', "")
-    normalized = re.sub(r"::(?:character varying|varchar|text)(?:\(\d+\))?", "", normalized)
-    normalized = re.sub(r"[\s()]", "", normalized)
 
-    # SQL identifiers/keywords are case-insensitive here, but string literals
-    # are not. Preserve quoted literal contents so 'active' cannot satisfy
-    # the required predicate status = 'ACTIVE'.
+    # Normalize unquoted SQL identifiers and formatting, but preserve the
+    # case-sensitive contents of quoted identifiers and string literals.
     result: list[str] = []
     in_literal = False
+    in_identifier = False
     index = 0
-    while index < len(normalized):
-        char = normalized[index]
-        if char == "'":
-            result.append(char)
-            if in_literal and index + 1 < len(normalized) and normalized[index + 1] == "'":
-                result.append("'")
-                index += 2
+    while index < len(predicate):
+        char = predicate[index]
+        if not in_literal and not in_identifier:
+            cast = re.match(
+                r"::(?:character varying|varchar|text)(?:\(\d+\))?",
+                predicate[index:],
+                flags=re.IGNORECASE,
+            )
+            if cast:
+                index += cast.end()
                 continue
-            in_literal = not in_literal
+            if char == "'":
+                in_literal = True
+                result.append(char)
+            elif char == '"':
+                in_identifier = True
+            elif char.isspace() or char in "()":
+                pass
+            else:
+                result.append(char.lower())
+        elif in_literal:
+            result.append(char)
+            if char == "'" and index + 1 < len(predicate) and predicate[index + 1] == "'":
+                result.append("'")
+                index += 1
+            elif char == "'":
+                in_literal = False
         else:
-            result.append(char if in_literal else char.lower())
+            if char == '"' and index + 1 < len(predicate) and predicate[index + 1] == '"':
+                result.append('"')
+                index += 1
+            elif char == '"':
+                in_identifier = False
+            else:
+                result.append(char)
         index += 1
     return "".join(result)
-
 
 def _verify_required_postgres_index(
     connection,
