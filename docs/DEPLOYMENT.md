@@ -145,8 +145,8 @@ The Wrangler configuration at the repository root builds the existing
 `Dockerfile` and deploys a Cloudflare Worker that forwards API traffic to a
 single Durable Object-managed Container. Production is bound to the
 `api.sellable.shop` custom domain and disables its generated `workers.dev`
-route so hostname-specific Cloudflare controls cannot be bypassed through a
-second public hostname. The isolated staging Worker keeps its own
+route and preview URLs so hostname-specific Cloudflare controls cannot be
+bypassed through a generated hostname. The isolated staging Worker keeps its own
 `workers.dev` URL for test access. The Container listens on port 8000,
 uses `/ready` before accepting requests, and receives only an explicit
 allowlist of backend settings and secrets. A five-minute Worker cron heartbeat
