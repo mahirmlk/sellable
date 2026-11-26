@@ -106,12 +106,20 @@ def _paid_link_payload(order_id: str, amount_paise: int, payment_id: str) -> dic
 
 
 def _settle(client: TestClient, order_id: str, amount_paise: int) -> dict:
-    """Consent → payment → verified webhook → authoritative PAID read."""
-    consent = client.post(
+    """Agent requests consent; a separate authenticated human issues it."""
+    requested = client.post(
         "/agent/consents.request", json={"order_id": order_id}, headers=H
     )
-    assert consent.status_code == 200, consent.text
-    consent_id = consent.json()["consent_id"]
+    assert requested.status_code == 202, requested.text
+    assert requested.json()["status"] == "awaiting_human_authorization"
+    assert "consent_id" not in requested.json()
+
+    # The fixture installs an authenticated merchant owner session separately
+    # from the agent API key. This simulates an explicit human action; it is
+    # not evidence of buyer identity or real-provider behavior.
+    human_consent = client.post(f"/console/orders/{order_id}/consent")
+    assert human_consent.status_code == 200, human_consent.text
+    consent_id = human_consent.json()["consent_id"]
 
     start = client.post(
         f"/orders/{order_id}/payment", json={"consent_id": consent_id}, headers=H
