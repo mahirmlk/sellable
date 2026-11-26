@@ -263,18 +263,40 @@ class RazorpayAdapter:
             raise RazorpayRequestError(
                 "Razorpay refund response was unavailable", retryable=True
             ) from error
+        if not isinstance(response, dict):
+            raise RazorpayRequestError(
+                "Razorpay returned an invalid refund response", retryable=True
+            )
         status = response.get("status")
-        if status not in {"pending", "processed", "failed"}:
+        if not isinstance(status, str) or status not in {"pending", "processed", "failed"}:
             raise RazorpayRequestError("Razorpay returned an unknown refund status", retryable=True)
-        if response.get("amount", amount_paise) != amount_paise:
-            raise RazorpayRequestError("Razorpay returned a different refund amount", retryable=False)
-        if response.get("currency", "INR") != "INR":
-            raise RazorpayRequestError("Razorpay returned an unexpected refund currency", retryable=False)
+        returned_amount = response.get("amount")
+        if (
+            not isinstance(returned_amount, int)
+            or isinstance(returned_amount, bool)
+            or returned_amount != amount_paise
+        ):
+            # A malformed response does not prove that the provider declined
+            # or rolled back the refund. Keep the local balance reserved until
+            # the same idempotent request can be reconciled.
+            raise RazorpayRequestError(
+                "Razorpay returned a different or missing refund amount", retryable=True
+            )
+        returned_currency = response.get("currency")
+        if not isinstance(returned_currency, str) or returned_currency.upper() != "INR":
+            raise RazorpayRequestError(
+                "Razorpay returned a different or missing refund currency", retryable=True
+            )
+        refund_id = response.get("id")
+        if not isinstance(refund_id, str) or not refund_id:
+            raise RazorpayRequestError(
+                "Razorpay returned a refund without an identifier", retryable=True
+            )
         return ProviderRefund(
-            provider_refund_id=response["id"],
+            provider_refund_id=refund_id,
             provider_payment_id=payment_id,
-            amount_paise=response.get("amount", amount_paise),
-            currency=response.get("currency", "INR"),
+            amount_paise=returned_amount,
+            currency=returned_currency.upper(),
             status=status,
         )
 
