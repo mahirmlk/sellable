@@ -102,6 +102,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Status:** Fixed on PR #14 head `302a3b3eacf93814c73b55cbc0a26a859769c303`; fake-provider regressions cover float, string, and boolean responses. Exact-head Actions run [45820898250](https://github.com/mahirmlk/sellable/actions/runs/45820898250) passed Python 3.11/3.12 tests/evals, frontend, and Cloudflare checks; Vercel is green.
 - **Acceptance:** Recovery never truncates or coerces provider monetary values; malformed responses remain retryable and no second link is created automatically.
 
+### [P1-016] Disable alternate production Worker hostnames
+- **Location:** `wrangler.jsonc`; `docs/DEPLOYMENT.md`; PR #14
+- **Finding:** The production Worker enabled the generated `workers.dev` hostname while the documented API endpoint is `api.sellable.shop`. Requests through the alternate hostname could bypass hostname-specific controls configured on the intended API domain. Disabling `workers.dev` alone does not disable version/preview URLs unless those are disabled too.
+- **Action:** Bind production declaratively to the intended Cloudflare custom domain, disable the generated `workers.dev` route and Worker preview/version URLs, and preserve the separate staging Worker URL for isolated Test Mode access. Cloudflare documents the Wrangler switches and their behavior in its [workers.dev](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/) and [Preview URLs](https://developers.cloudflare.com/workers/versions-and-deployments/preview-urls/) guides.
+- **Status:** Fixed in PR #14: `api.sellable.shop` custom domain is declared, `workers_dev` and `preview_urls` are false for production; staging config remains separate. Exact-head Actions run [45821802096](https://github.com/mahirmlk/sellable/actions/runs/45821802096) passed tests/evals, frontend, and Wrangler validation; Vercel is green. The active Cloudflare zone/custom-domain deployment still needs staging/account verification.
+- **Acceptance:** Production is routed through the declared custom domain only; staging remains isolated and reachable through its test Worker URL; deployment validation proves the intended config.
+
 ### [P1-014] Remove vulnerable frontend dependencies and align Node runtime
 - **Location:** `apps/merchant-console/package.json`; `apps/merchant-console/package-lock.json`; `.github/workflows/ci.yml`
 - **Finding:** The resolved Next.js 16.3.3 was covered by critical/high advisories; the frontend lock also contained high advisories in `sharp`, `source-map-js`, and `zod`. CI used Node 20 although resolved Supabase packages require Node 22 or newer.
