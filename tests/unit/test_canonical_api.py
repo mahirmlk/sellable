@@ -149,7 +149,9 @@ def test_canonical_commerce_flow(commerce_core: CommerceCore) -> None:
         assert promo.status_code == 200, promo.text
 
         checkout = client.post(
-            "/commerce/checkout", json={"cart_id": cart_id}, headers=H
+            "/commerce/checkout",
+            json={"cart_id": cart_id, "quote_id": quote_id},
+            headers=H,
         )
         assert checkout.status_code == 200, checkout.text
         checkout_id = checkout.json()["checkout_id"]
@@ -167,7 +169,7 @@ def test_canonical_commerce_flow(commerce_core: CommerceCore) -> None:
         )
         assert authorized.status_code == 200, authorized.text
         assert authorized.json()["status"] == "AUTHORIZED"
-        assert authorized.json()["grand_total_paise"] == 69_900 + 12_582 + 4_900
+        assert authorized.json()["grand_total_paise"] == 65_000 + 11_700 + 4_900
 
         order = client.post(
             "/commerce/orders",
@@ -179,6 +181,7 @@ def test_canonical_commerce_flow(commerce_core: CommerceCore) -> None:
             headers=H,
         )
         assert order.status_code == 200, order.text
+        assert order.json()["amount_paise"] == 65_000 + 11_700 + 4_900
         order_id = order.json()["order_id"]
 
         fetched = client.get(f"/commerce/orders/{order_id}", headers=H)

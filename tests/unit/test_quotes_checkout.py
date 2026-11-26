@@ -82,6 +82,7 @@ def test_quote_negotiate_within_bounds_accepts(commerce_core: CommerceCore) -> N
     assert outcome == QuoteNegotiationOutcome.ACCEPTED
     settled = commerce_core.quote_service.get_quote(quote.quote_id, commerce_core.merchant_scope)
     assert settled.negotiated_subtotal_paise == 65_000
+    assert settled.status == QuoteStatus.ACCEPTED
     assert settled.round_number == 1
 
 
@@ -106,10 +107,8 @@ def test_quote_round_cap_and_expiry(commerce_core: CommerceCore) -> None:
         commerce_core.negotiate_quote(quote.quote_id, 60_000, trace_id=trace_id)
         == QuoteNegotiationOutcome.ACCEPTED
     )
-    assert (
+    with pytest.raises(QuoteError, match="ACCEPTED"):
         commerce_core.negotiate_quote(quote.quote_id, 55_000, trace_id=trace_id)
-        == QuoteNegotiationOutcome.DENIED
-    )
     with pytest.raises(QuoteError):
         commerce_core.quote_service.negotiate("quo_missing", commerce_core.merchant_scope, 1)
 
@@ -368,6 +367,18 @@ def test_checkout_with_accepted_quote_uses_negotiated_prices(
         cart.cart_id, trace_id=trace_id, quote_id=quote.quote_id
     )
     assert checkout.subtotal_paise == 65_000
+
+    commerce_core.checkout_validate(checkout.checkout_id, trace_id=trace_id)
+    priced = commerce_core.checkout_price(checkout.checkout_id, trace_id=trace_id)
+    assert priced.subtotal_paise == 69_900
+    assert priced.discount_total_paise == 4_900
+    assert priced.grand_total_paise == 65_000
+
+    authorized = commerce_core.checkout_authorize(
+        checkout.checkout_id, trace_id=trace_id
+    )
+    assert authorized.status == CheckoutStatus.AUTHORIZED
+    assert authorized.grand_total_paise == 65_000
 
 
 def test_quote_and_checkout_cross_merchant_isolation(
