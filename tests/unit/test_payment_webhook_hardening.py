@@ -883,6 +883,31 @@ def test_refund_webhook_reconciles_and_deduplicates_status_events(
             )
             assert rejected.status_code == 401
 
+            # A valid signature cannot make fractional paise amounts safe
+            # to acknowledge; int coercion would incorrectly truncate 50000.75.
+            fractional_payload = {
+                **payload,
+                "payload": {
+                    "refund": {
+                        "entity": {
+                            **payload["payload"]["refund"]["entity"],
+                            "amount": 50_000.75,
+                        }
+                    }
+                },
+            }
+            fractional_body, fractional_signature = signed(fractional_payload)
+            fractional = http.post(
+                "/webhooks/razorpay",
+                content=fractional_body,
+                headers={
+                    "X-Razorpay-Signature": fractional_signature,
+                    "X-Razorpay-Event-Id": "evt_refund_fractional_001",
+                },
+            )
+            assert fractional.status_code == 400, fractional.text
+            assert core.get_order(order.order_id).status is OrderStatus.PAID
+
             # A valid signature cannot make inconsistent refund details safe
             # to acknowledge: keep the provider retrying for reconciliation.
             mismatched_payload = {
