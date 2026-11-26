@@ -160,6 +160,8 @@ def _settle(client: TestClient, order_id: str, amount_paise: int) -> dict:
     # Agent request and merchant-owner authorization are distinct actions.
     human_consent = client.post(f"/console/orders/{order_id}/consent")
     assert human_consent.status_code == 200, human_consent.text
+    assert human_consent.json()["order_id"] == order_id
+    assert human_consent.json()["amount_paise"] == amount_paise
     consent_id = human_consent.json()["consent_id"]
 
     start = client.post(
