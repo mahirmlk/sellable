@@ -57,6 +57,7 @@ from sellable.contracts import (
     ConsentStatus,
     IntentMandate,
     LedgerActor,
+    LedgerEvent,
     MerchantPolicy,
     OrderCreateRequest,
     OrderStatus,
