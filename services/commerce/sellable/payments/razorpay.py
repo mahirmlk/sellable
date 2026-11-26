@@ -301,10 +301,10 @@ class RazorpayAdapter:
         )
 
     def cancel_payment_link(self, link_id: str) -> None:
-        """Cancel a live payment link so it can no longer be paid."""
+        """Cancel a payment link and require Razorpay to confirm a terminal state."""
         self.validate_configuration()
         try:
-            self._sdk_client.payment_link.cancel(link_id)
+            response = self._sdk_client.payment_link.cancel(link_id)
         except BadRequestError as error:
             raise RazorpayRequestError(
                 f"Razorpay rejected the link cancellation: {error}", retryable=False
@@ -313,6 +313,21 @@ class RazorpayAdapter:
             raise RazorpayRequestError(
                 f"Razorpay could not cancel the link: {error}", retryable=True
             ) from error
+
+        # A successful HTTP response alone is not enough to release reserved
+        # stock: only the provider's terminal link state proves that the URL
+        # can no longer accept payment. Treat malformed or still-payable
+        # responses as ambiguous so callers keep the order and reservation.
+        status = response.get("status") if isinstance(response, dict) else None
+        provider_link_id = response.get("id") if isinstance(response, dict) else None
+        if provider_link_id != link_id or str(status).lower() not in {
+            "cancelled",
+            "expired",
+        }:
+            raise RazorpayRequestError(
+                "Razorpay did not confirm that the payment link is no longer payable",
+                retryable=True,
+            )
 
     def verify_webhook(self, body: bytes, signature: str | None) -> None:
         self._ensure_webhook_configuration()
