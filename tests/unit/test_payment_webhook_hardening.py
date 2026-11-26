@@ -457,12 +457,13 @@ def test_corrected_currency_event_is_not_deduplicated_after_mismatch(
     corrected = {
         **payload,
         "payload": {
+            **payload["payload"],
             "payment": {
                 "entity": {
                     **payload["payload"]["payment"]["entity"],
                     "currency": "INR",
                 }
-            }
+            },
         },
     }
     corrected_body, corrected_signature = signed(corrected)
