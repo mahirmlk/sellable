@@ -142,6 +142,7 @@ def captured_payload() -> dict[str, object]:
                     "order_id": "order_razorpay_test_01",
                     "status": "captured",
                     "amount": 69_900,
+                    "currency": "INR",
                 }
             }
         },
@@ -160,12 +161,14 @@ def payment_link_paid_payload(
                     "id": "plink_test_0001",
                     "reference_id": reference_id,
                     "status": "paid",
+                    "currency": "INR",
                 }
             },
             "payment": {
                 "entity": {
                     "id": payment_id,
                     "amount": 69_900,
+                    "currency": "INR",
                     "status": "captured",
                 }
             },

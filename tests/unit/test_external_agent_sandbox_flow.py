@@ -92,12 +92,14 @@ def _paid_link_payload(order_id: str, amount_paise: int, payment_id: str) -> dic
                     "id": "plink_sbx_01",
                     "reference_id": order_id,
                     "status": "paid",
+                    "currency": "INR",
                 }
             },
             "payment": {
                 "entity": {
                     "id": payment_id,
                     "amount": amount_paise,
+                    "currency": "INR",
                     "status": "captured",
                 }
             },

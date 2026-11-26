@@ -493,9 +493,10 @@ class PaymentService:
         # a later corrected event for the same payment, while identical
         # redeliveries still collapse to one ledger row.
         amount_token = payment.get("amount")
+        currency_token = payment.get("currency") or link_entity.get("currency") or ""
         delivery_key = (
             f"{event_name}:{provider_payment_id or link_id or local_order_id}"
-            f":{amount_token}"
+            f":{amount_token}:{currency_token}"
         )
         if not core.ledger.claim_delivery(delivery_key):
             # Duplicate delivery: answer from authoritative DB state, not from
@@ -555,9 +556,13 @@ class PaymentService:
             provider_currency = (
                 payment.get("currency") or link_entity.get("currency")
             )
-            if provider_currency is not None and str(provider_currency) != "INR":
-                # §45 payment invariants: currency must match. The platform
-                # settles INR only; a foreign-currency capture never settles.
+            if (
+                not isinstance(provider_currency, str)
+                or provider_currency.upper() != "INR"
+            ):
+                # §45 payment invariants: currency must be explicit and match.
+                # The platform settles INR only; missing or foreign-currency
+                # captures never settle.
                 self._record(
                     core=core,
                     trace_id=local_order.trace_id,

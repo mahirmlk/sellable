@@ -241,7 +241,14 @@ def link_paid(reference_id: str, *, payment_id: str, amount: int) -> dict[str, o
                     "status": "paid",
                 }
             },
-            "payment": {"entity": {"id": payment_id, "amount": amount, "status": "captured"}},
+            "payment": {
+                "entity": {
+                    "id": payment_id,
+                    "amount": amount,
+                    "currency": "INR",
+                    "status": "captured",
+                }
+            },
         },
     }
 
@@ -436,6 +443,65 @@ def test_captured_with_wrong_currency_does_not_settle(
     assert result.status is PaymentStatus.PAYMENT_PENDING
     assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
     assert "webhook.currency_mismatch" in ledger_actions(commerce_core, order.trace_id)
+
+
+def test_capture_without_currency_does_not_settle(
+    commerce_core: CommerceCore,
+) -> None:
+    order, payments = start_paid_flow(
+        commerce_core, "trc_h_currency_missing", "idem_hardening_cur_missing"
+    )
+    payload = link_paid(
+        order.order_id, payment_id="pay_cur_missing_01", amount=ORDER_TOTAL
+    )
+    # Neither the payment entity nor payment-link entity has a currency.
+    del payload["payload"]["payment"]["entity"]["currency"]
+    body, signature = signed(payload)
+
+    result = payments.handle_webhook(body, signature)
+
+    assert result.status is PaymentStatus.PAYMENT_PENDING
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+    assert "webhook.currency_mismatch" in ledger_actions(commerce_core, order.trace_id)
+
+
+def test_corrected_currency_event_is_not_deduplicated_after_mismatch(
+    commerce_core: CommerceCore,
+) -> None:
+    order, payments = start_paid_flow(
+        commerce_core, "trc_h_currency_correction", "idem_hardening_cur_correction"
+    )
+    payload = link_paid(
+        order.order_id, payment_id="pay_cur_correction_01", amount=ORDER_TOTAL
+    )
+    payload["payload"]["payment"]["entity"]["currency"] = "USD"
+    invalid_body, invalid_signature = signed(payload)
+
+    first = payments.handle_webhook(invalid_body, invalid_signature)
+    assert first.status is PaymentStatus.PAYMENT_PENDING
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+
+    corrected = {
+        **payload,
+        "payload": {
+            **payload["payload"],
+            "payment": {
+                "entity": {
+                    **payload["payload"]["payment"]["entity"],
+                    "currency": "INR",
+                }
+            },
+        },
+    }
+    corrected_body, corrected_signature = signed(corrected)
+    settled = payments.handle_webhook(corrected_body, corrected_signature)
+
+    assert settled.status is PaymentStatus.CAPTURED
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAID
+    replay = payments.handle_webhook(corrected_body, corrected_signature)
+    assert replay.status is PaymentStatus.CAPTURED
+    actions = ledger_actions(commerce_core, order.trace_id)
+    assert actions.count("webhook.reconciled") == 1
 
 
 # ---------------------------------------------------------------------------
