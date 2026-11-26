@@ -161,6 +161,40 @@ class FakeRazorpayClient:
         self.utility = FakeRazorpayUtility()
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        {},
+        {"id": "plink_other", "status": "cancelled"},
+        {"id": "plink_test_0001", "status": "created"},
+    ],
+)
+def test_cancel_payment_link_requires_matching_terminal_provider_response(
+    monkeypatch, response
+) -> None:
+    client = FakeRazorpayClient()
+    monkeypatch.setattr(client.payment_link, "cancel", lambda _link_id: response)
+    adapter = RazorpayAdapter(razorpay_settings(), client=client)
+
+    with pytest.raises(RazorpayRequestError) as error:
+        adapter.cancel_payment_link("plink_test_0001")
+
+    assert error.value.retryable is True
+
+
+def test_cancel_payment_link_accepts_confirmed_expired_response(monkeypatch) -> None:
+    client = FakeRazorpayClient()
+    monkeypatch.setattr(
+        client.payment_link,
+        "cancel",
+        lambda link_id: {"id": link_id, "status": "expired"},
+    )
+    adapter = RazorpayAdapter(razorpay_settings(), client=client)
+
+    adapter.cancel_payment_link("plink_test_0001")
+
+
 @pytest.fixture
 def core_and_engine():
     engine = create_engine(
