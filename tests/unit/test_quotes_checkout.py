@@ -82,6 +82,7 @@ def test_quote_negotiate_within_bounds_accepts(commerce_core: CommerceCore) -> N
     assert outcome == QuoteNegotiationOutcome.ACCEPTED
     settled = commerce_core.quote_service.get_quote(quote.quote_id, commerce_core.merchant_scope)
     assert settled.negotiated_subtotal_paise == 65_000
+    assert settled.status == QuoteStatus.ACCEPTED
     assert settled.round_number == 1
 
 
