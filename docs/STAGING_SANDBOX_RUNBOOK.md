@@ -7,6 +7,7 @@ The staging config is `wrangler.staging.jsonc`; its worker name and Durable Obje
 ## Prerequisites
 
 - Cloudflare Containers and Durable Object scheduling are enabled for the account.
+- Confirm the account can use Containers with the `durable_object` scheduling policy, which Cloudflare currently documents as public beta. This policy is immutable for a Container application: changing it requires a replacement application and a new Durable Object class/namespace. Keep staging and production namespaces separate, and validate the selected policy before the first deployment.
 - A disposable Supabase staging project with Auth enabled and a PostgreSQL pooler URL that uses TLS. Format `DATABASE_URL` for this service as `postgresql+psycopg://...` and include `sslmode=require` (or `verify-ca`/`verify-full`); plain `postgresql://` URLs fail the production startup check.
 - A Razorpay account with **Test Mode** enabled and a webhook endpoint reachable from Razorpay.
 - A Vercel preview or staging deployment configured against the staging API and staging Supabase project.
