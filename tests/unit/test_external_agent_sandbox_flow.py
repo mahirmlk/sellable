@@ -153,6 +153,9 @@ def _settle(client: TestClient, order_id: str, amount_paise: int) -> dict:
     assert requested.status_code == 202, requested.text
     assert requested.json()["status"] == "awaiting_human_authorization"
     assert "consent_id" not in requested.json()
+    waiting = client.get(f"/commerce/orders/{order_id}", headers=H)
+    assert waiting.status_code == 200, waiting.text
+    assert waiting.json()["status"] == "AWAITING_CONSENT"
 
     # Agent request and merchant-owner authorization are distinct actions.
     human_consent = client.post(f"/console/orders/{order_id}/consent")
