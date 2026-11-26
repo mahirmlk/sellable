@@ -236,10 +236,31 @@ class CheckoutService:
             checkout_id, merchant_id, {CheckoutStatus.VALIDATED, CheckoutStatus.PRICED}
         )
         self._require_fresh(checkout)
-        cart_lines = [
-            CartLine(sku=l.sku, quantity=l.quantity, unit_price_paise=l.unit_price_paise)
-            for l in checkout.lines
-        ]
+        negotiated_units: dict[str, int] = {}
+        cart_lines: list[CartLine] = []
+        for line in checkout.lines:
+            if checkout.quote_id is not None:
+                # CheckoutLine keeps the accepted negotiated unit price. The
+                # pricing service still needs the current catalog base so it
+                # can reject stale list prices and enforce the current floor.
+                product = self._catalog.get(line.sku)
+                cart_lines.append(
+                    CartLine(
+                        sku=line.sku,
+                        quantity=line.quantity,
+                        unit_price_paise=product.price_paise,
+                    )
+                )
+                if line.unit_price_paise != product.price_paise:
+                    negotiated_units[line.sku] = line.unit_price_paise
+            else:
+                cart_lines.append(
+                    CartLine(
+                        sku=line.sku,
+                        quantity=line.quantity,
+                        unit_price_paise=line.unit_price_paise,
+                    )
+                )
         candidates = self._promotions.active_for_merchant(merchant_id)
         usage = self._promotions.usage(merchant_id)
         promo_lines = [
@@ -266,6 +287,7 @@ class CheckoutService:
         try:
             breakdown = self._pricing.price(
                 cart_lines,
+                negotiated_units=negotiated_units or None,
                 promotion=promotion,
                 tax_total_paise=tax_total_paise,
                 shipping_total_paise=shipping_total_paise,
