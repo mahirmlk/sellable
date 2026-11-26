@@ -107,10 +107,8 @@ def test_quote_round_cap_and_expiry(commerce_core: CommerceCore) -> None:
         commerce_core.negotiate_quote(quote.quote_id, 60_000, trace_id=trace_id)
         == QuoteNegotiationOutcome.ACCEPTED
     )
-    assert (
+    with pytest.raises(QuoteError, match="ACCEPTED"):
         commerce_core.negotiate_quote(quote.quote_id, 55_000, trace_id=trace_id)
-        == QuoteNegotiationOutcome.DENIED
-    )
     with pytest.raises(QuoteError):
         commerce_core.quote_service.negotiate("quo_missing", commerce_core.merchant_scope, 1)
 
