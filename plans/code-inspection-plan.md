@@ -139,11 +139,11 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Acceptance:** Documentation distinguishes tested code paths, simulated provider paths, staging-verified paths, and unfinished paths.
 
 ### [P2-002] Retain fail-closed startup and readiness gates
-- **Location:** `services/commerce/sellable/main.py`; `services/commerce/sellable/ledger/database.py`; PR #20
+- **Location:** `services/commerce/sellable/main.py`; `services/commerce/sellable/ledger/database.py`; PRs #14 and #25
 - **Finding:** Production safety depends on required database uniqueness/indexes and the maintenance worker. Falling back to process-local guards or serving traffic without required maintenance can invalidate idempotency and expiry behavior.
-- **Action:** Keep production startup fail-closed on required index creation and maintenance-worker failure; draft PR #25 verifies actual index definitions. Draft PR #20 handles disabled/unavailable maintenance workers, while PR #14 also tracks maintenance-thread liveness, failed sweeps, and stale successes. Resolve the overlap when sequencing focused merges, then exercise both gates against isolated Postgres staging.
-- **Status:** PR #14 head `cc5728e4da34acf1d696422273f9def6be1543d2` passed readiness regressions and all Actions checks in run 45790202229. Independent review and staging index/worker behavior remain outstanding.
-- **Acceptance:** Missing constraints or worker health blocks readiness; recovery requires fixing configuration/data, not bypassing the gate.
+- **Action:** Keep production startup fail-closed on required index creation and maintenance-worker failure; PR #25 verifies actual index definitions. PR #14 now rejects a disabled production maintenance worker at startup and tracks maintenance-thread liveness, failed sweeps, and stale successes in readiness. Exercise both gates against isolated Postgres staging.
+- **Status:** PR #14 head `6accb633c35e466968d95b5042ba997a50c40ad5` passed Python 3.11/3.12, frontend, and Cloudflare Actions checks in [run 45823084087](https://github.com/mahirmlk/sellable/actions/runs/45823084087); Vercel was rate-limited on that head. Draft PR #20 was closed as superseded by #14. Independent review and staging index/worker behavior remain outstanding.
+- **Acceptance:** Missing constraints or worker health blocks startup/readiness; recovery requires fixing configuration/data, not bypassing the gate.
 
 ## Cross-Cutting Answers
 
