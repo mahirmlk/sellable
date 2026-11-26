@@ -42,8 +42,16 @@ def test_buyer_discovers_the_merchant_and_returns_a_ready_candidate_cart(
     assert result.seller_decision.cart is not None
     assert result.seller_decision.cart.total_paise == 194_800
     assert result.order_id is not None
-    assert result.consent_id is not None
-    assert result.steps == ["DISCOVER", "RESEARCH", "REQUEST_QUOTE", "EVALUATE", "ORDER", "CONSENT"]
+    assert result.consent_id is None
+    assert result.steps == [
+        "DISCOVER", "RESEARCH", "REQUEST_QUOTE", "EVALUATE", "ORDER",
+        "CONSENT_REQUESTED",
+    ]
+    order = buyer_agent.gateway.commerce.get_order(result.order_id)
+    assert order.status.value == "AWAITING_CONSENT"
+    assert buyer_agent.gateway.commerce.consent_service.active_for_order(order.order_id) is None
+    events = buyer_agent.gateway.commerce.ledger.for_trace(result.trace_id)
+    assert any(event.action == "buyer.consent_requested" for event in events)
 
 
 def test_buyer_budget_guard_denies_an_over_budget_mission(buyer_agent: BuyerAgent) -> None:
