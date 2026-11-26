@@ -38,7 +38,7 @@ npx wrangler secret put RAZORPAY_KEY_SECRET --config wrangler.staging.jsonc
 npx wrangler secret put RAZORPAY_WEBHOOK_SECRET --config wrangler.staging.jsonc
 ```
 
-`RAZORPAY_KEY_ID` must start with `rzp_test_`. `BUYER_AGENT_API_KEY_HASH` must be a lowercase 64-character SHA-256 hex digest of a random staging-only bootstrap key; `BUYER_AGENT_HMAC_SECRET` must contain at least 32 UTF-8 bytes. Keep the bootstrap plaintext key and HMAC secret in the external test agent's secret manager; never put either in browser code or this repository. For the purchase flow, issue a separate merchant-scoped key in the console and use that key with the HMAC signature.
+`RAZORPAY_KEY_ID` must start with `rzp_test_`. `BUYER_AGENT_API_KEY_HASH` must be a lowercase 64-character SHA-256 hex digest of a random staging-only bootstrap key; `BUYER_AGENT_HMAC_SECRET` must contain at least 32 UTF-8 bytes. Keep the bootstrap plaintext key in the operator secret manager and do not use it for the merchant purchase flow: the static key selects the platform demo merchant. Give the HMAC secret to the external test agent through a secret manager. For the purchase flow, issue a separate merchant-scoped key in the console and use that key with the HMAC signature. Keep all plaintext credentials out of browser code and this repository.
 
 Deploy and record the generated staging Worker URL:
 
