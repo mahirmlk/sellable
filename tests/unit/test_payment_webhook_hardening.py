@@ -108,14 +108,17 @@ class FakeRazorpayRefunds:
     def refund(
         self,
         payment_id: str,
-        amount: int,
+        data: dict[str, object],
         *,
-        data: dict[str, object] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, object]:
         from razorpay.errors import BadRequestError
 
-        payload = {"amount": amount, **(data or {})}
+        # Match razorpay==1.4.2's effective method signature: the later
+        # refund(payment_id, data={}, **kwargs) definition shadows its earlier
+        # amount overload.
+        payload = dict(data)
+        amount = payload["amount"]
         if headers:
             payload["_headers"] = headers
         self.calls.append((payment_id, payload))

@@ -234,7 +234,7 @@ class RazorpayAdapter:
         self.validate_configuration()
         if amount_paise <= 0:
             raise RazorpayRequestError("Refund amount must be positive", retryable=False)
-        payload: dict[str, Any] = {}
+        payload: dict[str, Any] = {"amount": amount_paise}
         if notes:
             payload["notes"] = notes
         headers = None
@@ -244,11 +244,12 @@ class RazorpayAdapter:
             digest = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
             headers = {"X-Refund-Idempotency": f"rfnd_{digest}"}
         try:
-            # The Python SDK signature is refund(payment_id, amount, data=...).
-            # Passing payload as the second positional argument nests the
-            # amount field and produces an invalid provider request.
+            # razorpay==1.4.2's effective (last-defined) method signature is
+            # refund(payment_id, data={}, **kwargs); the earlier overload is
+            # shadowed in that release. Pass the complete request body as the
+            # second positional argument so the SDK sends the expected JSON.
             response = self._sdk_client.payment.refund(
-                payment_id, amount_paise, data=payload, **({"headers": headers} if headers else {})
+                payment_id, payload, **({"headers": headers} if headers else {})
             )
         except BadRequestError as error:
             raise RazorpayRequestError(
