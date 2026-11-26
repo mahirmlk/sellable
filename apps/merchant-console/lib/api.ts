@@ -1148,6 +1148,19 @@ export async function refundOrder(
   });
 }
 
+/** Owner confirms the source system has applied this exact order to stock. */
+export async function acknowledgeInventorySourceOrder(
+  orderId: string
+): Promise<{ status: "acknowledged" | "already_acknowledged"; order_id: string }> {
+  if (isDemoMode()) {
+    throw new ApiError(403, "Forbidden", "Inventory source acknowledgements are unavailable in demo mode");
+  }
+  return apiFetch<{ status: "acknowledged" | "already_acknowledged"; order_id: string }>(
+    `/console/orders/${encodeURIComponent(orderId)}/inventory/acknowledge`,
+    { method: "POST" }
+  );
+}
+
 /** Mark a paid order FULFILLED (merchant confirmation of delivery). */
 export async function fulfillOrder(orderId: string): Promise<{ status: string; order_id: string }> {
   if (isDemoMode()) return demoAdapter.fulfillOrder(orderId);
