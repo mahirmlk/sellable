@@ -3,7 +3,13 @@
   "name": "sellable-commerce-api",
   "main": "cloudflare/worker.js",
   "compatibility_date": "2026-11-21",
-  "workers_dev": true,
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "api.sellable.shop",
+      "custom_domain": true
+    }
+  ],
   "observability": {
     "enabled": true
   },
