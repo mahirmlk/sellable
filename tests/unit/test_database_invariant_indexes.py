@@ -116,6 +116,11 @@ def test_active_session_index_accepts_postgres_predicate_rendering() -> None:
             columns=["merchant_id", "buyer_ref"],
             predicate="status = 'active'",
         ),
+        _record(
+            table_name="checkout_sessions",
+            columns=["merchant_id", "buyer_ref"],
+            predicate="\\"STATUS\\" = 'ACTIVE'",
+        ),
     ],
 )
 def test_mismatched_required_index_fails_closed(record) -> None:
