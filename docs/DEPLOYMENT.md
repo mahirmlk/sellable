@@ -122,6 +122,13 @@ provider confirms the link is cancelled, expired, or absent. If the provider
 cannot confirm that state, the order and stock hold remain for the next retry
 or manual reconciliation.
 
+A lower catalog stock count does not acknowledge which order the source applied.
+After verifying that the source system has recorded a specific paid/fulfilled
+order, a merchant owner calls
+`POST /console/orders/{order_id}/inventory/acknowledge` to release that order's
+committed stock offset. Do not call it from a count-only sync. Repeated calls
+are safe; an unacknowledged offset remains deducted from availability.
+
 The first production release must run one Cloudflare Container instance. Keep `WEB_CONCURRENCY` and `UVICORN_WORKERS` unset or set to `1`; startup rejects multiple workers while consent and payment-attempt transitions remain process-local. Consent consumption
 and payment-attempt serialization still depend on process-local locks; the app
 rejects multiple workers but cannot detect multiple replicas. Do not scale the
