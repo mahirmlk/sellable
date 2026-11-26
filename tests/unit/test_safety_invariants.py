@@ -147,6 +147,7 @@ def payment_captured_via_internal_order_payload(
                     "order_id": "order_razorpay_test_01",
                     "status": "captured",
                     "amount": 69_900,
+                    "currency": "INR",
                 }
             }
         },
@@ -164,12 +165,14 @@ def payment_link_paid_with_amount(
                     "id": "plink_test_0001",
                     "reference_id": reference_id,
                     "status": "paid",
+                    "currency": "INR",
                 }
             },
             "payment": {
                 "entity": {
                     "id": payment_id,
                     "amount": amount_paise,
+                    "currency": "INR",
                     "status": "captured",
                 }
             },
