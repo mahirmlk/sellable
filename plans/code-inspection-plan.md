@@ -95,6 +95,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Acceptance:** Only the explicitly authorized human role can issue a single-use consent; the agent cannot grant it or alter the bound transaction terms.
 
 
+### [P1-015] Reject coerced payment-link recovery amounts
+- **Location:** `services/commerce/sellable/payments/razorpay.py`; `tests/unit/test_payments.py`; PR #14
+- **Finding:** Payment-link recovery converted the provider's amount with `int()`. A malformed fractional paise amount could be truncated to the expected integer and the recovered link accepted. Provider create responses also need type validation because a malformed response may follow a successful provider-side create.
+- **Action:** Require an actual integer (excluding booleans) matching the local order amount on both create and recovery responses. Keep uncertain malformed create results retryable so recovery by stable order reference can reconcile without issuing a second link.
+- **Status:** Fixed on PR #14 head `f957cc4ca84f705f6575b39b04c0030f2d2410dd`; fake-provider regressions cover float, string, and boolean responses. Exact-head Actions run [45820234307](https://github.com/mahirmlk/sellable/actions/runs/45820234307) passed Python 3.11/3.12 tests/evals, frontend, and Cloudflare checks; Vercel is green.
+- **Acceptance:** Recovery never truncates or coerces provider monetary values; malformed responses remain retryable and no second link is created automatically.
+
 ### [P1-014] Remove vulnerable frontend dependencies and align Node runtime
 - **Location:** `apps/merchant-console/package.json`; `apps/merchant-console/package-lock.json`; `.github/workflows/ci.yml`
 - **Finding:** The resolved Next.js 16.3.3 was covered by critical/high advisories; the frontend lock also contained high advisories in `sharp`, `source-map-js`, and `zod`. CI used Node 20 although resolved Supabase packages require Node 22 or newer.
