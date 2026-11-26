@@ -26,7 +26,7 @@ def is_local_database_url(raw_url: str | None) -> bool:
 
     if parsed.get_backend_name() == "sqlite":
         return True
-    if "host" in parsed.query or "hostaddr" in parsed.query:
+    if any(key.lower() in {"host", "hostaddr"} for key in parsed.query):
         return False
     hostname = (parsed.host or "").rstrip(".").lower()
     return hostname in _LOCAL_DATABASE_HOSTS
