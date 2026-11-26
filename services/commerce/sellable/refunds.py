@@ -124,9 +124,13 @@ class RefundService:
             raise ValueError("Refund webhook has an unsupported provider status")
         target_status = statuses[provider_status]
         if event_name == "refund.processed" and target_status is not RefundStatus.PROCESSED:
-            raise ValueError("refund.processed event has a non-processed status")
+            raise UnexpectedOrderStateError(
+                "Signed refund.processed event has a non-processed status"
+            )
         if event_name == "refund.failed" and target_status is not RefundStatus.FAILED:
-            raise ValueError("refund.failed event has a non-failed status")
+            raise UnexpectedOrderStateError(
+                "Signed refund.failed event has a non-failed status"
+            )
 
         repo = self._repo()
         refund = repo.for_provider_refund_id(provider_refund_id)
@@ -155,7 +159,9 @@ class RefundService:
                 and refund.provider_payment_id != provider_payment_id
             )
         ):
-            raise ValueError("Refund webhook does not match the stored refund request")
+            raise UnexpectedOrderStateError(
+                "Signed Razorpay refund event does not match the stored refund request"
+            )
 
         # Razorpay's event ID is a header, while the webhook signature
         # authenticates the raw body. Do not let an unsigned header override
