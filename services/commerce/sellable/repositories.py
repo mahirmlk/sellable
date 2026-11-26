@@ -939,6 +939,69 @@ class InventoryRepository:
                     )
             session.commit()
 
+    def acknowledge_source_order(self, merchant_id: str, order_id: str) -> list[str]:
+        """Clear committed offsets after an owner confirms the source applied this order.
+
+        Ordinary stock-count snapshots cannot identify which sales they include.
+        Only an explicit acknowledgement for the exact order may clear its offset.
+        Repeated acknowledgements are safe.
+        """
+        acknowledged_skus: list[str] = []
+        with Session(self._engine) as session:
+            records = session.scalars(
+                select(InventoryReservationRecord)
+                .where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.order_id == order_id,
+                    InventoryReservationRecord.status == "COMMITTED",
+                )
+                .with_for_update()
+            ).all()
+            if not records:
+                existing = session.scalars(
+                    select(InventoryReservationRecord).where(
+                        InventoryReservationRecord.merchant_id == merchant_id,
+                        InventoryReservationRecord.order_id == order_id,
+                    )
+                ).all()
+                if existing and all(record.status == "ACKNOWLEDGED" for record in existing):
+                    return []
+                raise InventoryReservationConflict(
+                    "source acknowledgement requires committed inventory for this order"
+                )
+
+            for record in records:
+                updated = session.execute(
+                    update(CatalogProductRecord)
+                    .where(
+                        CatalogProductRecord.id == f"{merchant_id}:{record.sku}",
+                        CatalogProductRecord.merchant_id == merchant_id,
+                        CatalogProductRecord.committed_stock >= record.quantity,
+                    )
+                    .values(
+                        committed_stock=CatalogProductRecord.committed_stock - record.quantity
+                    )
+                )
+                if updated.rowcount != 1:
+                    raise RuntimeError(
+                        f"cannot acknowledge inventory for SKU {record.sku}"
+                    )
+                claimed = session.execute(
+                    update(InventoryReservationRecord)
+                    .where(
+                        InventoryReservationRecord.reservation_id == record.reservation_id,
+                        InventoryReservationRecord.status == "COMMITTED",
+                    )
+                    .values(status="ACKNOWLEDGED")
+                )
+                if claimed.rowcount != 1:
+                    raise InventoryReservationConflict(
+                        "inventory acknowledgement changed concurrently"
+                    )
+                acknowledged_skus.append(record.sku)
+            session.commit()
+        return acknowledged_skus
+
     def release_order(self, merchant_id: str, order_id: str) -> list[str]:
         """Restore units only for an aborted order; repeated calls are harmless."""
         released_skus: list[str] = []
@@ -1160,13 +1223,6 @@ class CatalogRepository:
                     existing.description = product.description
                     existing.price_paise = product.price_paise
                     existing.floor_paise = product.floor_paise
-                    # A lower source snapshot acknowledges local sales first. Any
-                    # unacknowledged committed offset remains deducted from availability.
-                    if product.stock < existing.stock:
-                        acknowledged = existing.stock - product.stock
-                        existing.committed_stock = max(
-                            0, existing.committed_stock - acknowledged
-                        )
                     existing.stock = product.stock
                     existing.category = product.category
                     existing.attributes = product.attributes
