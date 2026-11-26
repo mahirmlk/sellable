@@ -369,6 +369,18 @@ def test_checkout_with_accepted_quote_uses_negotiated_prices(
     )
     assert checkout.subtotal_paise == 65_000
 
+    commerce_core.checkout_validate(checkout.checkout_id, trace_id=trace_id)
+    priced = commerce_core.checkout_price(checkout.checkout_id, trace_id=trace_id)
+    assert priced.subtotal_paise == 69_900
+    assert priced.discount_total_paise == 4_900
+    assert priced.grand_total_paise == 65_000
+
+    authorized = commerce_core.checkout_authorize(
+        checkout.checkout_id, trace_id=trace_id
+    )
+    assert authorized.status == CheckoutStatus.AUTHORIZED
+    assert authorized.grand_total_paise == 65_000
+
 
 def test_quote_and_checkout_cross_merchant_isolation(
     commerce_core: CommerceCore,
