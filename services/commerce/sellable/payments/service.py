@@ -493,9 +493,10 @@ class PaymentService:
         # a later corrected event for the same payment, while identical
         # redeliveries still collapse to one ledger row.
         amount_token = payment.get("amount")
+        currency_token = payment.get("currency") or link_entity.get("currency") or ""
         delivery_key = (
             f"{event_name}:{provider_payment_id or link_id or local_order_id}"
-            f":{amount_token}"
+            f":{amount_token}:{currency_token}"
         )
         if not core.ledger.claim_delivery(delivery_key):
             # Duplicate delivery: answer from authoritative DB state, not from
