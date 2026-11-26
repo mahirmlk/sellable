@@ -556,9 +556,13 @@ class PaymentService:
             provider_currency = (
                 payment.get("currency") or link_entity.get("currency")
             )
-            if provider_currency is not None and str(provider_currency) != "INR":
-                # §45 payment invariants: currency must match. The platform
-                # settles INR only; a foreign-currency capture never settles.
+            if (
+                not isinstance(provider_currency, str)
+                or provider_currency.upper() != "INR"
+            ):
+                # §45 payment invariants: currency must be explicit and match.
+                # The platform settles INR only; missing or foreign-currency
+                # captures never settle.
                 self._record(
                     core=core,
                     trace_id=local_order.trace_id,
