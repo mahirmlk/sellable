@@ -109,9 +109,14 @@ CREATE INDEX ix_ledger_events_merchant_id ON ledger_events(merchant_id);
 `catalog_products.stock` stores the latest source-system on-hand quantity.
 `reserved_stock` and `committed_stock` are local offsets, so available units
 are `max(0, stock - reserved_stock - committed_stock)`. A catalog refresh
-updates source stock without clearing active reservations. A lower source
-snapshot reconciles committed sales; an unchanged stale snapshot cannot restore
-units already sold locally.
+updates source stock without clearing active reservations or committed
+sale offsets. A stock count cannot identify which local order it includes, so
+ordinary lower snapshots never acknowledge a Sellable sale. After the source
+system has applied a specific paid/fulfilled order, a merchant owner can
+acknowledge that order through
+`POST /console/orders/{order_id}/inventory/acknowledge`; this atomically clears
+that order's committed offsets and is idempotent. Until then, availability is
+conservative and may temporarily understate stock.
 
 Before an order is inserted, a conditional database update reserves every SKU
 only when its available quantity is sufficient, and a unique
