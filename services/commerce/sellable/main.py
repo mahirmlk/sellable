@@ -3280,20 +3280,49 @@ def agent_consents_request(
         route="agent.consents.request",
         agent_id=_api_key.buyer_agent_id,
     )
-    try:
-        consent = commerce.issue_consent(body.order_id)
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    return {
-        "consent_id": consent.consent_id,
-        "order_id": consent.order_id,
-        "amount_paise": consent.amount_paise,
-        "payee_id": consent.payee_id,
-        "purpose": consent.purpose,
-        "expires_at": consent.expires_at.isoformat(),
-        "single_use": consent.single_use,
-        "status": consent.status,
-    }
+    # This authenticated agent request records intent only. Returning a
+    # Consent ID here would let the same agent that proposed an order
+    # authorize it; only an explicit human path may call issue_consent().
+    events = commerce.ledger.for_trace(
+        order.trace_id, merchant_id=order.merchant_id
+    )
+    already_requested = any(
+        event.action == "consent.requested"
+        and (event.inputs_json or {}).get("order_id") == order.order_id
+        and (event.inputs_json or {}).get("buyer_agent_id") == _api_key.buyer_agent_id
+        for event in events
+    )
+    if not already_requested:
+        commerce.ledger.append(
+            LedgerEvent(
+                trace_id=order.trace_id,
+                merchant_id=order.merchant_id,
+                actor=LedgerActor.BUYER_AGENT,
+                action="consent.requested",
+                inputs={
+                    "order_id": order.order_id,
+                    "amount_paise": order.amount_paise,
+                    "buyer_agent_id": _api_key.buyer_agent_id,
+                },
+                output={"status": "awaiting_human_authorization"},
+                reasoning_summary=(
+                    "The agent requested review. No single-use consent or payment "
+                    "authorization was issued."
+                ),
+                agent_id=_api_key.buyer_agent_id,
+            )
+        )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "awaiting_human_authorization",
+            "order_id": order.order_id,
+            "amount_paise": order.amount_paise,
+            "payee_id": order.merchant_id,
+            "purpose": "single_transaction",
+            "single_use": True,
+        },
+    )
 
 
 @app.post("/agent/orders.create", tags=["agent-gateway"])
