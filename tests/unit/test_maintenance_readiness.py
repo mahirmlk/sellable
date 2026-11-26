@@ -73,3 +73,25 @@ def test_development_can_explicitly_disable_maintenance(monkeypatch) -> None:
         Settings(environment="test", maintenance_worker=False),
     )
     assert main._maintenance_readiness() == "ok"
+
+def test_production_startup_rejects_disabled_maintenance_worker(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main,
+        "settings",
+        Settings(environment="production", maintenance_worker=False),
+    )
+    try:
+        main._assert_production_configuration()
+    except RuntimeError as error:
+        assert "requires the maintenance worker" in str(error)
+    else:
+        raise AssertionError("production startup accepted a disabled maintenance worker")
+
+
+def test_development_startup_may_disable_maintenance_worker(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main,
+        "settings",
+        Settings(environment="test", maintenance_worker=False),
+    )
+    main._assert_production_configuration()
