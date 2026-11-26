@@ -56,15 +56,20 @@ def _client(commerce_core: CommerceCore) -> TestClient:
         get_payment_service,
         get_scoped_commerce,
         get_scoped_commerce_signed,
-        get_scoped_commerce,
-        get_scoped_commerce_signed,
     )
+    from sellable.merchant_auth import MerchantSession, get_merchant_session
+    import sellable.main as main_module
 
     gateway = AgentGateway(commerce_core, SellerAgent(commerce_core))
+    app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
+        merchant_id=commerce_core.merchant_scope,
+        auth_user_id="human-test-user",
+        role="owner",
+    )
+    # Bind the owner approval to this test's isolated in-memory merchant core.
+    main_module.merchant_core = lambda _session: commerce_core
     app.dependency_overrides[get_agent_gateway] = lambda: gateway
     app.dependency_overrides[get_commerce] = lambda: commerce_core
-    app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
-    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
     app.dependency_overrides[get_payment_service] = lambda: PaymentService(
@@ -162,7 +167,9 @@ def _authorize_body(checkout_id: str) -> dict:
     }
 
 
-def test_rest_sandbox_purchase_end_to_end(commerce_core: CommerceCore) -> None:
+def test_rest_sandbox_purchase_end_to_end(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from sellable.main import app
 
     client = _client(commerce_core)
@@ -239,7 +246,9 @@ def test_rest_sandbox_purchase_end_to_end(commerce_core: CommerceCore) -> None:
         app.dependency_overrides.clear()
 
 
-def test_mcp_sandbox_purchase_end_to_end(commerce_core: CommerceCore) -> None:
+def test_mcp_sandbox_purchase_end_to_end(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from sellable.main import app
 
     client = _client(commerce_core)
