@@ -26,7 +26,6 @@ from agents.seller.agent import SellerAction, SellerDecision, SellerRequest
 from sellable.catalog import UnknownSkuError
 from sellable.contracts import (
     BuyerMission,
-    Consent,
     IntentMandate,
     LedgerActor,
     LedgerEvent,
