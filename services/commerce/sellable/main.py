@@ -3439,10 +3439,13 @@ def start_payment(
     order_id: str,
     body: PaymentStartRequest,
     payments: PaymentService = Depends(get_payment_service),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
 ) -> PaymentAttempt:
     try:
-        return payments.start_payment(order_id=order_id, consent_id=body.consent_id)
+        return payments.start_payment(
+            order_id=order_id, consent_id=body.consent_id, commerce=commerce
+        )
     except RazorpayConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except RazorpayRequestError as error:
@@ -3462,10 +3465,11 @@ def retry_payment(
     request: Request,
     order_id: str,
     payments: PaymentService = Depends(get_payment_service),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
     _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
 ) -> PaymentAttempt:
     try:
-        return payments.retry_payment(order_id=order_id)
+        return payments.retry_payment(order_id=order_id, commerce=commerce)
     except RazorpayConfigurationError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except RazorpayRequestError as error:
