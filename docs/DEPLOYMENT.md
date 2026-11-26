@@ -143,7 +143,11 @@ LLM_API_KEY=sk-...   # OpenCode Zen key
 
 The Wrangler configuration at the repository root builds the existing
 `Dockerfile` and deploys a Cloudflare Worker that forwards API traffic to a
-single Durable Object-managed Container. The Container listens on port 8000,
+single Durable Object-managed Container. Production is bound to the
+`api.sellable.shop` custom domain and disables its generated `workers.dev`
+route so hostname-specific Cloudflare controls cannot be bypassed through a
+second public hostname. The isolated staging Worker keeps its own
+`workers.dev` URL for test access. The Container listens on port 8000,
 uses `/ready` before accepting requests, and receives only an explicit
 allowlist of backend settings and secrets. A five-minute Worker cron heartbeat
 keeps the in-process maintenance worker alive. Production requests must use
@@ -172,8 +176,10 @@ work that does not require the Cloudflare proxy.
 #### Configure and deploy production
 
 1. Confirm the Cloudflare account has Containers and the Durable Object
-   Container API enabled. Configure the Worker custom domain
-   `api.sellable.shop` in the Cloudflare zone after reviewing the deployment.
+   Container API enabled, and that `sellable.shop` is an active Cloudflare
+   zone. The Wrangler production config binds `api.sellable.shop` as a custom
+   domain and disables the production `workers.dev` route; ensure the custom
+   domain's DNS can be created before deploying.
 2. Configure `CORS_ORIGINS` in `wrangler.jsonc` to the exact live Vercel
    frontend origins.
 3. Store credentials as Worker secrets; do not put them in `wrangler.jsonc`,
