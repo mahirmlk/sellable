@@ -103,19 +103,24 @@ class FakeRazorpayRefunds:
         self.fail_retryably = False
         self.status = "processed"
         self.statuses: list[str] = []
+        self.amount_override: int | None = None
+        self.currency_override = "INR"
         self.refund_ids_by_key: dict[str, str] = {}
 
     def refund(
         self,
         payment_id: str,
-        amount: int,
+        data: dict[str, object],
         *,
-        data: dict[str, object] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, object]:
         from razorpay.errors import BadRequestError
 
-        payload = {"amount": amount, **(data or {})}
+        # Match razorpay==1.4.2's effective method signature: the later
+        # refund(payment_id, data={}, **kwargs) definition shadows its earlier
+        # amount overload.
+        payload = dict(data)
+        amount = payload["amount"]
         if headers:
             payload["_headers"] = headers
         self.calls.append((payment_id, payload))
@@ -134,8 +139,8 @@ class FakeRazorpayRefunds:
         return {
             "id": refund_id,
             "payment_id": payment_id,
-            "amount": amount,
-            "currency": "INR",
+            "amount": self.amount_override if self.amount_override is not None else amount,
+            "currency": self.currency_override,
             "status": self.statuses.pop(0) if self.statuses else self.status,
         }
 
@@ -753,6 +758,54 @@ def test_pending_provider_refund_does_not_settle_order(core_and_engine) -> None:
 
     assert result["refund_status"] == "initiated"
     assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+
+@pytest.mark.parametrize(
+    ("bad_amount", "bad_currency"),
+    [(49_999, "INR"), (50_000, "USD")],
+)
+def test_inconsistent_refund_response_reserves_balance_until_idempotent_retry(
+    core_and_engine, bad_amount: int, bad_currency: str
+) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_rf2_ambiguous", "idem_hardening_rf_02_ambiguous")
+    refunds, client = refund_service_for(core, engine)
+    key = "idem_hardening_rf_ambiguous_500"
+    client.payment.amount_override = bad_amount
+    client.payment.currency_override = bad_currency
+
+    with pytest.raises(RazorpayRequestError) as error:
+        refunds.initiate_refund(
+            order_id=order.order_id,
+            reason="provider response mismatch",
+            amount_paise=50_000,
+            idempotency_key=key,
+        )
+    assert error.value.retryable is True
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+    pending = RefundRepository(engine).for_idempotency_key(order.merchant_id, key)
+    assert pending is not None and pending.status.value == "PENDING"
+    with pytest.raises(ValueError, match="remaining refundable balance"):
+        refunds.initiate_refund(
+            order_id=order.order_id,
+            reason="additional refund",
+            amount_paise=20_000,
+            idempotency_key="idem_hardening_rf_ambiguous_200",
+        )
+
+    # Reconcile by retrying with the same key after the provider response is
+    # consistent. The fake provider returns the same provider refund ID.
+    client.payment.amount_override = None
+    client.payment.currency_override = "INR"
+    retried = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="provider response mismatch",
+        amount_paise=50_000,
+        idempotency_key=key,
+    )
+    assert retried["refund_status"] == "processed"
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+    assert len(client.payment.calls) == 2
 
 
 def test_partial_refund_keeps_order_paid(core_and_engine) -> None:

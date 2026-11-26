@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 def _is_public_unicast(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Only permit globally reachable unicast destinations for production egress."""
-    return address.is_global and not address.is_multicast
+    return address.is_global and not address.is_reserved and not address.is_multicast
 
 
 def _resolve_target(

@@ -333,3 +333,42 @@ def test_ambiguous_payment_link_create_recovers_after_service_restart(
     assert persisted.status is OrderStatus.PAYMENT_PENDING
     assert persisted.provider_link_id == "plink_recovered_0001"
     assert persisted.provider_payment_url == "https://rzp.io/i/recovered"
+
+
+@pytest.mark.parametrize("provider_amount", [69_900.5, "69900", True])
+@pytest.mark.parametrize("operation", ["create", "recover"])
+def test_payment_link_amounts_reject_coerced_or_fractional_values(
+    commerce_core: CommerceCore, provider_amount: object, operation: str
+) -> None:
+    order, _consent = create_consented_order(commerce_core)
+
+    class MalformedPaymentLinks:
+        def _response(self) -> dict[str, object]:
+            return {
+                "id": "plink_malformed_0001",
+                "reference_id": order.order_id,
+                "short_url": "https://rzp.io/i/malformed",
+                "amount": provider_amount,
+                "currency": "INR",
+                "status": "created",
+            }
+
+        def create(self, _data: dict[str, object]) -> dict[str, object]:
+            return self._response()
+
+        def all(self, _filters: dict[str, str]) -> dict[str, object]:
+            return {"items": [self._response()]}
+
+    class MalformedClient:
+        def __init__(self) -> None:
+            self.payment_link = MalformedPaymentLinks()
+
+    adapter = RazorpayAdapter(razorpay_settings(), client=MalformedClient())
+
+    with pytest.raises(RazorpayRequestError) as raised:
+        if operation == "create":
+            adapter.create_payment_link(order)
+        else:
+            adapter.find_payment_link(order)
+
+    assert raised.value.retryable is True

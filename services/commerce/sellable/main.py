@@ -219,6 +219,12 @@ def _assert_production_configuration() -> None:
     if settings.is_dev_environment:
         return
 
+    if not settings.maintenance_worker_enabled:
+        raise RuntimeError(
+            "Production requires the maintenance worker for durable outbox delivery "
+            "and checkout/session expiry."
+        )
+
     if not settings.database_url.lower().startswith("postgresql+psycopg://"):
         raise RuntimeError(
             "Production requires a PostgreSQL DATABASE_URL using the installed "
@@ -281,11 +287,17 @@ def _assert_production_configuration() -> None:
 # ---------------------------------------------------------------------------
 
 _MAINTENANCE_STOP = threading.Event()
+_MAINTENANCE_LOCK = threading.Lock()
+_MAINTENANCE_THREAD: threading.Thread | None = None
+_MAINTENANCE_LAST_SUCCESS: datetime | None = None
+_MAINTENANCE_LAST_ERROR: str | None = None
 
 
-def _maintenance_tick() -> None:
+def _maintenance_tick() -> bool:
+    """Run one expiry/outbox sweep and report whether every merchant succeeded."""
     _drain_bus_best_effort()
     merchants = MerchantRepository().list_all(limit=1000)
+    failed = False
     for record in merchants:
         merchant_id = record.merchant_id
         try:
@@ -294,31 +306,67 @@ def _maintenance_tick() -> None:
             core.checkout_service.expire_due(merchant_id)
             session_service.expire_due(merchant_id)
         except Exception as error:  # noqa: BLE001 — sweeps never kill the worker
-            logger.warning("Maintenance sweep failed for %s: %s", merchant_id, error)
+            failed = True
+            logger.warning(
+                "Maintenance sweep failed for %s (%s)",
+                merchant_id,
+                type(error).__name__,
+            )
+    return failed
 
 
 def _maintenance_loop() -> None:
     interval = max(10, settings.maintenance_interval_seconds)
-    # Initial delay: let startup finish and keep test databases quiet.
-    if _MAINTENANCE_STOP.wait(interval):
-        return
     while not _MAINTENANCE_STOP.is_set():
+        failed = False
         try:
-            _maintenance_tick()
-        except Exception as error:  # noqa: BLE001 — the worker survives anything
-            logger.warning("Maintenance tick failed: %s", error)
+            failed = _maintenance_tick()
+        except Exception as error:  # noqa: BLE001 — keep worker alive and expose failure
+            failed = True
+            logger.warning("Maintenance tick failed (%s)", type(error).__name__)
+        with _MAINTENANCE_LOCK:
+            global _MAINTENANCE_LAST_SUCCESS, _MAINTENANCE_LAST_ERROR
+            if failed:
+                _MAINTENANCE_LAST_ERROR = "sweep_failed"
+            else:
+                _MAINTENANCE_LAST_SUCCESS = utc_now()
+                _MAINTENANCE_LAST_ERROR = None
         if _MAINTENANCE_STOP.wait(interval):
             return
 
 
+def _maintenance_readiness() -> str:
+    """Return an operator-safe maintenance status without exposing exceptions."""
+    if not settings.maintenance_worker_enabled:
+        return "ok" if settings.is_dev_environment else "unavailable"
+    with _MAINTENANCE_LOCK:
+        thread = _MAINTENANCE_THREAD
+        last_success = _MAINTENANCE_LAST_SUCCESS
+        last_error = _MAINTENANCE_LAST_ERROR
+    if thread is None or not thread.is_alive():
+        return "unavailable"
+    if last_error:
+        return "degraded"
+    if last_success is None:
+        return "initializing"
+    max_age = max(120, 3 * settings.maintenance_interval_seconds)
+    if (utc_now() - last_success).total_seconds() > max_age:
+        return "stale"
+    return "ok"
+
+
 def _start_maintenance_worker() -> None:
+    global _MAINTENANCE_THREAD
     if not settings.maintenance_worker_enabled:
         logger.info("Maintenance worker disabled (env=%s)", settings.environment)
         return
+    _MAINTENANCE_STOP.clear()
     thread = threading.Thread(
         target=_maintenance_loop, name="sellable-maintenance", daemon=True
     )
     thread.start()
+    with _MAINTENANCE_LOCK:
+        _MAINTENANCE_THREAD = thread
     logger.info(
         "Maintenance worker started (interval=%ss)", settings.maintenance_interval_seconds
     )
@@ -341,10 +389,10 @@ async def lifespan(_: FastAPI):
         warm_jwks_cache()
     except Exception as exc:  # noqa: BLE001 — warm must never break startup
         logger.debug("JWKS warm skipped: %s", exc)
-    try:
-        _start_maintenance_worker()
-    except Exception as exc:  # noqa: BLE001 — worker must never break startup
-        logger.warning("Maintenance worker failed to start (%s)", type(exc).__name__)
+    # Checkout expiry releases inventory only after cancelling unpaid payment
+    # links. If maintenance cannot start, production must not accept orders that
+    # may hold stock indefinitely.
+    _start_maintenance_worker()
     yield
     _MAINTENANCE_STOP.set()
     logger.info("Shutting down SELLABLE Commerce Core")
@@ -2834,6 +2882,9 @@ def readiness() -> dict:
         ready = False
         logger.warning("Readiness database check failed (%s)", type(error).__name__)
         checks["database"] = {"status": "unavailable"}
+    maintenance_status = _maintenance_readiness()
+    checks["maintenance"] = {"status": maintenance_status}
+    ready = ready and maintenance_status == "ok"
     status_code = 200 if ready else 503
     return JSONResponse(status_code=status_code, content={"ready": ready, "checks": checks})
 
