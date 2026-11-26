@@ -333,3 +333,46 @@ def test_ambiguous_payment_link_create_recovers_after_service_restart(
     assert persisted.status is OrderStatus.PAYMENT_PENDING
     assert persisted.provider_link_id == "plink_recovered_0001"
     assert persisted.provider_payment_url == "https://rzp.io/i/recovered"
+
+
+@pytest.mark.parametrize("provider_amount", [69_900.5, "69900", True])
+def test_payment_link_recovery_rejects_coerced_or_fractional_amounts(
+    provider_amount: object,
+) -> None:
+    order, _consent = create_consented_order(
+        CommerceCore.from_seed(
+            LedgerRepository(
+                create_engine(
+                    "sqlite+pysqlite:///:memory:",
+                    connect_args={"check_same_thread": False},
+                    poolclass=StaticPool,
+                )
+            )
+        )
+    )
+
+    class RecoveringPaymentLinks:
+        def all(self, _filters: dict[str, str]) -> dict[str, object]:
+            return {
+                "items": [
+                    {
+                        "id": "plink_malformed_0001",
+                        "reference_id": order.order_id,
+                        "short_url": "https://rzp.io/i/malformed",
+                        "amount": provider_amount,
+                        "currency": "INR",
+                        "status": "created",
+                    }
+                ]
+            }
+
+    class RecoveringClient:
+        def __init__(self) -> None:
+            self.payment_link = RecoveringPaymentLinks()
+
+    adapter = RazorpayAdapter(razorpay_settings(), client=RecoveringClient())
+
+    with pytest.raises(RazorpayRequestError) as raised:
+        adapter.find_payment_link(order)
+
+    assert raised.value.retryable is True
