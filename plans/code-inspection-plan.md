@@ -86,6 +86,15 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Status:** PR #35 rejects fractional, string, and boolean captured payment amounts; run 45795310705 passed Python 3.11/3.12, frontend, and Cloudflare. PR #26 rejects non-integer refund webhook amounts; signed-route regression confirms a fractional value is rejected and order stays PAID; run 45795698998 passed the same CI jobs.
 - **Acceptance:** Signed payment/refund webhooks accept only integer currency subunits, reject malformed types without state changes, and remain retryable/reconcilable where appropriate. Complete real-provider verification in isolated staging.
 
+
+### [P1-013] Confirm who may grant single-use purchase consent
+- **Location:** PR #22 agent consent request route and merchant console consent action; isolated staging flow.
+- **Finding:** PR #22 correctly prevents the agent from issuing consent and returns no consent ID. Its end-to-end fixture then uses a merchant-owner session to issue purchase consent. The product authorization policy has not selected whether the human approver must be the buyer/payer, merchant owner, or both; a separate merchant session does not prove buyer authorization.
+- **Action:** Select the authorized human role before merging the consent-grant path. Bind the grant to an authenticated identity and the exact order, amount, payee, purpose, and expiry; add an authorization regression for the selected role.
+- **Status:** Awaiting the product decision. Keep consent-grant behavior and staging acceptance blocked until the authority is explicit.
+- **Acceptance:** Only the explicitly authorized human role can issue a single-use consent; the agent cannot grant it or alter the bound transaction terms.
+
+
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
 ### [P1-005] Fail closed on delegation frequency checks
