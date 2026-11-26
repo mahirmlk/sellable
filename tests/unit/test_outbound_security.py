@@ -24,6 +24,30 @@ def test_multicast_literal_addresses_are_rejected_in_production(address: str) ->
         validate_outbound_url(f"https://{address}/hook")
 
 
+@pytest.mark.parametrize("address", ["64:ff9b::7f00:1", "64:ff9b::a00:1"])
+def test_nat64_addresses_embedding_private_ipv4_are_rejected(address: str) -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        validate_outbound_url(f"https://[{address}]/hook")
+
+
+def test_dns_nat64_answer_is_rejected(monkeypatch) -> None:
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (
+                socket.AF_INET6,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("64:ff9b::7f00:1", 443, 0, 0),
+            )
+        ],
+    )
+    with pytest.raises(ValueError, match="reserved"):
+        validate_outbound_url("https://merchant.example/hook")
+
+
 def test_development_can_use_local_http_targets() -> None:
     validate_outbound_url(
         "http://127.0.0.1:8080/hook",
