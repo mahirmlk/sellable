@@ -95,6 +95,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Acceptance:** Only the explicitly authorized human role can issue a single-use consent; the agent cannot grant it or alter the bound transaction terms.
 
 
+### [P1-014] Remove vulnerable frontend dependencies and align Node runtime
+- **Location:** `apps/merchant-console/package.json`; `apps/merchant-console/package-lock.json`; `.github/workflows/ci.yml`
+- **Finding:** The resolved Next.js 16.3.3 was covered by critical/high advisories; the frontend lock also contained high advisories in `sharp`, `source-map-js`, and `zod`. CI used Node 20 although resolved Supabase packages require Node 22 or newer.
+- **Action:** Upgrade Next.js and its ESLint config to a patched same-major release, refresh the lockfile to remove affected transitive packages, use a compatible Node runtime, and make high-severity npm audit a required CI gate.
+- **Status:** Fixed in PR #14: Next.js and `eslint-config-next` are pinned to 16.4.6, the lockfile was refreshed with `npm audit fix`, and frontend CI uses Node 22 with `npm audit --audit-level=high`. Exact-head run 45817869519 passed the audit, frontend typecheck/lint/build, Python 3.11/3.12 tests/evals, and Cloudflare checks; Vercel is green.
+- **Acceptance:** Fresh `npm ci` followed by high-severity audit returns no findings in CI, and the Vercel runtime remains on a supported Node 22+ release.
+
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
 ### [P1-005] Fail closed on delegation frequency checks
@@ -108,7 +115,7 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Location:** `services/commerce/sellable/repositories.py`; `services/commerce/sellable/core.py`; PR #28
 - **Finding:** Checkout could create multiple paid-capable orders against the same last unit because stock availability was only represented by catalog snapshots. In-flight consent and payment retries also needed to hold inventory across process interruptions and provider callbacks.
 - **Action:** Persist a per-order/SKU reservation, conditionally reserve only available stock, retain it through retryable failures, commit it on verified payment, and release it only after a safe abort. Expire every unpaid order after 15 minutes. For PAYMENT_PENDING/FAILED, reconcile the link by stable order reference, cancel any payable link, and release stock only after the provider confirms it is cancelled, expired, or absent; uncertain outcomes retain the hold. Serialize cancellation and abort against payment retries and webhook settlement. Before rollout from a version without reservations, stop new checkouts and cancel/verify all old provider links on the old backend.
-- **Status:** Implemented in draft PR #28 based on PR #14. Production startup fails closed if legacy PAYMENT_PENDING/PAYMENT_FAILED orders lack active reservations, so the old-link drain must finish before the new backend accepts traffic. Focused PR #34 now verifies the payment-link cancellation response ID and terminal status before PR #28 can abort and release stock; its Python 3.11/3.12, frontend, and Cloudflare checks passed in run 45793114240. The PR #28 baseline checks and consistent DATABASE.md/DEPLOYMENT.md wording passed in run 45411445017.
+- **Status:** Implemented in draft PR #28 based on PR #14. Production startup fails closed if legacy PAYMENT_PENDING/PAYMENT_FAILED orders lack active reservations, so the old-link drain must finish before the new backend accepts traffic. Focused PR #34 verifies the payment-link cancellation response ID and terminal status before PR #28 can abort and release stock. Count-only source snapshots cannot identify which order was applied, so committed offsets now remain until a merchant owner confirms that exact paid/fulfilled order after syncing the source; the console requires typing `SYNCED`. Regression coverage proves unrelated external stock decreases do not clear local offsets and owner/member access is enforced. Exact-head CI run 45815764616 passed Python 3.11/3.12, frontend typecheck/lint/build, and Cloudflare checks; Vercel is green.
 - **Acceptance:** Concurrent orders cannot oversell; replay and duplicate settlement/release are idempotent; retryable payment failures retain stock; old catalog snapshots cannot restore committed sales; startup rejects unreserved legacy payment orders. Complete the documented cancellation rollout and staging verification before launch.
 
 ### [P2-001] Keep simulated behavior clearly labeled
