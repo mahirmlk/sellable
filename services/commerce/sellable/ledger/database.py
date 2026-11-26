@@ -1269,9 +1269,29 @@ def _ensure_ledger_attribution_columns(engine) -> None:
 def _normalise_index_predicate(predicate: str | None) -> str | None:
     if predicate is None:
         return None
-    normalized = predicate.lower().replace('"', "")
+    normalized = predicate.replace('"', "")
     normalized = re.sub(r"::(?:character varying|varchar|text)(?:\(\d+\))?", "", normalized)
-    return re.sub(r"[\s()]", "", normalized)
+    normalized = re.sub(r"[\s()]", "", normalized)
+
+    # SQL identifiers/keywords are case-insensitive here, but string literals
+    # are not. Preserve quoted literal contents so 'active' cannot satisfy
+    # the required predicate status = 'ACTIVE'.
+    result: list[str] = []
+    in_literal = False
+    index = 0
+    while index < len(normalized):
+        char = normalized[index]
+        if char == "'":
+            result.append(char)
+            if in_literal and index + 1 < len(normalized) and normalized[index + 1] == "'":
+                result.append("'")
+                index += 2
+                continue
+            in_literal = not in_literal
+        else:
+            result.append(char if in_literal else char.lower())
+        index += 1
+    return "".join(result)
 
 
 def _verify_required_postgres_index(
@@ -1310,8 +1330,11 @@ def _verify_required_postgres_index(
         {"index_name": index_name},
     ).mappings().first()
 
+    # PostgreSQL folds unquoted identifiers to lowercase, but quoted names
+    # retain case. Do not lowercase catalog output: a differently-cased
+    # quoted column is a different key and cannot enforce this invariant.
     actual_columns = tuple(
-        str(column).strip().strip('"').lower()
+        str(column).strip().strip('"')
         for column in (row["columns"] if row is not None else ())
     )
     actual_predicate = (
