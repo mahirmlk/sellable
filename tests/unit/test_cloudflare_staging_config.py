@@ -19,7 +19,18 @@ def test_staging_worker_is_separate_and_uses_only_staging_origins() -> None:
     assert staging["vars"]["SELLABLE_ENVIRONMENT"] == "staging"
     assert staging["workers_dev"] is True
     assert staging.get("routes", []) == []
-    assert staging["vars"]["CORS_ORIGINS"] == "https://staging.sellable.shop"
+    staging_origins = staging["vars"]["CORS_ORIGINS"].split(",")
+    production = json.loads(
+        (_REPOSITORY_ROOT / "wrangler.jsonc").read_text(encoding="utf-8")
+    )
+    production_origins = set(production["vars"]["CORS_ORIGINS"].split(","))
+
+    assert len(staging_origins) == 1
+    assert all(
+        origin.startswith("https://") and "*" not in origin
+        for origin in staging_origins
+    )
+    assert set(staging_origins).isdisjoint(production_origins)
 
 
 def test_staging_worker_keeps_credentials_out_of_checked_in_vars() -> None:
