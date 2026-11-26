@@ -81,10 +81,11 @@ The committed CI tests and evals use fake providers and in-memory databases; the
 - Check `GET /health`, `GET /ready`, and the staging merchant's onboarding readiness before checkout.
 - In Cloudflare, inspect Worker logs, Container status, scheduled heartbeat logs, and error rates. In Supabase, inspect staging database/Auth logs. In Razorpay Test Mode, inspect payment and webhook delivery attempts.
 - If checkout remains `PAYMENT_PENDING`, inspect Razorpay's Test Mode payment and webhook delivery records. Retry delivery after verifying the URL and secret. Never manually mark an order paid.
+- Every unpaid order holds stock for 15 minutes from creation. The maintenance sweep aborts consent-stage orders directly; for payment-pending/failed orders it first reconciles the Razorpay link and cancels any payable link. If provider state is uncertain, the order remains held for retry or manual reconciliation. Never release its reservation directly in the database.
 - If a refund is `initiated`/pending, do not treat it as settled. Pending amounts remain reserved and the order remains `PAID` until the signed provider status event reports `processed`.
 - If a signed refund event cannot be matched to a local request, the endpoint returns 409 instead of acknowledging it. Check Cloudflare logs and the Razorpay Test Mode refund details/notes, repair the missing correlation through the same stable idempotency key, then retry delivery. Do not manually mark a refund processed.
 - Retry a request only with the same idempotency key and identical parameters. If provider state is ambiguous, inspect the provider's Test Mode record before attempting a different refund.
-- Roll back the staging Worker version if a deployment is unhealthy, then verify `/ready` and the webhook endpoint again. Keep staging database and provider records disposable and separate from production.
+- Before rolling back across a release that introduced inventory reservations, stop new staging checkouts, cancel and verify every open Razorpay Test Mode link, and reconcile in-flight payment webhooks. Confirm there are no payable pending/failed orders before switching to a version that does not understand reservation state. If link cancellation or payment state is ambiguous, keep the reservation-aware version running and reconcile forward; do not restore stock manually. After a safe rollback, verify `/ready` and the staging webhook endpoint again. Keep staging database and provider records disposable and separate from production.
 
 ## Release evidence checklist
 
