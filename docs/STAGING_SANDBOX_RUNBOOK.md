@@ -7,7 +7,7 @@ The staging config is `wrangler.staging.jsonc`; its worker name and Durable Obje
 ## Prerequisites
 
 - Cloudflare Containers and Durable Object scheduling are enabled for the account.
-- A disposable Supabase staging project with Auth enabled and a PostgreSQL pooler URL that uses TLS.
+- A disposable Supabase staging project with Auth enabled and a PostgreSQL pooler URL that uses TLS. Format `DATABASE_URL` for this service as `postgresql+psycopg://...` and include `sslmode=require` (or `verify-ca`/`verify-full`); plain `postgresql://` URLs fail the production startup check.
 - A Razorpay account with **Test Mode** enabled and a webhook endpoint reachable from Razorpay.
 - A Vercel preview or staging deployment configured against the staging API and staging Supabase project.
 - Node.js, npm, Docker, and Wrangler access from the deployer environment.
@@ -38,7 +38,7 @@ npx wrangler secret put RAZORPAY_KEY_SECRET --config wrangler.staging.jsonc
 npx wrangler secret put RAZORPAY_WEBHOOK_SECRET --config wrangler.staging.jsonc
 ```
 
-`RAZORPAY_KEY_ID` must start with `rzp_test_`. Generate the configured bootstrap agent key hash as lowercase SHA-256 hex of a random staging-only agent key. Keep both that plaintext key and the HMAC secret in the secret manager used by the external test agent; never put either in browser code or this repository.
+`RAZORPAY_KEY_ID` must start with `rzp_test_`. `BUYER_AGENT_API_KEY_HASH` must be a lowercase 64-character SHA-256 hex digest of a random staging-only bootstrap key; `BUYER_AGENT_HMAC_SECRET` must contain at least 32 UTF-8 bytes. Keep the bootstrap plaintext key and HMAC secret in the external test agent's secret manager; never put either in browser code or this repository. For the purchase flow, issue a separate merchant-scoped key in the console and use that key with the HMAC signature.
 
 Deploy and record the generated staging Worker URL:
 
