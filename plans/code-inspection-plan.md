@@ -1,5 +1,5 @@
 # Code Inspection Implementation Plan
-Project: Sellable | Stack: Python 3.11/3.12 FastAPI, Next.js, Supabase/PostgreSQL, Cloudflare Workers + Containers | Inspected: 2026-11-24
+Project: Sellable | Stack: Python 3.11/3.12 FastAPI, Next.js, Supabase/PostgreSQL, Cloudflare Workers + Containers | Initial audit: 2026-11-24 | Targeted follow-up: 2026-11-26
 Files scanned: approximately 422 repository files | Domains covered: Bug, Security, Architecture, Dependencies, Deployment
 
 ## Deployment Verdict
@@ -8,7 +8,7 @@ BLOCKED — deterministic CI and sandbox hardening pass, but a clean, isolated C
 
 ## Executive Summary
 
-The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. PR #14 now contains the pending-refund/idempotency fix and its Python/eval, frontend, and Cloudflare CI passed. PR #26 adds signed, replay-safe refund-status reconciliation on the platform branch; its latest CI passed with fake providers after review fixes moved signature verification before JSON parsing and changed replay claims to hash the signed raw body, not the unsigned event-ID header. PR #25 verifies the actual required index definitions and its CI passed. Focused review of PR #14 also found that delegation-frequency checks scanned only 500 events and treated ledger failures as zero use; PR #27 now counts all history and denies when usage cannot be verified, with passing CI. These checks do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
+The codebase has draft changes covering SSRF controls, production configuration, dependency locks, Cloudflare deployment, Razorpay-only deployed provider selection, refund idempotency, readiness checks, and a staging runbook. PR #14 contains the pending-refund/idempotency fix and currently passes Python/eval, frontend, and Cloudflare CI. A targeted follow-up found and fixed both ambiguous refund-response balance release and an IPv6 NAT64 SSRF classification bypass. PR #26 adds signed, replay-safe refund-status reconciliation on the platform branch; its latest CI passed with fake providers after review fixes moved signature verification before JSON parsing and changed replay claims to hash the signed raw body, not the unsigned event-ID header. PR #25 verifies the actual required index definitions and its CI passed. Focused review of PR #14 also found that delegation-frequency checks scanned only 500 events and treated ledger failures as zero use; PR #27 now counts all history and denies when usage cannot be verified, with passing CI. These checks do not prove Cloudflare Container scheduling, Supabase staging migrations/index creation, Razorpay Test Mode checkout, signed provider webhook delivery, or provider refund behavior. The first release also depends on one Cloudflare Container instance while consent and payment-attempt serialization use process-local locks.
 
 The highest risk is treating the sandbox as production-proven before staging verifies the provider boundary and database constraints. The exploit/correctness paths compound when an external retry or duplicate webhook meets partially completed payment/refund state: local idempotency, provider idempotency, ledger settlement, and the order status must agree.
 
@@ -35,8 +35,8 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Acceptance:** Operational configuration and alerts detect a topology change; a future multi-instance release passes concurrent consent/payment tests using database-backed atomic guards.
 
 ### [P1-003] Complete independent review and safe sequencing of platform PRs
-- **Location:** PR #14, `feat/platform-completion`; follow-ups #25 and #26
-- **Finding:** PR #14 is a 100+ file draft. It contains the pending-refund/idempotency and sandbox-only provider fixes and has passing CI. Review also found and fixed a fail-open Cloudflare HTTPS check for missing/unknown environment values. #26 carries refund-webhook reconciliation on top of the platform branch and has passing CI after the webhook review fixes. Focused review of outbound URL validation and Cloudflare forwarding found no blocker in those inspected paths; review of the remaining auth, data, payment, frontend, and deployment diff is still outstanding. PR #25 verifies the database index definitions that the startup gate requires.
+- **Location:** PR #14, `feat/platform-completion`; focused follow-ups #25 and #26
+- **Finding:** PR #14 remains a 100+ file draft. Focused reviews have covered refund balance/idempotency and response validation, merchant-scoped payment routes, inventory expiry/cancellation, webhook signature/replay reconciliation, startup/index gates, safety-eval CI, Cloudflare forwarding, and outbound URL controls. Review of the complete auth, data, payment, frontend, and deployment diff is still outstanding, as is independent maintainer review. PR #25 verifies the database index definitions that the startup gate requires.
 - **Action:** Finish reviewing PR #14 by security boundary and its focused follow-ups. Keep the dependencies ordered and resolve review findings before any merge.
 - **Acceptance:** No unresolved high-severity review findings; the final merged tree retains both refund fixes and validates actual unique-index definitions; every prerequisite change has passing required CI.
 
@@ -60,6 +60,18 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Action:** Run the full evaluation entry point in CI with the mock LLM adapter so safety suites, regression thresholds, and deterministic scenarios all fail the build on errors without calling an external model.
 - **Status:** Implemented in draft PR #30. Run 45401459117 passed Python 3.11/3.12, frontend, and Cloudflare checks; the test log confirms P0 safety and commerce gates at 100%, zero P0 failures, and RESULT: PASS. Vercel preview deployed successfully.
 - **Acceptance:** The full suite and release gates run on every relevant pull request, and the documented external-agent flow stays inside the mandatory test job. Isolated Razorpay Test Mode staging remains a separate release gate.
+
+### [P1-009] Reject reserved IPv6 NAT64 addresses in outbound URL validation
+- **Location:** `services/commerce/sellable/outbound.py`; `tests/unit/test_outbound_security.py`; PR #14
+- **Finding:** Python classifies the reserved `64:ff9b::/96` NAT64 well-known prefix as `is_global`; an embedded private IPv4 destination could pass the prior public-unicast check.
+- **Status:** Fixed in PR #14 commit `383e3b1951fffbc68d6544448fdf9c8df4533383`. Egress validation rejects reserved addresses; regressions cover literal NAT64 addresses embedding loopback/private IPv4 and a DNS AAAA answer in the range. Actions run 45788328597 passed Python 3.11/3.12, frontend, and Cloudflare checks.
+- **Acceptance:** Production egress rejects all non-global and reserved destination addresses at validation and immediately before direct connection; redirects remain blocked.
+
+### [P1-010] Keep refund balances reserved after inconsistent provider responses
+- **Location:** `services/commerce/sellable/payments/razorpay.py`; `services/commerce/sellable/refunds.py`; `tests/unit/test_payment_webhook_hardening.py`; PR #14
+- **Finding:** Treating a missing/mismatched amount or currency as a definitive failure releases the refundable balance even though the provider may have accepted the request.
+- **Status:** Fixed in PR #14 commit `9a4fb4a99a53147da51255519120dff742e67e30`. Missing or malformed status, amount, currency, or refund ID is ambiguous/retryable; the regression verifies the reservation blocks an over-refund and same-key retry reconciles it. Actions run 45787428144 passed Python 3.11/3.12, frontend, and Cloudflare checks.
+- **Acceptance:** Only an explicit provider `failed` status releases a refund reservation; ambiguous responses remain pending until reconciled with the same provider idempotency key.
 
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
@@ -98,6 +110,8 @@ The highest risk is treating the sandbox as production-proven before staging ver
 
 ## Evidence and Limitations
 
-- GitHub Actions passed for PR #14's latest head in run [45386624830](https://github.com/mahirmlk/sellable/actions/runs/45386624830), PR #25's index verification in run [45381931393](https://github.com/mahirmlk/sellable/actions/runs/45381931393), and PR #26's latest webhook review fixes in run [45387676861](https://github.com/mahirmlk/sellable/actions/runs/45387676861). PR #27's frequency-limit fix passed in run [45390551118](https://github.com/mahirmlk/sellable/actions/runs/45390551118). Earlier focused checks on #17, #18, #20, #22, and #23 also passed. These are code/configuration checks, not external staging proof.
+- Initial baseline Actions run [45386624830](https://github.com/mahirmlk/sellable/actions/runs/45386624830), PR #25's index verification [45381931393](https://github.com/mahirmlk/sellable/actions/runs/45381931393), PR #26's webhook review fixes [45387676861](https://github.com/mahirmlk/sellable/actions/runs/45387676861), and PR #27's frequency-limit fix [45390551118](https://github.com/mahirmlk/sellable/actions/runs/45390551118) passed on their recorded heads.
+- Latest PR #14 checks passed after ambiguous refund handling in [45787428144](https://github.com/mahirmlk/sellable/actions/runs/45787428144) and after NAT64 egress filtering in [45788328597](https://github.com/mahirmlk/sellable/actions/runs/45788328597): Python 3.11/3.12, frontend, Cloudflare, and Vercel preview.
+- PR #18's current staging-runbook head passed in [45783777905](https://github.com/mahirmlk/sellable/actions/runs/45783777905). These are code/configuration checks, not external staging proof.
 - No Razorpay API call, live payment, or production deployment was made.
 - Staging resources are not yet provisioned. Do not mark this plan CLEAR until the acceptance criteria above are met.
