@@ -314,9 +314,10 @@ def test_buyer_mission_is_ledgered_for_activity_and_replay(
     assert "buyer.mission_received" in actions
     assert "buyer.discovered_merchant" in actions
     assert "buyer.catalog_researched" in actions
-    # Order, consent, and mission all share the single flow trace.
+    # Order and consent request share the flow trace; the agent grants none.
     assert "order.created" in actions
-    assert "consent.issued" in actions
+    assert "buyer.consent_requested" in actions
+    assert "consent.issued" not in actions
 
 
 def test_buyer_consent_requires_matching_trace(
