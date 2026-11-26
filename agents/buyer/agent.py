@@ -358,16 +358,14 @@ class BuyerAgent:
         }
 
     def _request_consent(self, state: BuyerGraphState) -> dict[str, object]:
-        consent: Consent = self.tools.request_consent(
+        self.tools.request_consent(
             order_id=state["order_id"], trace_id=state["trace_id"]
         )
-        steps = [*state["steps"], "CONSENT"]
-        result = state["result"].model_copy(update={"consent_id": consent.consent_id, "steps": steps})
-        return {
-            "result": result,
-            "consent_id": consent.consent_id,
-            "steps": steps,
-        }
+        steps = [*state["steps"], "CONSENT_REQUESTED"]
+        result = state["result"].model_copy(
+            update={"consent_id": None, "steps": steps}
+        )
+        return {"result": result, "steps": steps}
 
     def verify_payment(self, order_id: str, *, trace_id: str | None = None) -> dict[str, object]:
         """Read the authoritative order state for a buyer order.
