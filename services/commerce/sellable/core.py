@@ -71,6 +71,7 @@ from sellable.repositories import (
     FraudRepository,
     FulfillmentRepository,
     InventoryRepository,
+    InventoryReservationConflict,
     IdentityLinkRepository,
     MerchantOnboardingRepository,
     MerchantRepository,
@@ -2359,6 +2360,41 @@ class CommerceCore:
                 except ValueError:
                     # A source sync may have removed the item from this cache.
                     logger.debug("Inventory cache refresh skipped for unknown SKU %s", sku)
+
+    def acknowledge_inventory_source_order(
+        self, order_id: str, *, acknowledged_by: str
+    ) -> list[str]:
+        """Release committed offsets after a merchant owner confirms source sync."""
+        with self._order_lock:
+            order = self.get_order(order_id)
+            if order.status not in {OrderStatus.PAID, OrderStatus.FULFILLED}:
+                raise ValueError(
+                    "inventory source acknowledgement requires a paid or fulfilled order"
+                )
+            try:
+                acknowledged_skus = self.inventory_repo.acknowledge_source_order(
+                    self.merchant_scope, order_id
+                )
+            except InventoryReservationConflict as error:
+                raise ValueError(str(error)) from error
+            if not acknowledged_skus:
+                return []
+            self._refresh_inventory_stock(acknowledged_skus)
+            self._record(
+                trace_id=order.trace_id,
+                actor=LedgerActor.HUMAN,
+                action="inventory.source_acknowledged",
+                inputs={
+                    "order_id": order_id,
+                    "acknowledged_by": acknowledged_by,
+                    "skus": acknowledged_skus,
+                },
+                output={"status": "ACKNOWLEDGED"},
+                reasoning_summary=(
+                    "A merchant owner confirmed the catalog source has applied this order."
+                ),
+            )
+            return acknowledged_skus
 
     def expire_stale_unpaid_orders(
         self,
