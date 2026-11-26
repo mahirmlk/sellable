@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, feat/platform-completion]
+    branches: [main, feat/platform-completion, 'codex/**']
 
 permissions:
   contents: read
