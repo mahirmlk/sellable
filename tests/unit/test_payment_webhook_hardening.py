@@ -883,6 +883,31 @@ def test_refund_webhook_reconciles_and_deduplicates_status_events(
             )
             assert rejected.status_code == 401
 
+            # A valid signature cannot make inconsistent refund details safe
+            # to acknowledge: keep the provider retrying for reconciliation.
+            mismatched_payload = {
+                **payload,
+                "payload": {
+                    "refund": {
+                        "entity": {
+                            **payload["payload"]["refund"]["entity"],
+                            "amount": 50_001,
+                        }
+                    }
+                },
+            }
+            mismatched_body, mismatched_signature = signed(mismatched_payload)
+            mismatch = http.post(
+                "/webhooks/razorpay",
+                content=mismatched_body,
+                headers={
+                    "X-Razorpay-Signature": mismatched_signature,
+                    "X-Razorpay-Event-Id": "evt_refund_mismatch_001",
+                },
+            )
+            assert mismatch.status_code == 409, mismatch.text
+            assert core.get_order(order.order_id).status is OrderStatus.PAID
+
             settled = http.post("/webhooks/razorpay", content=body, headers=headers)
             assert settled.status_code == 200, settled.text
             assert settled.json()["status"] == "processed"
