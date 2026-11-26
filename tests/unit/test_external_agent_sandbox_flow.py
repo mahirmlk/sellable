@@ -46,7 +46,9 @@ def commerce_core() -> CommerceCore:
     return CommerceCore.from_seed(LedgerRepository(engine), engine=engine)
 
 
-def _client(commerce_core: CommerceCore) -> TestClient:
+def _client(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
     from sellable.agents.seller import SellerAgent
     from sellable.gateway import AgentGateway
     from sellable.main import (
@@ -67,7 +69,7 @@ def _client(commerce_core: CommerceCore) -> TestClient:
         role="owner",
     )
     # Bind the owner approval to this test's isolated in-memory merchant core.
-    main_module.merchant_core = lambda _session: commerce_core
+    monkeypatch.setattr(main_module, "merchant_core", lambda _session: commerce_core)
     app.dependency_overrides[get_agent_gateway] = lambda: gateway
     app.dependency_overrides[get_commerce] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
@@ -172,7 +174,7 @@ def test_rest_sandbox_purchase_end_to_end(
 ) -> None:
     from sellable.main import app
 
-    client = _client(commerce_core)
+    client = _client(commerce_core, monkeypatch)
     try:
         # 1. Discovery + capability negotiation (UCP surface).
         discovery = client.get("/.well-known/ucp")
