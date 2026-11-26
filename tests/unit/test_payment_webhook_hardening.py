@@ -159,16 +159,18 @@ class FakeRazorpayLinkNamespace(FakeRazorpayPaymentLinks):
     def __init__(self) -> None:
         super().__init__()
         self.fail_cancel_once = False
+        self.cancel_response_status = "cancelled"
 
     def cancel(self, link_id: str) -> dict[str, object]:
         if self.fail_cancel_once:
             self.fail_cancel_once = False
             raise RazorpayRequestError("simulated cancellation timeout", retryable=True)
-        self.cancelled.append(link_id)
-        for item in self.items:
-            if item.get("id") == link_id:
-                item["status"] = "cancelled"
-        return {"id": link_id, "status": "cancelled"}
+        if self.cancel_response_status in {"cancelled", "expired"}:
+            self.cancelled.append(link_id)
+            for item in self.items:
+                if item.get("id") == link_id:
+                    item["status"] = self.cancel_response_status
+        return {"id": link_id, "status": self.cancel_response_status}
 
 
 class FakeRazorpayClient:
@@ -942,8 +944,17 @@ def test_stale_payment_order_cancels_link_before_releasing_stock(core_and_engine
         core.merchant_scope, order.order_id
     ) == {"AUDIO-CASE-01": "RESERVED"}
 
-    # The next sweep reconciles and cancels the live link, then aborts and
-    # releases the hold exactly once.
+    # A successful API response with a still-payable state is not confirmation.
+    client.payment_link.cancel_response_status = "created"
+    assert core.expire_stale_unpaid_orders(expire_payment_order=expire_payment) == 0
+    assert core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+    assert core.inventory_repo.status_for_order(
+        core.merchant_scope, order.order_id
+    ) == {"AUDIO-CASE-01": "RESERVED"}
+    assert client.payment_link.cancelled == []
+
+    # A later terminal provider response permits abort and release exactly once.
+    client.payment_link.cancel_response_status = "cancelled"
     assert core.expire_stale_unpaid_orders(expire_payment_order=expire_payment) == 1
     assert client.payment_link.cancelled == ["plink_test_0001"]
     assert core.get_order(order.order_id).status is OrderStatus.ABORTED
