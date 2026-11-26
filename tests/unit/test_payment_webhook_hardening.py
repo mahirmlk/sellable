@@ -455,6 +455,7 @@ def test_capture_without_currency_does_not_settle(
         order.order_id, payment_id="pay_cur_missing_01", amount=ORDER_TOTAL
     )
     # Neither the payment entity nor payment-link entity has a currency.
+    del payload["payload"]["payment"]["entity"]["currency"]
     body, signature = signed(payload)
 
     result = payments.handle_webhook(body, signature)
