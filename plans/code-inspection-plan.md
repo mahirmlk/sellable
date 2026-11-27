@@ -117,6 +117,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Status:** Fixed in PR #14: Next.js and `eslint-config-next` are pinned to 16.4.6, the lockfile was refreshed with `npm audit fix`, and frontend CI uses Node 22 with `npm audit --audit-level=high`. Exact-head run 45817869519 passed the audit, frontend typecheck/lint/build, Python 3.11/3.12 tests/evals, and Cloudflare checks; Vercel is green.
 - **Acceptance:** Fresh `npm ci` followed by high-severity audit returns no findings in CI, and the Vercel runtime remains on a supported Node 22+ release.
 
+### [P1-017] Remove inline-script allowance from merchant dashboard CSP
+- **Location:** `apps/merchant-console/next.config.ts`; `apps/merchant-console/proxy.ts`; PR #38
+- **Finding:** The global CSP allowed `'unsafe-inline'` in `script-src`, weakening script-injection protection for authenticated merchant pages containing orders, buyers, and payment details.
+- **Action:** Issue a cryptographically random per-request nonce for dashboard routes, send the CSP and nonce into Next.js before rendering and return the same policy to the browser, preserving refreshed Supabase cookies.
+- **Status:** Implemented in draft PR #38, stacked on #14. Dashboard routes are already force-dynamic; public routes retain their existing rendering mode. Structural regressions guard nonce validation, nonce-only dashboard script policy, request/response propagation, and refreshed-cookie forwarding. Exact-head Actions run [46040337163](https://github.com/mahirmlk/sellable/actions/runs/46040337163) passed Python 3.11/3.12 tests/evals, frontend typecheck/lint/build, and Cloudflare checks; Vercel preview passed.
+- **Acceptance:** Review #38 and verify dashboard pages load without CSP violations in isolated staging; retain nonce-only script execution for every dashboard response.
+
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
 ### [P1-005] Fail closed on delegation frequency checks
