@@ -8,7 +8,7 @@ The staging config is `wrangler.staging.jsonc`; its worker name and Durable Obje
 
 - Cloudflare Containers and Durable Object scheduling are enabled for the account.
 - Confirm the account can use Containers with the `durable_object` scheduling policy, which Cloudflare currently documents as public beta. This policy is immutable for a Container application: changing it requires a replacement application and a new Durable Object class/namespace. Keep staging and production namespaces separate, and validate the selected policy before the first deployment.
-- A disposable Supabase staging project with Auth enabled and a PostgreSQL pooler URL that uses TLS. Format `DATABASE_URL` for this service as `postgresql+psycopg://...` and include `sslmode=require` (or `verify-ca`/`verify-full`); plain `postgresql://` URLs fail the production startup check.
+- A disposable Supabase staging project with Auth enabled, separate merchant-operator and buyer test users, and a PostgreSQL pooler URL that uses TLS. Format `DATABASE_URL` for this service as `postgresql+psycopg://...` and include `sslmode=require` (or `verify-ca`/`verify-full`); plain `postgresql://` URLs fail the production startup check. The buyer user must be able to sign in and obtain a staging Supabase access token.
 - A Razorpay account with **Test Mode** enabled and a webhook endpoint reachable from Razorpay.
 - A Vercel preview or staging deployment configured against the staging API and staging Supabase project.
 - Node.js, npm, Docker, and Wrangler access from the deployer environment.
@@ -80,15 +80,16 @@ Use Razorpay's official [Payment Links test flow](https://hdfcbank-collectnow-do
 
 For exact request signing headers and the canonical HMAC format, follow [`docs/AGENT_INTEGRATION.md`](AGENT_INTEGRATION.md). That guide matches the current staging API and requires the raw query and request-body hash for signed writes.
 
-1. Open the Vercel staging console and sign in with a staging Supabase test user.
+1. Open the Vercel staging console and sign in with the staging merchant-operator Supabase user. Keep a separate staging buyer user for the consent step.
 2. Complete merchant onboarding, create a test product, and publish the catalog. Record the returned merchant ID and confirm the product appears at `/catalog.ai.json?merchant=<merchant_id>`.
-3. Issue a merchant-scoped API key in the console. Give the staging external agent that key and the staging HMAC signing secret through a secret manager.
-4. From a separate external-agent process, fetch `/.well-known/ucp?merchant=<merchant_id>`, `/.well-known/agents.json?merchant=<merchant_id>`, and `/catalog.ai.json?merchant=<merchant_id>`; negotiate capabilities using the merchant-scoped key, discover the product, and create a cart.
-5. Have the agent request checkout authorization and an order using stable idempotency keys. A human must review the exact merchant, item, amount, and spend mandate and issue single-use consent. Start payment only with that consent.
-6. Open the returned Razorpay payment URL and complete checkout using Razorpay Test Mode values. Do not treat a browser return URL as proof of payment.
-7. Wait for the signed `payment.captured` webhook. Confirm the staging order is `PAID`, then fetch `GET /orders/{order_id}/receipt` with the merchant-scoped agent key. The receipt must include the provider reference, amount, authorization reference, and trace ID.
-8. As the test merchant owner, issue a full refund with a stable `idempotency_key` through `POST /orders/{order_id}/refund`. Repeat the identical request once and confirm it returns the same local refund ID. If Razorpay reports the refund as pending, verify the order stays `PAID` until the signed `refund.processed` event arrives; only then should it become `REFUNDED`.
-9. Redeliver the refund webhook from Razorpay's dashboard and confirm the order remains `REFUNDED` with one settlement ledger event. Redeliver the payment webhook and confirm the order still has one payment settlement event.
+3. Issue a merchant-scoped API key in the console. Give the staging external agent that key and the staging HMAC signing secret through a secret manager. Do not give it a buyer access token.
+4. From a separate external-agent process, fetch `/.well-known/ucp?merchant=<merchant_id>`, `/.well-known/agents.json?merchant=<merchant_id>`, and `/catalog.ai.json?merchant=<merchant_id>`; negotiate capabilities using the merchant-scoped key, discover the product, and create a cart. Set the cart's `customer_id` to the staging buyer's Supabase auth subject (`sub`); the buyer may share this identifier with the agent, but must keep the access token private.
+5. Have the agent request checkout authorization and create an order using stable idempotency keys. If merchant policy requires owner approval, the operator approves that business-policy gate separately; it never grants payment consent.
+6. The buyer signs in as the staging buyer user, reviews the exact merchant, item, amount, and spend mandate, then calls `POST /buyer/orders/{order_id}/consent` on the staging API with `Authorization: Bearer <buyer access token>`. The backend verifies the token with staging Supabase and requires its subject to match the order's persisted checkout/quote `customer_id`. Missing or mismatched buyer identity must be rejected. The merchant owner cannot grant consent unless that owner is also the recorded buyer. Pass the returned single-use `consent_id` to the agent; payment start must use only that consent.
+7. Open the returned Razorpay payment URL and complete checkout using Razorpay Test Mode values. Do not treat a browser return URL as proof of payment.
+8. Wait for the signed `payment.captured` webhook. Confirm the staging order is `PAID`, then fetch `GET /orders/{order_id}/receipt` with the merchant-scoped agent key. The receipt must include the provider reference, amount, authorization reference, and trace ID.
+9. As the test merchant owner, issue a full refund with a stable `idempotency_key` through `POST /orders/{order_id}/refund`. Repeat the identical request once and confirm it returns the same local refund ID. If Razorpay reports the refund as pending, verify the order stays `PAID` until the signed `refund.processed` event arrives; only then should it become `REFUNDED`.
+10. Redeliver the refund webhook from Razorpay's dashboard and confirm the order remains `REFUNDED` with one settlement ledger event. Redeliver the payment webhook and confirm the order still has one payment settlement event.
 
 The committed CI tests and evals use fake providers and in-memory databases; they prove deterministic business rules, not Razorpay behavior. `tests/unit/test_external_agent_sandbox_flow.py` also uses a fake Razorpay rail. Only this staging procedure proves the provider boundary.
 
@@ -108,7 +109,9 @@ The committed CI tests and evals use fake providers and in-memory databases; the
 - [ ] Cloudflare staging Worker deployed and healthy.
 - [ ] Vercel staging console points only to staging API and Supabase.
 - [ ] Test merchant onboarded and catalog published.
-- [ ] External agent discovery, negotiation, consent, and payment completed.
+- [ ] External agent discovery and negotiation completed.
+- [ ] Buyer consent granted with a staging Supabase token whose subject matches the persisted order customer ID; merchant-only or mismatched consent was rejected.
+- [ ] Payment completed after single-use buyer consent.
 - [ ] Signed Razorpay test webhook verified; receipt checked.
 - [ ] Test refund processed by signed refund webhook; identical request retry and webhook replay did not duplicate it.
 - [ ] Payment webhook replay did not duplicate payment settlement.
