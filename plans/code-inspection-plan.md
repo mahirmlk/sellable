@@ -88,12 +88,12 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Acceptance:** Signed payment/refund webhooks accept only integer currency subunits, reject malformed types without state changes, and remain retryable/reconcilable where appropriate. Complete real-provider verification in isolated staging.
 
 
-### [P1-013] Confirm who may grant single-use purchase consent
-- **Location:** PR #22 agent consent request route and merchant console consent action; isolated staging flow.
-- **Finding:** PR #22 correctly prevents the agent from issuing consent and returns no consent ID. Its end-to-end fixture then uses a merchant-owner session to issue purchase consent. The product authorization policy has not selected whether the human approver must be the buyer/payer, merchant owner, or both; a separate merchant session does not prove buyer authorization.
-- **Action:** Select the authorized human role before merging the consent-grant path. Bind the grant to an authenticated identity and the exact order, amount, payee, purpose, and expiry; add an authorization regression for the selected role.
-- **Status:** Awaiting the product decision. Keep consent-grant behavior and staging acceptance blocked until the authority is explicit.
-- **Acceptance:** Only the explicitly authorized human role can issue a single-use consent; the agent cannot grant it or alter the bound transaction terms.
+### [P1-013] Bind single-use purchase consent to the authenticated buyer
+- **Location:** PR #40 buyer consent routes and buyer-mission continuation; isolated staging flow.
+- **Finding:** Merchant-session authentication alone does not prove buyer authorization. The verified Supabase subject must match the buyer ID persisted on the order's linked checkout or quote. Orders missing that identity cannot accept user-facing consent.
+- **Action:** Require the verified buyer principal at public consent boundaries; keep agent consent request-only and merchant approval separate. Add regressions for a mismatched user, same-buyer retry, and missing customer identity.
+- **Status:** Product decision resolved as buyer/payer only. Implementation is in draft PR #40, stacked on PR #22. CI passes on the latest head. Real Razorpay Test Mode acceptance remains blocked until isolated staging is provisioned.
+- **Acceptance:** Only the authenticated user matching the persisted customer ID can issue or retry consent for that order; agent and merchant approval cannot grant it. Consent binds the exact order, amount, payee, purpose, and expiry.
 
 
 ### [P1-015] Reject coerced payment-link recovery amounts
