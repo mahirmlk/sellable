@@ -116,7 +116,6 @@ from sellable.registry import (
 from sellable.repositories import (
     CatalogRepository,
     CheckoutSessionRepository,
-    IdentityLinkRepository,
     MerchantRepository,
     ObservabilityRepository,
     OrderRepository,
@@ -458,7 +457,6 @@ payment_service = PaymentService(commerce_core, RazorpayAdapter(settings), core_
 refund_service = RefundService(commerce_core, RazorpayAdapter(settings))
 buyer_mission_service = BuyerMissionService()
 session_service = ProtocolSessionService(ProtocolSessionRepository())
-identity_service = IdentityLinkService(IdentityLinkRepository())
 
 
 def merchant_buyer_agent(core: CommerceCore) -> BuyerAgent:

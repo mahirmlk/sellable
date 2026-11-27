@@ -1,11 +1,11 @@
 """Customer identity linking (target §12, UCP identity-linking).
 
-Public or agent-authenticated access is never identical to
-user-authenticated access: linking is an explicit two-step handshake.
-Create a PENDING link (the one-time code is shown once); approve with the
-code (customer proof via the agent channel) or merchant approval; after
-that the customer counts as AUTHENTICATED for support and delegation
-flows. Full OAuth 2.0 issuance arrives with Phase 6 platform auth.
+Agent-authenticated access is never identical to user-authenticated access.
+An agent may create a PENDING link, but the public approval endpoint requires
+a verified customer session matching the link's customer ID. The low-level
+code helper remains for trusted in-process integrations; HTTP agents never
+receive an approval code and cannot assert merchant approval. After a valid
+customer approval, the link can support authenticated customer flows.
 """
 
 from __future__ import annotations
@@ -89,11 +89,13 @@ class IdentityLinkService:
         link_id: str,
         merchant_id: str,
         *,
-        link_code: str | None = None,
-        merchant_approved: bool = False,
+        link_code: str,
     ) -> IdentityLink:
-        """Approve a PENDING link: either the customer proof (link code via
-        the agent channel) or explicit merchant approval."""
+        """Approve using a proof code supplied through a trusted channel.
+
+        Public HTTP routes do not expose this method: buyer approval uses a
+        verified auth subject and the agent API never receives the code.
+        """
         link = self._links.get(link_id, merchant_id)
         if link is None:
             raise IdentityNotFoundError(f"Unknown identity link: {link_id}")
@@ -104,17 +106,11 @@ class IdentityLinkService:
                 link.model_copy(update={"status": IdentityLinkStatus.EXPIRED})
             )
             raise IdentityError("link code has expired")
-        if merchant_approved:
-            approved = True
-        elif link_code is not None:
-            approved = secrets.compare_digest(_hash_code(link_code), link.link_code_hash)
-        else:
-            approved = False
-        if not approved:
-            raise IdentityError("link approval requires the link code or merchant approval")
-        return self._approve(link, merchant_id)
+        if not secrets.compare_digest(_hash_code(link_code), link.link_code_hash):
+            raise IdentityError("link approval code is invalid")
+        return self._approve(link)
 
-    def _approve(self, link: IdentityLink, merchant_id: str) -> IdentityLink:
+    def _approve(self, link: IdentityLink) -> IdentityLink:
         if link.status is not IdentityLinkStatus.PENDING:
             raise IdentityError(f"link is {link.status.value}")
         if utc_now() >= link.expires_at:
@@ -144,7 +140,7 @@ class IdentityLinkService:
             raise IdentityNotFoundError(f"Unknown identity link: {link_id}")
         if link.status is IdentityLinkStatus.LINKED:
             return link
-        return self._approve(link, merchant_id)
+        return self._approve(link)
 
     def revoke(self, link_id: str, merchant_id: str) -> IdentityLink:
         link = self._links.get(link_id, merchant_id)
