@@ -124,6 +124,13 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Status:** Implemented in draft PR #38, stacked on #14. Dashboard routes are already force-dynamic; public routes retain their existing rendering mode. Structural regressions guard nonce validation, nonce-only dashboard script policy, request/response propagation, and refreshed-cookie forwarding. Exact-head Actions run [46040337163](https://github.com/mahirmlk/sellable/actions/runs/46040337163) passed Python 3.11/3.12 tests/evals, frontend typecheck/lint/build, and Cloudflare checks; Vercel preview passed.
 - **Acceptance:** Review #38 and verify dashboard pages load without CSP violations in isolated staging; retain nonce-only script execution for every dashboard response.
 
+### [P1-018] Prevent agents from self-approving customer identity links
+- **Location:** `services/commerce/sellable/main.py` identity-link routes; `services/commerce/sellable/protocols/identity.py`; PR #41.
+- **Finding:** Agent link creation returned the one-time approval code to the same agent, and the agent approval route accepted a caller-supplied `merchant_approved=true` flag. That allowed an agent to promote an unverified customer ID to a linked identity.
+- **Action:** Never return approval proof to agent callers; bind links to the authenticated agent key; reject agent-side approval and require a verified Supabase subject matching the stored customer ID.
+- **Status:** Implemented in draft PR #41, stacked on #22. Regression covers code withholding, agent self-approval denial, wrong-customer rejection, customer approval, and retry. Exact-head run [46046879842](https://github.com/mahirmlk/sellable/actions/runs/46046879842) passed Python 3.11/3.12, frontend, Cloudflare, and Vercel checks.
+- **Acceptance:** No agent HTTP route can approve a link or obtain its approval proof; only the matching authenticated customer can link an identity. Independent review remains required.
+
 ## P2 — Medium (before declaring the full sandbox goal complete)
 
 ### [P1-005] Fail closed on delegation frequency checks
