@@ -25,8 +25,15 @@ const SIGN_UP = "/sign-up";
 // merchants and demo visitors are bounced consistently.
 const AUTH_PAGES = new Set([SIGN_IN, SIGN_UP, "/login", "/signup"]);
 
-export async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
+export async function updateSession(
+  request: NextRequest,
+  forwardedHeaders?: Headers
+) {
+  const nextResponse = () =>
+    forwardedHeaders
+      ? NextResponse.next({ request: { headers: forwardedHeaders } })
+      : NextResponse.next({ request });
+  let supabaseResponse = nextResponse();
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -58,7 +65,13 @@ export async function updateSession(request: NextRequest) {
       },
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-        supabaseResponse = NextResponse.next({ request });
+        // Keep refreshed auth cookies in the forwarded request without
+        // dropping the nonce/CSP headers that Proxy added for this render.
+        forwardedHeaders?.set(
+          "cookie",
+          request.headers.get("cookie") ?? ""
+        );
+        supabaseResponse = nextResponse();
         cookiesToSet.forEach(({ name, value, options }) =>
           supabaseResponse.cookies.set(name, value, options)
         );
