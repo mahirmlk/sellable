@@ -761,20 +761,31 @@ class CommerceCore:
             return None
 
     def _delegation_usage(self, delegation_id: str) -> int:
-        """Completed-use count for frequency limits: ledgered order
-        creations carrying this delegation id (bounded scan). Resolution
-        checks (gates, quotes) do not consume frequency."""
-        try:
-            return sum(
-                1
-                for record in self.ledger.all_events(
-                    limit=500, merchant_id=self.merchant_scope
-                )
-                if record.action == "order.created"
-                and (record.inputs_json or {}).get("delegation_id") == delegation_id
+        """Count every completed use from the durable merchant ledger.
+
+        Resolution checks (gates, quotes) do not consume frequency. Database
+        errors propagate so AuthorizationService can deny when the configured
+        frequency limit cannot be verified.
+        """
+        count = 0
+        cursor = 0
+        page_size = 500
+        while True:
+            records = self.ledger.events_after(
+                cursor, limit=page_size, merchant_id=self.merchant_scope
             )
-        except Exception:  # noqa: BLE001 — usage is advisory
-            return 0
+            for record in records:
+                if (
+                    record.action == "order.created"
+                    and (record.inputs_json or {}).get("delegation_id") == delegation_id
+                ):
+                    count += 1
+            if len(records) < page_size:
+                return count
+            next_cursor = records[-1].sequence
+            if next_cursor <= cursor:
+                raise RuntimeError("Delegation usage scan did not advance")
+            cursor = next_cursor
 
     def _line_categories(self, lines) -> list[str]:
         """Catalog categories for delegation category-scope checks."""
