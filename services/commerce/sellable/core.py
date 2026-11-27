@@ -1967,6 +1967,8 @@ class CommerceCore:
             raise ValueError("Authenticated buyer approval is required")
         with self._order_lock:
             order = self.get_order(order_id)
+            if self.order_customer_id(order_id) != approved_by_user_id:
+                raise ValueError("Authenticated buyer identity does not match this order")
             if order.status is not OrderStatus.AWAITING_CONSENT:
                 raise ValueError("Consent can only be issued for an order awaiting consent")
             if order.requires_approval:
