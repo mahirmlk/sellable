@@ -5090,6 +5090,9 @@ def console_consent_request(
     order_id: str,
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
+    # A merchant owner is the only authenticated human principal in the
+    # sandbox. Agent requests only queue review and never grant consent.
+    require_owner(session)
     core = merchant_core(session)
     try:
         consent = core.issue_consent(order_id)
