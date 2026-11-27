@@ -92,7 +92,7 @@ The highest risk is treating the sandbox as production-proven before staging ver
 - **Location:** PR #40 buyer consent routes and buyer-mission continuation; isolated staging flow.
 - **Finding:** Merchant-session authentication alone does not prove buyer authorization. The verified Supabase subject must match the buyer ID persisted on the order's linked checkout or quote. Orders missing that identity cannot accept user-facing consent.
 - **Action:** Require the verified buyer principal at public consent boundaries; keep agent consent request-only and merchant approval separate. Add regressions for a mismatched user, same-buyer retry, and missing customer identity.
-- **Status:** Product decision resolved as buyer/payer only. Implementation is in draft PR #40, stacked on PR #22. CI passes on the latest head. Real Razorpay Test Mode acceptance remains blocked until isolated staging is provisioned.
+- **Status:** Product decision resolved as buyer/payer only. API implementation is in draft PR #40, stacked on PR #22; the staging runbook update is in draft PR #42, stacked on #18. Exact-head CI passes for #40 and Vercel preview passes for #42. Real Razorpay Test Mode acceptance remains blocked until isolated staging is provisioned.
 - **Acceptance:** Only the authenticated user matching the persisted customer ID can issue or retry consent for that order; agent and merchant approval cannot grant it. Consent binds the exact order, amount, payee, purpose, and expiry.
 
 
