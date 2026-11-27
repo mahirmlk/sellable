@@ -525,11 +525,11 @@ class PaymentService:
 
         failure_reason_code: str | None = None
         if event_name in ("payment.captured", "payment_link.paid"):
-            try:
-                raw_amount = payment.get("amount")
-                captured_amount = None if raw_amount is None else int(raw_amount)
-            except (TypeError, ValueError):
-                captured_amount = None
+            raw_amount = payment.get("amount")
+            # Razorpay amounts are integer currency subunits. Never truncate a
+            # fractional value or coerce a string/bool into a valid capture
+            # amount: that could settle the wrong amount against the order.
+            captured_amount = raw_amount if type(raw_amount) is int else None
             if (
                 provider_payment_id is None
                 or captured_amount is None

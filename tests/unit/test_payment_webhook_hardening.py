@@ -416,6 +416,26 @@ def test_captured_without_amount_does_not_settle(
     assert "webhook.amount_mismatch" in ledger_actions(commerce_core, order.trace_id)
 
 
+@pytest.mark.parametrize("amount", [ORDER_TOTAL + 0.75, str(ORDER_TOTAL), True])
+def test_captured_non_integer_amount_does_not_settle(
+    commerce_core: CommerceCore, amount
+) -> None:
+    order, payments = start_paid_flow(
+        commerce_core, "trc_h_nonint_amount", "idem_hardening_nonint_amount"
+    )
+    payload = link_paid(
+        order.order_id, payment_id="pay_nonint_amount_01", amount=ORDER_TOTAL
+    )
+    payload["payload"]["payment"]["entity"]["amount"] = amount
+    body, signature = signed(payload)
+
+    result = payments.handle_webhook(body, signature)
+
+    assert result.status is PaymentStatus.PAYMENT_PENDING
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
+    assert "webhook.amount_mismatch" in ledger_actions(commerce_core, order.trace_id)
+
+
 # ---------------------------------------------------------------------------
 # H1: pre-existing live link is reused, never re-minted
 # ---------------------------------------------------------------------------
