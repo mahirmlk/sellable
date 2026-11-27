@@ -1927,37 +1927,109 @@ class CommerceCore:
         )
         return updated
 
-    def issue_consent(self, order_id: str, *, lifetime_minutes: int = 10) -> Consent:
+    def order_customer_id(self, order_id: str) -> str | None:
+        """Return the persisted customer identity attached to an order.
+
+        Quotes and checkouts are the authoritative transaction parents. A
+        caller-supplied customer ID is only an attribution until the human
+        authenticates as that same principal at the consent boundary.
+        """
         order = self.get_order(order_id)
-        if order.status is not OrderStatus.AWAITING_CONSENT:
-            raise ValueError("Consent can only be issued for an order awaiting consent")
-        if order.requires_approval:
-            raise ValueError("Order requires merchant approval before consent can be issued")
-        active = self.consent_service.active_for_order(order_id)
-        if active is not None:
-            raise ValueError("A consent is already active for this order")
-        consent = self.consent_service.issue(
-            Consent(
-                merchant_id=self.merchant_scope,
-                order_id=order.order_id,
-                amount_paise=order.amount_paise,
-                payee_id=order.merchant_id,
-                purpose="single_transaction",
-                expires_at=utc_now() + timedelta(minutes=lifetime_minutes),
+        checkout = self.checkout_repo.for_order(order.order_id, self.merchant_scope)
+        quote = self.quote_repo.get(order.quote_id, self.merchant_scope)
+        identities = {
+            identity
+            for identity in (
+                getattr(checkout, "customer_id", None),
+                getattr(quote, "customer_id", None),
             )
-        )
-        # Persist consent
-        self.consent_repo.save(consent)
-        self._record(
-            trace_id=order.trace_id,
-            actor=LedgerActor.CONSENT_SERVICE,
-            action="consent.issued",
-            inputs={"order_id": order.order_id, "amount_paise": order.amount_paise},
-            output={"consent_id": consent.consent_id, "expires_at": consent.expires_at.isoformat()},
-            reasoning_summary="Issued single-use consent bound to this order, amount, and merchant.",
-            policy_refs=["POLICY.transaction_bound_consent"],
-        )
-        return consent
+            if identity
+        }
+        if len(identities) > 1:
+            raise ValueError("Order customer identity is inconsistent")
+        return next(iter(identities), None)
+
+    def issue_consent(
+        self,
+        order_id: str,
+        *,
+        approved_by_user_id: str | None = None,
+        lifetime_minutes: int = 10,
+    ) -> Consent:
+        """Issue consent; public HTTP callers must supply the authenticated buyer.
+
+        The public boundary compares the verified Supabase subject with the
+        order's persisted customer ID and passes it here. A missing principal
+        is reserved for trusted in-process sandbox/maintenance workflows; all
+        user-facing consent endpoints reject missing or mismatched principals.
+        Same-principal retries return the existing active consent.
+        """
+        if approved_by_user_id is not None and not approved_by_user_id:
+            raise ValueError("Authenticated buyer approval is required")
+        with self._order_lock:
+            order = self.get_order(order_id)
+            if (
+                approved_by_user_id is not None
+                and self.order_customer_id(order_id) != approved_by_user_id
+            ):
+                raise ValueError("Authenticated buyer identity does not match this order")
+            if order.status is not OrderStatus.AWAITING_CONSENT:
+                raise ValueError("Consent can only be issued for an order awaiting consent")
+            if order.requires_approval:
+                raise ValueError("Order requires merchant approval before consent can be issued")
+
+            active = self.consent_service.active_for_order(order_id)
+            if active is not None:
+                events = self.ledger.for_trace(
+                    order.trace_id, merchant_id=order.merchant_id
+                )
+                same_buyer_retry = any(
+                    event.action == "consent.issued"
+                    and event.customer_id == approved_by_user_id
+                    and (event.output_json or {}).get("consent_id") == active.consent_id
+                    for event in events
+                )
+                if same_buyer_retry:
+                    return active
+                raise ValueError("A consent is already active for this order")
+
+            consent = self.consent_service.issue(
+                Consent(
+                    merchant_id=self.merchant_scope,
+                    order_id=order.order_id,
+                    amount_paise=order.amount_paise,
+                    payee_id=order.merchant_id,
+                    purpose="single_transaction",
+                    expires_at=utc_now() + timedelta(minutes=lifetime_minutes),
+                )
+            )
+            self.consent_repo.save(consent)
+            self._record(
+                trace_id=order.trace_id,
+                actor=(
+                    LedgerActor.HUMAN
+                    if approved_by_user_id is not None
+                    else LedgerActor.CONSENT_SERVICE
+                ),
+                action="consent.issued",
+                inputs={
+                    "order_id": order.order_id,
+                    "amount_paise": order.amount_paise,
+                    "approver_user_id": approved_by_user_id,
+                },
+                output={
+                    "consent_id": consent.consent_id,
+                    "expires_at": consent.expires_at.isoformat(),
+                },
+                reasoning_summary=(
+                    "Authenticated buyer approved this exact order, amount, and merchant."
+                    if approved_by_user_id is not None
+                    else "Trusted in-process sandbox workflow issued consent for this order."
+                ),
+                policy_refs=["POLICY.transaction_bound_consent"],
+                customer_id=approved_by_user_id,
+            )
+            return consent
 
     def consume_consent(self, consent_id: str, *, order_id: str) -> Order:
         # The order lock makes consume + transition atomic against concurrent

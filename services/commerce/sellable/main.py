@@ -475,6 +475,36 @@ def merchant_core(session: MerchantSession) -> CommerceCore:
     return registry.get(session.merchant_id)
 
 
+def _issue_buyer_consent(
+    core: CommerceCore, order_id: str, user: AuthenticatedUser
+) -> dict[str, object]:
+    """Issue or safely replay consent only for the persisted customer principal."""
+    try:
+        order = core.get_order(order_id)
+        customer_id = core.order_customer_id(order_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Order not found") from None
+    if not user.auth_user_id or customer_id != user.auth_user_id:
+        # Keep foreign and mismatched order IDs indistinguishable.
+        raise HTTPException(status_code=404, detail="Order not found")
+    try:
+        consent = core.issue_consent(
+            order_id, approved_by_user_id=user.auth_user_id
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {
+        "consent_id": consent.consent_id,
+        "order_id": consent.order_id,
+        "amount_paise": consent.amount_paise,
+        "payee_id": consent.payee_id,
+        "purpose": consent.purpose,
+        "expires_at": consent.expires_at.isoformat(),
+        "single_use": consent.single_use,
+        "status": consent.status,
+    }
+
+
 def require_owner(session: MerchantSession) -> None:
     """Owner-only actions: policy changes and money-out (refunds).
 
@@ -4149,13 +4179,9 @@ def console_approve_order(
     commerce: CommerceCore = Depends(get_commerce),
     session: MerchantSession = Depends(get_merchant_session),
 ) -> dict:
-    # Trust model (P3-13, intentional): member-level approval. Approvals are the
-    # day-to-day operational queue; owner-only gates stay on policy changes and
-    # money-out (refunds via require_owner). Capture still needs a real payer.
+    # Merchant approval is a business-policy gate only. Payment consent
+    # remains a separate action by the authenticated customer/payer.
     core = merchant_core(session)
-    # Validate issuability BEFORE the approval side effect: approve_order
-    # writes DB + ledger, so a subsequent issue_consent failure must not
-    # leave an "approved" order behind a 400 response.
     try:
         order = core.get_order(order_id)
     except ValueError as error:
@@ -4169,24 +4195,14 @@ def console_approve_order(
         raise HTTPException(
             status_code=400, detail="Order does not require merchant approval"
         )
-    if core.consent_service.active_for_order(order.order_id) is not None:
-        raise HTTPException(
-            status_code=400, detail="A consent is already active for this order"
-        )
     try:
         core.approve_order(order_id)
-        consent = core.issue_consent(order_id)
-        # The mission row is a pointer, not a second state machine: this
-        # only refreshes its consent link / last-known state so the AI
-        # Buyer mission is resumable as payment-ready after a restart.
-        # Money state stays on the order; the continuation endpoint
-        # re-derives everything from it.
+        # Merchant approval never grants the buyer's payment consent.
         mission_id: str | None = None
         try:
             buyer_mission_service.note_approval(
                 merchant_id=session.merchant_id,
                 order_id=order_id,
-                consent_id=consent.consent_id,
             )
             mission_row = buyer_mission_service.find_for_order(
                 session.merchant_id, order_id
@@ -4197,7 +4213,7 @@ def console_approve_order(
         return {
             "status": "approved",
             "order_id": order_id,
-            "consent_id": consent.consent_id,
+            "consent_required": True,
             # Only AI-buyer missions carry a mission_id — the console uses
             # it to resume the A2A continuation (never the human chat flow).
             "mission_id": mission_id,
@@ -4810,6 +4826,7 @@ def console_buyer_mission_continue(
     payments: PaymentService = Depends(get_payment_service),
     commerce: CommerceCore = Depends(get_commerce),
     session: MerchantSession = Depends(get_merchant_session),
+    user: AuthenticatedUser = Depends(get_authenticated_user),
 ) -> ConsoleBuyerMission:
     core = merchant_core(session)
     try:
@@ -4818,6 +4835,7 @@ def console_buyer_mission_continue(
             payments=payments,
             mission_id=mission_id,
             merchant_id=session.merchant_id,
+            approved_by_user_id=user.auth_user_id,
             buyer_agent=merchant_buyer_agent(core),
         )
     except UnknownBuyerMissionError as error:
@@ -5077,28 +5095,35 @@ def console_order_create(
     }
 
 
+@app.post("/buyer/orders/{order_id}/consent", tags=["buyer-consent"])
+@limiter.limit("30/minute")
+def buyer_consent_request(
+    request: Request,
+    order_id: str,
+    user: AuthenticatedUser = Depends(get_authenticated_user),
+) -> dict:
+    # Resolve only the order's merchant scope. No order details are returned
+    # unless the verified Supabase subject matches the persisted customer.
+    order = OrderRepository().get(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    try:
+        core = registry.get(order.merchant_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Order not found") from None
+    return _issue_buyer_consent(core, order_id, user)
+
+
 @app.post("/console/orders/{order_id}/consent", tags=["console"])
 @limiter.limit("30/minute")
 def console_consent_request(
     request: Request,
     order_id: str,
     session: MerchantSession = Depends(get_merchant_session),
+    user: AuthenticatedUser = Depends(get_authenticated_user),
 ) -> dict:
     core = merchant_core(session)
-    try:
-        consent = core.issue_consent(order_id)
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    return {
-        "consent_id": consent.consent_id,
-        "order_id": consent.order_id,
-        "amount_paise": consent.amount_paise,
-        "payee_id": consent.payee_id,
-        "purpose": consent.purpose,
-        "expires_at": consent.expires_at.isoformat(),
-        "single_use": consent.single_use,
-        "status": consent.status,
-    }
+    return _issue_buyer_consent(core, order_id, user)
 
 
 @app.post(

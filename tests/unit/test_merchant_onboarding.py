@@ -239,10 +239,11 @@ def test_onboarding_creates_real_merchant_and_scopes_data(isolated_env):
         order = o.json()
         assert order["amount_paise"] == 100000
 
+        # This legacy merchant-side checkout has no persisted buyer identity.
+        # A merchant owner cannot approve payment consent on the buyer's behalf.
         c = client.post(f"/console/orders/{order['order_id']}/consent", headers=DEMO_H)
-        assert c.status_code == 200, c.text
-        assert c.json()["amount_paise"] == 100000
-        assert c.json()["payee_id"] == store["merchant_id"]
+        assert c.status_code == 404, c.text
+        assert c.json()["detail"] == "Order not found"
 
         # Demo store catalog is NOT visible to this merchant
         demo_catalog = CatalogRepository(engine=engine).list("mrc_demo_store")

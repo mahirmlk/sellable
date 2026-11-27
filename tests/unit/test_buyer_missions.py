@@ -286,7 +286,7 @@ def test_continue_after_approval_starts_payment_exactly_once(
     core.approve_order(order_id)
     consent = core.issue_consent(order_id)
     mission_service.note_approval(
-        merchant_id=core.merchant_scope, order_id=order_id, consent_id=consent.consent_id
+        merchant_id=core.merchant_scope, order_id=order_id
     )
 
     first = mission_service.continue_mission(

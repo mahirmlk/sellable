@@ -97,13 +97,12 @@ class BuyerMissionService:
         return record.mission_id
 
     def note_approval(
-        self, *, merchant_id: str, order_id: str, consent_id: str | None
+        self, *, merchant_id: str, order_id: str
     ) -> None:
-        """Best-effort pointer refresh after a merchant approval.
+        """Refresh the mission pointer after merchant-side order approval.
 
-        The approval itself lives on the order (requires_approval/approved_at)
-        and the ledger; this only keeps the mission row's pointer current so
-        a restart-visible row reflects CONSENT_READY without a read.
+        Merchant approval is separate from buyer consent. The mission remains
+        payment-blocked until the authenticated buyer grants single-use consent.
         """
         record = self._repo.for_order(merchant_id, order_id)
         if record is None:
@@ -111,8 +110,8 @@ class BuyerMissionService:
         self._repo.touch(
             record.mission_id,
             merchant_id,
-            current_state=BuyerMissionState.CONSENT_READY.value,
-            consent_id=consent_id,
+            current_state=BuyerMissionState.APPROVED.value,
+            consent_id=None,
         )
 
     def find_for_order(self, merchant_id: str, order_id: str):
@@ -373,6 +372,7 @@ class BuyerMissionService:
         payments: PaymentService,
         mission_id: str,
         merchant_id: str,
+        approved_by_user_id: str | None = None,
         buyer_agent=None,
     ) -> ConsoleBuyerMission:
         """Resume the SAME order's lifecycle from its true current state.
@@ -389,6 +389,11 @@ class BuyerMissionService:
                 "This buyer mission was denied by policy — there is no order to continue"
             )
         order = self._order_for(core, record)
+        if (
+            approved_by_user_id is not None
+            and core.order_customer_id(order.order_id) != approved_by_user_id
+        ):
+            raise ValueError("Authenticated buyer identity does not match this order")
         verified = self._payment_verified(core, order)
         state, required_action = self._derive(core, order, verified=verified)
 
@@ -399,7 +404,7 @@ class BuyerMissionService:
 
         if state in (BuyerMissionState.CONSENT_READY, BuyerMissionState.APPROVED):
             active = core.consent_service.active_for_order(order.order_id)
-            consent = active if active is not None else core.issue_consent(order.order_id)
+            consent = active if active is not None else core.issue_consent(order.order_id, approved_by_user_id=approved_by_user_id)
             consent_id = consent.consent_id
             # The existing payment service re-checks consent, consumes it
             # exactly once, transitions the order, and reuses any live

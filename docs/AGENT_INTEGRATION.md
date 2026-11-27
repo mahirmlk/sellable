@@ -96,8 +96,9 @@ Money moves only on verified webhooks (signed agent auth on all three):
 
 ```http
 POST /agent/consents.request   # {order_id} → 202 request; never returns/creates consent
-# A separately authenticated human confirmation issues consent after reviewing the exact order.
-POST /orders/{id}/payment      # {consent_id} from human confirmation → provider attempt (PAYMENT_PENDING)
+POST /buyer/orders/{id}/consent # verified Supabase user must match the persisted checkout/quote customer_id
+# Merchant owners have no consent authority unless they are the recorded buyer.
+POST /orders/{id}/payment      # {consent_id} from buyer confirmation → provider attempt (PAYMENT_PENDING)
 # provider webhook, HMAC-verified → reconciled → PAID (Razorpay + Stripe
 # share the orchestrated boundary: idempotent delivery claims, exact amount
 # match, strict transitions; duplicates collapse to one settlement)
