@@ -290,6 +290,15 @@ def test_returns_refunds_cases_identity_http(
         link_id = link.json()["link_id"]
         assert "link_code" not in link.json()
         assert link.json()["status"] == "PENDING"
+        spoofed_agent_link = client.post(
+            "/commerce/identity/link",
+            json={
+                "customer_id": "other_customer",
+                "agent_id": f"{link.json()['agent_id']}-spoof",
+            },
+            headers=H,
+        )
+        assert spoofed_agent_link.status_code == 403, spoofed_agent_link.text
 
         me_before = client.get(
             "/commerce/identity/me", params={"link_id": link_id}, headers=H
