@@ -1568,6 +1568,7 @@ class CommerceCore:
                     merchant_id=self.merchant_scope,
                     amount_paise=checkout.grand_total_paise,
                     categories=self._line_categories(checkout.lines),
+                    agent_id=intent.buyer_agent_id,
                 )
                 self._record(
                     trace_id=trace_id,

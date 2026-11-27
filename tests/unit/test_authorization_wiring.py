@@ -346,6 +346,45 @@ def test_core_order_held_by_require_human_delegation(
     assert order.requires_approval is True
 
 
+def test_checkout_order_rejects_delegation_for_another_agent(
+    commerce_core: CommerceCore,
+) -> None:
+    grant = _grant(commerce_core.merchant_scope, subject_agent_id="agent_1")
+    commerce_core.delegation_repo.save(grant)
+
+    trace_id = _trace()
+    cart = commerce_core.create_cart(trace_id=trace_id)
+    cart = commerce_core.cart_add_item(
+        cart.cart_id,
+        "AUDIO-CASE-01",
+        1,
+        expected_version=1,
+        trace_id=trace_id,
+    )
+    cart = commerce_core.cart_start_checkout(
+        cart.cart_id, expected_version=2, trace_id=trace_id
+    )
+    checkout = commerce_core.create_checkout(cart.cart_id, trace_id=trace_id)
+    commerce_core.checkout_validate(checkout.checkout_id, trace_id=trace_id)
+    commerce_core.checkout_price(checkout.checkout_id, trace_id=trace_id)
+    authorized = commerce_core.checkout_authorize(
+        checkout.checkout_id, trace_id=trace_id
+    )
+
+    key = f"idem_agent_mismatch_{uuid4().hex}"
+    with pytest.raises(ValueError, match="AGENT_MISMATCH"):
+        commerce_core.create_order_from_checkout(
+            authorized.checkout_id,
+            intent=_intent(),
+            idempotency_key=key,
+            delegation_id=grant.delegation_id,
+            trace_id=trace_id,
+        )
+    assert commerce_core.order_repo.for_idempotency_key(
+        commerce_core.merchant_scope, key
+    ) is None
+
+
 # --- Outbox (§27) --------------------------------------------------------------
 
 
