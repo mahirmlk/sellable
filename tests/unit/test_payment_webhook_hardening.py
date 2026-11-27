@@ -14,8 +14,9 @@ import json
 from datetime import timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 import requests
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 
 from sellable.config import Settings
@@ -871,6 +872,229 @@ def test_pending_partial_reserves_balance_but_only_processed_refunds_close_order
     )
     assert retried_first["refund_status"] == "processed"
     assert retried_first["provider_refund_id"] == first["provider_refund_id"]
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
+
+
+def test_refund_webhook_reconciles_and_deduplicates_status_events(
+    core_and_engine, monkeypatch
+) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_ref_webhook", "idem_hardening_rf_webhook")
+    refunds, client = refund_service_for(core, engine)
+    client.payment.statuses = ["pending", "processed"]
+    first = refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="first partial",
+        amount_paise=50_000,
+        idempotency_key="idem_hardening_webhook_500",
+    )
+    stale_provider_result = RefundRepository(engine).for_idempotency_key(
+        order.merchant_id, "idem_hardening_webhook_500"
+    )
+    assert stale_provider_result is not None
+    assert stale_provider_result.status.name == "PENDING"
+    refunds.initiate_refund(
+        order_id=order.order_id,
+        reason="second partial",
+        amount_paise=19_900,
+        idempotency_key="idem_hardening_webhook_199",
+    )
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+    from sellable import main as main_module
+    from sellable.main import app, get_payment_service, get_refund_service
+
+    monkeypatch.setattr(main_module.registry, "get", lambda _merchant_id: core)
+    app.dependency_overrides[get_payment_service] = lambda: None
+    app.dependency_overrides[get_refund_service] = lambda: refunds
+    payload = {
+        "event": "refund.processed",
+        "payload": {
+            "refund": {
+                "entity": {
+                    "id": first["provider_refund_id"],
+                    "payment_id": first["provider_payment_id"],
+                    "amount": 50_000,
+                    "currency": "INR",
+                    "status": "processed",
+                    "notes": {"local_order_id": order.order_id},
+                }
+            }
+        },
+    }
+    body, signature = signed(payload)
+    headers = {
+        "X-Razorpay-Signature": signature,
+        "X-Razorpay-Event-Id": "evt_refund_processed_001",
+    }
+    try:
+        with TestClient(app) as http:
+            rejected = http.post(
+                "/webhooks/razorpay",
+                content=body,
+                headers={**headers, "X-Razorpay-Signature": "invalid"},
+            )
+            assert rejected.status_code == 401
+
+            # A valid signature cannot make fractional paise amounts safe
+            # to acknowledge; int coercion would incorrectly truncate 50000.75.
+            fractional_payload = {
+                **payload,
+                "payload": {
+                    "refund": {
+                        "entity": {
+                            **payload["payload"]["refund"]["entity"],
+                            "amount": 50_000.75,
+                        }
+                    }
+                },
+            }
+            fractional_body, fractional_signature = signed(fractional_payload)
+            fractional = http.post(
+                "/webhooks/razorpay",
+                content=fractional_body,
+                headers={
+                    "X-Razorpay-Signature": fractional_signature,
+                    "X-Razorpay-Event-Id": "evt_refund_fractional_001",
+                },
+            )
+            assert fractional.status_code == 400, fractional.text
+            assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+            # A valid signature cannot make inconsistent refund details safe
+            # to acknowledge: keep the provider retrying for reconciliation.
+            mismatched_payload = {
+                **payload,
+                "payload": {
+                    "refund": {
+                        "entity": {
+                            **payload["payload"]["refund"]["entity"],
+                            "amount": 50_001,
+                        }
+                    }
+                },
+            }
+            mismatched_body, mismatched_signature = signed(mismatched_payload)
+            mismatch = http.post(
+                "/webhooks/razorpay",
+                content=mismatched_body,
+                headers={
+                    "X-Razorpay-Signature": mismatched_signature,
+                    "X-Razorpay-Event-Id": "evt_refund_mismatch_001",
+                },
+            )
+            assert mismatch.status_code == 409, mismatch.text
+            assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+            settled = http.post("/webhooks/razorpay", content=body, headers=headers)
+            assert settled.status_code == 200, settled.text
+            assert settled.json()["status"] == "processed"
+            assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
+
+            # A late pending response from the create call cannot overwrite
+            # the processed webhook state.
+            RefundRepository(engine).save(stale_provider_result)
+            reconciled = RefundRepository(engine).for_idempotency_key(
+                order.merchant_id, "idem_hardening_webhook_500"
+            )
+            assert reconciled is not None
+            assert reconciled.status.name == "PROCESSED"
+            actions_before_replay = ledger_actions(core, order.trace_id)
+
+            with engine.connect() as connection:
+                delivery_count_before = connection.execute(
+                    text("SELECT COUNT(*) FROM webhook_deliveries WHERE delivery_key LIKE 'refund:%'")
+                ).scalar_one()
+            replay = http.post(
+                "/webhooks/razorpay",
+                content=body,
+                headers={**headers, "X-Razorpay-Event-Id": "attacker-chosen-replay-id"},
+            )
+            assert replay.status_code == 200, replay.text
+            assert replay.json()["status"] == "processed"
+            with engine.connect() as connection:
+                delivery_count_after = connection.execute(
+                    text("SELECT COUNT(*) FROM webhook_deliveries WHERE delivery_key LIKE 'refund:%'")
+                ).scalar_one()
+            assert delivery_count_after == delivery_count_before
+
+            older = {
+                **payload,
+                "event": "refund.created",
+                "payload": {
+                    "refund": {
+                        "entity": {
+                            **payload["payload"]["refund"]["entity"],
+                            "status": "pending",
+                        }
+                    }
+                },
+            }
+            older_body, older_signature = signed(older)
+            out_of_order = http.post(
+                "/webhooks/razorpay",
+                content=older_body,
+                headers={
+                    "X-Razorpay-Signature": older_signature,
+                    "X-Razorpay-Event-Id": "evt_refund_created_older_001",
+                },
+            )
+            assert out_of_order.status_code == 200, out_of_order.text
+    finally:
+        app.dependency_overrides.clear()
+
+    assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
+    actions_after_replay = ledger_actions(core, order.trace_id)
+    assert actions_after_replay.count("refund.settled") == 1
+    assert actions_after_replay.count("refund.partial_settled") == 1
+    assert len(actions_after_replay) == len(actions_before_replay)
+
+
+def test_refund_webhook_correlates_ambiguous_create_response(core_and_engine) -> None:
+    core, engine = core_and_engine
+    order = settle_paid(core, "trc_h_ref_webhook_lost", "idem_hardening_rf_webhook_lost")
+    refunds, client = refund_service_for(core, engine)
+    client.payment.fail_retryably = True
+    key = "idem_hardening_webhook_lost_01"
+
+    with pytest.raises(RazorpayRequestError):
+        refunds.initiate_refund(
+            order_id=order.order_id,
+            reason="ambiguous response",
+            idempotency_key=key,
+        )
+    pending = RefundRepository(engine).for_idempotency_key(order.merchant_id, key)
+    assert pending is not None
+    assert pending.provider_refund_id is None
+    assert core.get_order(order.order_id).status is OrderStatus.PAID
+
+    payload = {
+        "event": "refund.processed",
+        "payload": {
+            "refund": {
+                "entity": {
+                    "id": "rfnd_webhook_after_timeout",
+                    "payment_id": pending.provider_payment_id,
+                    "amount": ORDER_TOTAL,
+                    "currency": "INR",
+                    "status": "processed",
+                    "notes": {"local_order_id": order.order_id},
+                }
+            }
+        },
+    }
+    body, signature = signed(payload)
+    result = refunds.handle_webhook(
+        body,
+        signature,
+        event_id="evt_refund_after_timeout_001",
+        core_for_merchant=lambda _merchant_id: core,
+    )
+
+    recovered = RefundRepository(engine).for_idempotency_key(order.merchant_id, key)
+    assert result["status"] == "processed"
+    assert recovered is not None
+    assert recovered.provider_refund_id == "rfnd_webhook_after_timeout"
     assert core.get_order(order.order_id).status is OrderStatus.REFUNDED
 
 

@@ -34,6 +34,7 @@ from sellable.ledger.database import (
     MerchantRecord,
     OrderRecord,
     RefundRecord,
+    WebhookDeliveryRecord,
     make_engine,
 )
 
@@ -403,12 +404,31 @@ class RefundRepository:
         )
 
     def save(self, refund: Refund) -> None:
+        priorities = {
+            RefundStatus.PENDING: 0,
+            RefundStatus.FAILED: 1,
+            RefundStatus.PROCESSED: 2,
+        }
         with Session(self._engine) as session:
-            existing = session.get(RefundRecord, refund.refund_id)
+            existing = session.scalar(
+                select(RefundRecord)
+                .where(RefundRecord.refund_id == refund.refund_id)
+                .with_for_update()
+            )
             if existing:
-                existing.provider_payment_id = refund.provider_payment_id
-                existing.provider_refund_id = refund.provider_refund_id
-                existing.status = refund.status.value
+                if (
+                    existing.provider_refund_id is not None
+                    and refund.provider_refund_id is not None
+                    and existing.provider_refund_id != refund.provider_refund_id
+                ):
+                    raise ValueError("Provider refund ID changed for an existing refund")
+                if refund.provider_payment_id is not None:
+                    existing.provider_payment_id = refund.provider_payment_id
+                if existing.provider_refund_id is None:
+                    existing.provider_refund_id = refund.provider_refund_id
+                current_status = RefundStatus(existing.status)
+                if priorities[refund.status] > priorities[current_status]:
+                    existing.status = refund.status.value
             else:
                 session.add(
                     RefundRecord(
@@ -453,6 +473,96 @@ class RefundRepository:
             if record is None or record.merchant_id != merchant_id:
                 return None
             return self._to_refund(record)
+
+    def for_provider_refund_id(self, provider_refund_id: str) -> Refund | None:
+        with Session(self._engine) as session:
+            record = session.scalars(
+                select(RefundRecord)
+                .where(RefundRecord.provider_refund_id == provider_refund_id)
+                .limit(1)
+            ).first()
+            return self._to_refund(record) if record else None
+
+    def match_ambiguous_provider_refund(
+        self,
+        *,
+        provider_payment_id: str,
+        order_id: str,
+        amount_paise: int,
+    ) -> Refund | None:
+        """Recover a timed-out create response only when one pending attempt matches."""
+        with Session(self._engine) as session:
+            query = (
+                select(RefundRecord)
+                .where(RefundRecord.order_id == order_id)
+                .where(RefundRecord.provider_payment_id == provider_payment_id)
+                .where(RefundRecord.amount_paise == amount_paise)
+                .where(RefundRecord.status == RefundStatus.PENDING.value)
+                .where(RefundRecord.provider_refund_id.is_(None))
+                .limit(2)
+            )
+            candidates = list(session.scalars(query).all())
+            return self._to_refund(candidates[0]) if len(candidates) == 1 else None
+
+    def reconcile_provider_status(
+        self,
+        *,
+        refund_id: str,
+        provider_refund_id: str,
+        status: RefundStatus,
+        delivery_key: str,
+    ) -> tuple[Refund | None, bool]:
+        """Atomically claim a signed provider event and advance refund state.
+
+        Event delivery and state change share one transaction. A repeat event
+        returns the current refund so processed settlement can be repaired if
+        a crash occurred after committing the refund state.
+        """
+        priorities = {
+            RefundStatus.PENDING.value: 0,
+            RefundStatus.FAILED.value: 1,
+            RefundStatus.PROCESSED.value: 2,
+        }
+        with Session(self._engine) as session:
+            session.add(
+                WebhookDeliveryRecord(
+                    delivery_key=delivery_key,
+                    received_at=datetime.now(timezone.utc),
+                )
+            )
+            try:
+                session.flush()
+            except IntegrityError:
+                session.rollback()
+                current = self.get_refund(refund_id)
+                return current, False
+
+            record = session.scalar(
+                select(RefundRecord)
+                .where(RefundRecord.refund_id == refund_id)
+                .with_for_update()
+            )
+            if record is None:
+                session.rollback()
+                return None, False
+            if (
+                record.provider_refund_id is not None
+                and record.provider_refund_id != provider_refund_id
+            ):
+                session.rollback()
+                raise ValueError("Provider refund ID does not match the stored refund")
+            record.provider_refund_id = provider_refund_id
+            current_status = RefundStatus(record.status)
+            changed = priorities[status.value] > priorities[current_status.value]
+            if changed:
+                record.status = status.value
+            session.commit()
+            return self._to_refund(record), changed
+
+    def get_refund(self, refund_id: str) -> Refund | None:
+        with Session(self._engine) as session:
+            record = session.get(RefundRecord, refund_id)
+            return self._to_refund(record) if record else None
 
 
 class NonceRepository:
