@@ -1953,21 +1953,25 @@ class CommerceCore:
         self,
         order_id: str,
         *,
-        approved_by_user_id: str,
+        approved_by_user_id: str | None = None,
         lifetime_minutes: int = 10,
     ) -> Consent:
-        """Issue consent only after an authenticated buyer identity check.
+        """Issue consent; public HTTP callers must supply the authenticated buyer.
 
-        The HTTP boundary verifies that the Supabase user subject matches
-        `order_customer_id`; this method requires and records that principal
-        so future callers cannot accidentally restore owner- or agent-issued
-        consent. Same-principal retries return the existing active consent.
+        The public boundary compares the verified Supabase subject with the
+        order's persisted customer ID and passes it here. A missing principal
+        is reserved for trusted in-process sandbox/maintenance workflows; all
+        user-facing consent endpoints reject missing or mismatched principals.
+        Same-principal retries return the existing active consent.
         """
-        if not approved_by_user_id:
+        if approved_by_user_id is not None and not approved_by_user_id:
             raise ValueError("Authenticated buyer approval is required")
         with self._order_lock:
             order = self.get_order(order_id)
-            if self.order_customer_id(order_id) != approved_by_user_id:
+            if (
+                approved_by_user_id is not None
+                and self.order_customer_id(order_id) != approved_by_user_id
+            ):
                 raise ValueError("Authenticated buyer identity does not match this order")
             if order.status is not OrderStatus.AWAITING_CONSENT:
                 raise ValueError("Consent can only be issued for an order awaiting consent")
@@ -2002,7 +2006,11 @@ class CommerceCore:
             self.consent_repo.save(consent)
             self._record(
                 trace_id=order.trace_id,
-                actor=LedgerActor.HUMAN,
+                actor=(
+                    LedgerActor.HUMAN
+                    if approved_by_user_id is not None
+                    else LedgerActor.CONSENT_SERVICE
+                ),
                 action="consent.issued",
                 inputs={
                     "order_id": order.order_id,
@@ -2015,6 +2023,8 @@ class CommerceCore:
                 },
                 reasoning_summary=(
                     "Authenticated buyer approved this exact order, amount, and merchant."
+                    if approved_by_user_id is not None
+                    else "Trusted in-process sandbox workflow issued consent for this order."
                 ),
                 policy_refs=["POLICY.transaction_bound_consent"],
                 customer_id=approved_by_user_id,

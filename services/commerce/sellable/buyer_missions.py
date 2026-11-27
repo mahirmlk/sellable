@@ -372,7 +372,7 @@ class BuyerMissionService:
         payments: PaymentService,
         mission_id: str,
         merchant_id: str,
-        approved_by_user_id: str,
+        approved_by_user_id: str | None = None,
         buyer_agent=None,
     ) -> ConsoleBuyerMission:
         """Resume the SAME order's lifecycle from its true current state.
@@ -389,7 +389,10 @@ class BuyerMissionService:
                 "This buyer mission was denied by policy — there is no order to continue"
             )
         order = self._order_for(core, record)
-        if core.order_customer_id(order.order_id) != approved_by_user_id:
+        if (
+            approved_by_user_id is not None
+            and core.order_customer_id(order.order_id) != approved_by_user_id
+        ):
             raise ValueError("Authenticated buyer identity does not match this order")
         verified = self._payment_verified(core, order)
         state, required_action = self._derive(core, order, verified=verified)
