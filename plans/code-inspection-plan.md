@@ -127,8 +127,8 @@ The highest risk is treating the sandbox as production-proven before staging ver
 ### [P1-018] Prevent agents from self-approving customer identity links
 - **Location:** `services/commerce/sellable/main.py` identity-link routes; `services/commerce/sellable/protocols/identity.py`; PR #41.
 - **Finding:** Agent link creation returned the one-time approval code to the same agent, and the agent approval route accepted a caller-supplied `merchant_approved=true` flag. That allowed an agent to promote an unverified customer ID to a linked identity.
-- **Action:** Never return approval proof to agent callers; bind links to the authenticated agent key; reject agent-side approval and require a verified Supabase subject matching the stored customer ID.
-- **Status:** Implemented in draft PR #41, stacked on #22. Regression covers code withholding, agent self-approval denial, wrong-customer rejection, customer approval, and retry. Exact-head run [46046879842](https://github.com/mahirmlk/sellable/actions/runs/46046879842) passed Python 3.11/3.12, frontend, Cloudflare, and Vercel checks.
+- **Action:** Require signed HMAC for link creation; never return approval proof to agent callers; bind links to the authenticated agent key; reject agent-side approval and require a verified Supabase subject matching the stored customer ID.
+- **Status:** Implemented in draft PR #41, stacked on #22. Regression covers production static-key rejection, code withholding, agent identity spoofing, agent self-approval denial, wrong-customer rejection, customer approval, and retry. Exact-head run [46049531388](https://github.com/mahirmlk/sellable/actions/runs/46049531388) passed Python 3.11/3.12, frontend, Cloudflare, and Vercel checks.
 - **Acceptance:** No agent HTTP route can approve a link or obtain its approval proof; only the matching authenticated customer can link an identity. Independent review remains required.
 
 ## P2 — Medium (before declaring the full sandbox goal complete)
