@@ -6,10 +6,6 @@ CONSOLE = ROOT / "apps" / "merchant-console"
 
 def test_dashboard_script_policy_uses_nonce_without_inline_scripts():
     policy = (CONSOLE / "lib" / "security" / "dashboard-csp.ts").read_text()
-    script_directive = next(
-        part.strip() for part in policy.split('"') if part.strip().startswith("script-src ")
-    ) if False else None
-
     # Keep the CSP builder explicit: dashboard scripts must use a fresh nonce,
     # and must never regain the unsafe-inline escape hatch.
     assert "'nonce-${nonce}'" in policy
