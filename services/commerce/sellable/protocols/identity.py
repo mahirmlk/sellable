@@ -112,6 +112,16 @@ class IdentityLinkService:
             approved = False
         if not approved:
             raise IdentityError("link approval requires the link code or merchant approval")
+        return self._approve(link, merchant_id)
+
+    def _approve(self, link: IdentityLink, merchant_id: str) -> IdentityLink:
+        if link.status is not IdentityLinkStatus.PENDING:
+            raise IdentityError(f"link is {link.status.value}")
+        if utc_now() >= link.expires_at:
+            self._links.save(
+                link.model_copy(update={"status": IdentityLinkStatus.EXPIRED})
+            )
+            raise IdentityError("link code has expired")
         linked = link.model_copy(
             update={
                 "status": IdentityLinkStatus.LINKED,
@@ -120,6 +130,21 @@ class IdentityLinkService:
         )
         self._links.save(linked)
         return linked
+
+    def approve_for_customer(
+        self, link_id: str, merchant_id: str, *, customer_id: str
+    ) -> IdentityLink:
+        """Approve only when the verified customer owns the pending link.
+
+        A retry after a successful approval returns the existing linked row,
+        while unknown and foreign customer/link pairs remain indistinguishable.
+        """
+        link = self._links.get(link_id, merchant_id)
+        if link is None or link.customer_id != customer_id:
+            raise IdentityNotFoundError(f"Unknown identity link: {link_id}")
+        if link.status is IdentityLinkStatus.LINKED:
+            return link
+        return self._approve(link, merchant_id)
 
     def revoke(self, link_id: str, merchant_id: str) -> IdentityLink:
         link = self._links.get(link_id, merchant_id)

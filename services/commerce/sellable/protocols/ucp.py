@@ -52,7 +52,7 @@ def discovery_document(core, *, base_url: str = "") -> dict[str, object]:
         "identity_linking": {
             "supported": True,
             "create": "/commerce/identity/link",
-            "approve": "/commerce/identity/link/approve",
+            "approve": "/buyer/identity/links/{link_id}/approve",
             "me": "/commerce/identity/me",
         },
         "payment": {
