@@ -928,8 +928,8 @@ def acp_checkout_session(
 def identity_link_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_scoped_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
 ) -> dict:
     customer_id = body.get("customer_id")

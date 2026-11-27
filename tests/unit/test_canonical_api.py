@@ -267,6 +267,38 @@ def test_delegation_deny_at_canonical_layer(
 # --- Post-purchase + identity over HTTP ---------------------------------------------------------------
 
 
+def test_identity_link_requires_signed_agent_key_in_production(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+    from fastapi.testclient import TestClient
+
+    from sellable.config import Settings
+    from sellable.main import app, get_scoped_commerce_signed
+    import sellable.auth as auth_module
+
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
+    monkeypatch.setattr(
+        auth_module,
+        "settings",
+        Settings(
+            environment="production",
+            agent_api_key_hashes=(hashlib.sha256(AGENT_KEY.encode()).hexdigest(),),
+        ),
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/commerce/identity/link",
+                json={"customer_id": "cust_signed_test"},
+                headers=H,
+            )
+        assert response.status_code == 401, response.text
+        assert "HMAC-signed" in response.text
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_returns_refunds_cases_identity_http(
     commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
