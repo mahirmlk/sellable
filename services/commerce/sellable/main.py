@@ -458,6 +458,8 @@ payment_service = PaymentService(commerce_core, RazorpayAdapter(settings), core_
 refund_service = RefundService(commerce_core, RazorpayAdapter(settings))
 buyer_mission_service = BuyerMissionService()
 session_service = ProtocolSessionService(ProtocolSessionRepository())
+# Retained as a default service handle for existing internal integrations;
+# request handlers bind identity operations to the selected merchant core.
 identity_service = IdentityLinkService(IdentityLinkRepository())
 
 
@@ -926,23 +928,27 @@ def acp_checkout_session(
 def identity_link_create(
     request: Request,
     body: dict,
-    commerce: CommerceCore = Depends(get_scoped_commerce),
-    _api_key: AgentApiKey = Depends(get_agent_api_key),
+    commerce: CommerceCore = Depends(get_scoped_commerce_signed),
+    _api_key: AgentApiKey = Depends(get_agent_api_key_signed),
     x_trace_id: str | None = Header(default=None),
 ) -> dict:
     customer_id = body.get("customer_id")
-    if not customer_id:
-        raise HTTPException(status_code=400, detail="customer_id is required")
-    link, code = identity_service.create_link(
+    if not isinstance(customer_id, str) or not customer_id.strip() or len(customer_id) > 128:
+        raise HTTPException(status_code=400, detail="customer_id must be a non-empty string")
+    requested_agent_id = body.get("agent_id")
+    if requested_agent_id is not None and requested_agent_id != _api_key.buyer_agent_id:
+        raise HTTPException(status_code=403, detail="agent_id does not match the authenticated agent")
+    service = IdentityLinkService(commerce.identity_repo)
+    link, _code = service.create_link(
         commerce.merchant_scope,
-        str(customer_id),
-        agent_id=body.get("agent_id"),
+        customer_id,
+        agent_id=_api_key.buyer_agent_id,
         protocol="rest",
         scopes=list(body.get("scopes") or []),
     )
     dumped = link.model_dump(mode="json")
     dumped.pop("link_code_hash", None)
-    dumped["link_code"] = code  # shown exactly once
+    # Approval secrets are never returned to the agent that requested the link.
     return dumped
 
 
@@ -954,17 +960,31 @@ def identity_link_approve(
     commerce: CommerceCore = Depends(get_scoped_commerce),
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
-    if not body.get("link_id"):
-        raise HTTPException(status_code=400, detail="link_id is required")
+    # Agent credentials are not customer proof. In particular, callers cannot
+    # assert merchant_approved or retrieve/use an agent-visible link code.
+    raise HTTPException(
+        status_code=403, detail="Only the authenticated linked customer can approve identity"
+    )
+
+
+@app.post("/buyer/identity/links/{link_id}/approve", tags=["buyer-identity"])
+@limiter.limit("30/minute")
+def buyer_identity_link_approve(
+    request: Request,
+    link_id: str,
+    merchant_id: str,
+    user: AuthenticatedUser = Depends(get_authenticated_user),
+) -> dict:
+    if not user.auth_user_id:
+        raise HTTPException(status_code=404, detail="Identity link not found")
     try:
-        link = identity_service.approve_link(
-            str(body["link_id"]),
-            commerce.merchant_scope,
-            link_code=body.get("link_code"),
-            merchant_approved=bool(body.get("merchant_approved")),
+        core = registry.get(merchant_id)
+        service = IdentityLinkService(core.identity_repo)
+        link = service.approve_for_customer(
+            link_id, merchant_id, customer_id=user.auth_user_id
         )
-    except Exception as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception:
+        raise HTTPException(status_code=404, detail="Identity link not found") from None
     dumped = link.model_dump(mode="json")
     dumped.pop("link_code_hash", None)
     return dumped
@@ -979,13 +999,13 @@ def identity_me(
     _api_key: AgentApiKey = Depends(get_agent_api_key),
 ) -> dict:
     try:
-        link = identity_service.get_link(link_id, commerce.merchant_scope)
+        link = IdentityLinkService(commerce.identity_repo).get_link(link_id, commerce.merchant_scope)
     except Exception as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     if link.status.value != "LINKED":
         raise HTTPException(status_code=404, detail="No linked identity")
     core = commerce
-    level = identity_service.resolve_identity_level(
+    level = IdentityLinkService(core.identity_repo).resolve_identity_level(
         core.merchant_scope,
         link.customer_id,
         identity_repo=core.identity_repo,

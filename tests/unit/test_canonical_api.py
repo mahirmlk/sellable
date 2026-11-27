@@ -267,33 +267,108 @@ def test_delegation_deny_at_canonical_layer(
 # --- Post-purchase + identity over HTTP ---------------------------------------------------------------
 
 
-def test_returns_refunds_cases_identity_http(commerce_core: CommerceCore) -> None:
+def test_identity_link_requires_signed_agent_key_in_production(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+    from fastapi.testclient import TestClient
+
+    from sellable.config import Settings
+    from sellable.main import app, get_scoped_commerce_signed
+    import sellable.auth as auth_module
+
+    app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
+    monkeypatch.setattr(
+        auth_module,
+        "settings",
+        Settings(
+            environment="production",
+            agent_api_key_hashes=(hashlib.sha256(AGENT_KEY.encode()).hexdigest(),),
+        ),
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/commerce/identity/link",
+                json={"customer_id": "cust_signed_test"},
+                headers=H,
+            )
+        assert response.status_code == 401, response.text
+        assert "HMAC-signed" in response.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_returns_refunds_cases_identity_http(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from sellable.main import app
+    from sellable.merchant_auth import AuthenticatedUser, get_authenticated_user
+    import sellable.main as main_module
 
     core = commerce_core
     client = _client(core)
+    monkeypatch.setattr(main_module.registry, "get", lambda _merchant_id: core)
+    app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
+        auth_user_id="cust_http"
+    )
     try:
         link = client.post(
             "/commerce/identity/link",
-            json={"customer_id": "cust_http", "agent_id": "agent_ext_9"},
+            json={"customer_id": "cust_http"},
             headers=H,
         )
         assert link.status_code == 200, link.text
         link_id = link.json()["link_id"]
-        code = link.json()["link_code"]
+        assert "link_code" not in link.json()
+        assert link.json()["status"] == "PENDING"
+        spoofed_agent_link = client.post(
+            "/commerce/identity/link",
+            json={
+                "customer_id": "other_customer",
+                "agent_id": f"{link.json()['agent_id']}-spoof",
+            },
+            headers=H,
+        )
+        assert spoofed_agent_link.status_code == 403, spoofed_agent_link.text
 
         me_before = client.get(
             "/commerce/identity/me", params={"link_id": link_id}, headers=H
         )
         assert me_before.status_code == 404
 
-        approved = client.post(
+        # Agent credentials cannot approve links, even when claiming merchant approval.
+        agent_approval = client.post(
             "/commerce/identity/link/approve",
-            json={"link_id": link_id, "link_code": code},
+            json={"link_id": link_id, "merchant_approved": True},
             headers=H,
+        )
+        assert agent_approval.status_code == 403, agent_approval.text
+
+        app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
+            auth_user_id="different_customer"
+        )
+        wrong_customer = client.post(
+            f"/buyer/identity/links/{link_id}/approve",
+            params={"merchant_id": core.merchant_scope},
+        )
+        assert wrong_customer.status_code == 404, wrong_customer.text
+
+        app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
+            auth_user_id="cust_http"
+        )
+        approved = client.post(
+            f"/buyer/identity/links/{link_id}/approve",
+            params={"merchant_id": core.merchant_scope},
         )
         assert approved.status_code == 200, approved.text
         assert approved.json()["status"] == "LINKED"
+        retry = client.post(
+            f"/buyer/identity/links/{link_id}/approve",
+            params={"merchant_id": core.merchant_scope},
+        )
+        assert retry.status_code == 200, retry.text
+        assert retry.json()["status"] == "LINKED"
 
         me = client.get(
             "/commerce/identity/me", params={"link_id": link_id}, headers=H

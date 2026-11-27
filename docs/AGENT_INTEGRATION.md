@@ -51,12 +51,12 @@ Pass `X-Session-Id` on later calls. Calls outside the negotiated set get
 
 ## 4. Link customer identity (when needed)
 
-Public browsing needs no identity. Anything customer-scoped does:
+Public browsing needs no identity. Anything customer-scoped does. The agent may request a link, but only the authenticated customer whose Supabase subject matches the requested customer ID can approve it. Agent credentials cannot approve links, assert merchant approval, or read an approval code:
 
 ```http
-POST /commerce/identity/link            # {customer_id, agent_id?} → link + one-time code
-POST /commerce/identity/link/approve    # {link_id, link_code} or merchant approval
-GET  /commerce/identity/me?link_id=…    # resolved linked context
+POST /commerce/identity/link                         # {customer_id, agent_id?} → PENDING link metadata (no approval secret)
+POST /buyer/identity/links/{link_id}/approve?merchant_id=… # verified Supabase user must match the link customer_id
+GET  /commerce/identity/me?link_id=…                 # resolved linked context
 ```
 
 ## 5. Delegate bounded permissions

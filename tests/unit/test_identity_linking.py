@@ -55,16 +55,25 @@ def test_create_approve_me_cycle(commerce_core: CommerceCore) -> None:
         service.approve_link(link.link_id, merchant, link_code=code)
 
 
-def test_wrong_code_rejected(commerce_core: CommerceCore) -> None:
+def test_wrong_code_and_wrong_customer_rejected(commerce_core: CommerceCore) -> None:
     service = _service(commerce_core)
     merchant = commerce_core.merchant_scope
-    link, _ = service.create_link(merchant, "cust_link")
-    with pytest.raises(IdentityError, match="link code or merchant approval"):
+    link, code = service.create_link(merchant, "cust_link")
+    with pytest.raises(IdentityError, match="code is invalid"):
         service.approve_link(link.link_id, merchant, link_code="wrong-code")
-    merchant_ok = service.approve_link(
-        link.link_id, merchant, merchant_approved=True
+    with pytest.raises(IdentityError, match="Unknown identity link"):
+        service.approve_for_customer(
+            link.link_id, merchant, customer_id="another_customer"
+        )
+    customer_ok = service.approve_for_customer(
+        link.link_id, merchant, customer_id="cust_link"
     )
-    assert merchant_ok.status == IdentityLinkStatus.LINKED
+    assert customer_ok.status is IdentityLinkStatus.LINKED
+    # A retry by that same verified customer is safe and idempotent.
+    assert service.approve_for_customer(
+        link.link_id, merchant, customer_id="cust_link"
+    ) == customer_ok
+    assert code
 
 
 def test_expired_and_revoked_links(commerce_core: CommerceCore) -> None:
