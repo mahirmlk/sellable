@@ -26,7 +26,6 @@ from sellable.contracts import IntentMandate, utc_now
 from sellable.core import CommerceCore
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
-from sellable.merchant_auth import MerchantSession
 from sellable.payments.service import PaymentService
 from sellable.refunds import RefundService
 from sellable.repositories import RefundRepository
@@ -63,6 +62,7 @@ class _FakeRefundProvider:
             status="processed",
         )
 
+
 @pytest.fixture
 def commerce_core() -> CommerceCore:
     engine = create_engine(
@@ -74,32 +74,53 @@ def commerce_core() -> CommerceCore:
     return CommerceCore.from_seed(LedgerRepository(engine), engine=engine)
 
 
-def _client(commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def _client(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
     from sellable.agents.seller import SellerAgent
     from sellable.gateway import AgentGateway
-    from sellable import main as main_module
     from sellable.main import (
         app,
         get_agent_gateway,
+        get_authenticated_user,
         get_commerce,
-        get_merchant_session,
         get_payment_service,
         get_refund_service,
         get_scoped_commerce,
         get_scoped_commerce_signed,
     )
+    from sellable.merchant_auth import (
+        AuthenticatedUser,
+        MerchantSession,
+        get_authenticated_user as auth_user_dependency,
+        get_merchant_session,
+    )
+    import sellable.main as main_module
 
     gateway = AgentGateway(commerce_core, SellerAgent(commerce_core))
+    app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
+        merchant_id=commerce_core.merchant_scope,
+        auth_user_id="human-test-user",
+        role="owner",
+    )
+    # Bind the owner console and buyer consent routes to isolated test state.
+    monkeypatch.setattr(main_module, "merchant_core", lambda _session: commerce_core)
+    class IsolatedOrderRepository:
+        def get(self, order_id: str):
+            try:
+                return commerce_core.get_order(order_id)
+            except ValueError:
+                return None
+
+    monkeypatch.setattr(main_module, "OrderRepository", IsolatedOrderRepository)
+    monkeypatch.setattr(main_module.registry, "get", lambda _merchant_id: commerce_core)
+    app.dependency_overrides[auth_user_dependency] = lambda: AuthenticatedUser(
+        auth_user_id="buyer-test-user"
+    )
     app.dependency_overrides[get_agent_gateway] = lambda: gateway
     app.dependency_overrides[get_commerce] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
-    app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
-        merchant_id=commerce_core.merchant_scope,
-        auth_user_id="usr_e2e_owner",
-        role="owner",
-    )
-    monkeypatch.setattr(main_module, "merchant_core", lambda _session: commerce_core)
     rail = razorpay_adapter()
     fake_refunds = _FakeRefundProvider()
     app.dependency_overrides[get_payment_service] = lambda: PaymentService(commerce_core, rail)
@@ -146,23 +167,35 @@ def _paid_link_payload(order_id: str, amount_paise: int, payment_id: str) -> dic
 
 
 def _settle(client: TestClient, order_id: str, amount_paise: int) -> dict:
-    """Consent → payment → verified webhook → authoritative PAID read."""
+    """Agent requests consent; only the authenticated persisted buyer grants it."""
     requested = client.post(
         "/agent/consents.request", json={"order_id": order_id}, headers=H
     )
     assert requested.status_code == 202, requested.text
     assert requested.json()["status"] == "awaiting_human_authorization"
     assert "consent_id" not in requested.json()
-    waiting = client.get(f"/commerce/orders/{order_id}", headers=H)
-    assert waiting.status_code == 200, waiting.text
-    assert waiting.json()["status"] == "AWAITING_CONSENT"
 
-    # Agent request and merchant-owner authorization are distinct actions.
-    human_consent = client.post(f"/console/orders/{order_id}/consent")
-    assert human_consent.status_code == 200, human_consent.text
-    assert human_consent.json()["order_id"] == order_id
-    assert human_consent.json()["amount_paise"] == amount_paise
-    consent_id = human_consent.json()["consent_id"]
+    from sellable.main import get_authenticated_user
+    from sellable.merchant_auth import AuthenticatedUser
+
+    # A verified but unrelated user cannot approve another buyer's order.
+    app = client.app
+    app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
+        auth_user_id="attacker-test-user"
+    )
+    denied = client.post(f"/buyer/orders/{order_id}/consent")
+    assert denied.status_code == 404, denied.text
+
+    app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
+        auth_user_id="buyer-test-user"
+    )
+    buyer_consent = client.post(f"/buyer/orders/{order_id}/consent")
+    assert buyer_consent.status_code == 200, buyer_consent.text
+    consent_id = buyer_consent.json()["consent_id"]
+    # Same authenticated buyer retry returns the existing single-use consent.
+    retry = client.post(f"/buyer/orders/{order_id}/consent")
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["consent_id"] == consent_id
 
     start = client.post(
         f"/orders/{order_id}/payment", json={"consent_id": consent_id}, headers=H
@@ -236,7 +269,7 @@ def test_rest_sandbox_purchase_end_to_end(
         assert lookup.status_code == 200
         assert lookup.json()["sku"] == SKU
 
-        cart_id = client.post("/commerce/cart", json={}, headers=H).json()["cart_id"]
+        cart_id = client.post("/commerce/cart", json={"customer_id": "buyer-test-user"}, headers=H).json()["cart_id"]
         add = client.post(
             "/commerce/cart/items",
             json={"cart_id": cart_id, "op": "add", "sku": SKU, "quantity": 1, "expected_version": 1},
@@ -316,7 +349,9 @@ def test_mcp_sandbox_purchase_end_to_end(
 
         def call(tool: str, arguments: dict) -> dict:
             response = client.post(
-                "/mcp/call", json={"tool": tool, "arguments": arguments}, headers=H
+                "/mcp/call",
+                json={"tool": tool, "arguments": arguments},
+                headers={**H, "X-Customer-Id": "buyer-test-user"},
             )
             assert response.status_code == 200, response.text
             return response.json()["result"]
@@ -361,4 +396,3 @@ def test_mcp_sandbox_purchase_end_to_end(
         assert read["amount_paise"] == grand_total
     finally:
         app.dependency_overrides.clear()
-
