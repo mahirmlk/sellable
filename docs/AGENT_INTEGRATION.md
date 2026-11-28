@@ -31,9 +31,23 @@ Two mechanisms, usable together:
 - **API key**: `X-Agent-Key` header (merchant-issued; plaintext shown once
   in the console under Storefront → Agent API Keys), or the demo key
   outside production.
-- **Signed requests**: HMAC-SHA256 over
-  `timestamp.nonce.agent_id.method.path` with `X-Timestamp`, `X-Nonce`,
-  `X-Signature` headers and server-side replay protection.
+- **Signed requests**: deployed environments require HMAC v2 with
+  `Authorization: Bearer <key>`, `X-Agent-Id`, `X-Timestamp`, `X-Nonce`,
+  `X-Signature-Version: v2`, and `X-Signature`. The signature binds the
+  bearer-key hash, request method/path/query/body, and the authorization
+  context headers `X-Delegation-Id`, `X-Session-Id`, `X-Protocol`,
+  `X-Customer-Id`, and `X-Trace-Id`. Legacy dotted v1 signatures are accepted
+  only in development/test.
+
+V2 signs a domain-separated, length-prefixed byte string. Start with
+`SELLABLE-AGENT-REQUEST\0v2\0`; append each field as a four-byte unsigned
+big-endian UTF-8 byte length followed by the UTF-8 bytes. Fields, in order:
+timestamp, nonce, agent ID, uppercase HTTP method, URL path, raw query string,
+body SHA-256 hex (empty when there is no body), SHA-256 hex of the bearer key,
+then the five context-header values in the order listed above (empty when a
+header is absent). HMAC-SHA256 that byte string using the configured shared
+agent signing secret and send the lowercase hex digest in `X-Signature`.
+Do not send duplicate `Authorization` or context headers.
 
 Mutating canonical routes require the signed variant; reads accept either.
 
@@ -134,3 +148,4 @@ workflow register → handshake → credential → connect → conformance →
 security → scenarios → trust → approval → production marker. Ask the
 merchant operator to run onboarding; bring your `agent_id` and capability
 list.
+
