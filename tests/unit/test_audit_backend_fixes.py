@@ -437,12 +437,14 @@ def test_signed_request_bearer_membership_uses_compare_digest(
         timestamp=timestamp,
         nonce=nonce,
         secret=secret,
+        bearer_key=key,
         body=b"",
     )
     request = SimpleNamespace(
         method="POST",
         url=SimpleNamespace(path="/agent/orders.create", query=""),
         state=SimpleNamespace(sellable_body_sha256=""),
+        headers=SimpleNamespace(getlist=lambda _name: []),
     )
     resolved = agent_auth.get_agent_api_key_signed(
         request,
@@ -452,6 +454,7 @@ def test_signed_request_bearer_membership_uses_compare_digest(
         x_timestamp=timestamp,
         x_nonce=nonce,
         x_signature=signature,
+        x_signature_version="v2",
     )
     assert resolved.auth_method == "hmac"
     # Membership check + signature check: two constant-time comparisons.
