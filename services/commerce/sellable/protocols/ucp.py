@@ -44,8 +44,26 @@ def discovery_document(core, *, base_url: str = "") -> dict[str, object]:
         "authentication": {
             "agent_key_header": "X-Agent-Key",
             "signed": {
-                "headers": ["X-Timestamp", "X-Nonce", "X-Signature"],
-                "note": "HMAC-SHA256 over timestamp.nonce.agent_id.method.path",
+                "version": "v2",
+                "version_header": "X-Signature-Version",
+                "headers": [
+                    "Authorization",
+                    "X-Agent-Id",
+                    "X-Timestamp",
+                    "X-Nonce",
+                    "X-Signature-Version",
+                    "X-Signature",
+                    "X-Delegation-Id",
+                    "X-Session-Id",
+                    "X-Protocol",
+                    "X-Customer-Id",
+                    "X-Trace-Id",
+                ],
+                "note": (
+                    "Production requires HMAC-SHA256 over a domain-separated, "
+                    "length-prefixed request envelope bound to the bearer key "
+                    "and authorization context; legacy v1 is development/test only."
+                ),
             },
             "delegation_header": "X-Delegation-Id",
         },
@@ -93,3 +111,4 @@ def ucp_context(
         delegation_id=delegation_id,
         customer_id=customer_id,
     )
+
