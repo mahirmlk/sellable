@@ -27,12 +27,40 @@ from sellable.core import CommerceCore
 from sellable.ledger.database import Base
 from sellable.ledger.service import LedgerRepository
 from sellable.payments.service import PaymentService
+from sellable.refunds import RefundService
+from sellable.repositories import RefundRepository
 from test_payments import razorpay_adapter, signed_webhook
 
 
 AGENT_KEY = "sellable_demo_key_001"
 H = {"X-Agent-Key": AGENT_KEY}
 SKU = "AUDIO-CASE-01"
+
+
+class _FakeRefundProvider:
+    """Provider boundary fake used by the external-agent flow test."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int, str | None]] = []
+
+    def refund(
+        self,
+        payment_id: str,
+        amount_paise: int,
+        *,
+        notes: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ):
+        from sellable.payments.razorpay import ProviderRefund
+
+        self.calls.append((payment_id, amount_paise, idempotency_key))
+        return ProviderRefund(
+            provider_refund_id=f"rfnd_e2e_{len(self.calls):04d}",
+            provider_payment_id=payment_id,
+            amount_paise=amount_paise,
+            currency="INR",
+            status="processed",
+        )
 
 
 @pytest.fixture
@@ -57,6 +85,7 @@ def _client(
         get_authenticated_user,
         get_commerce,
         get_payment_service,
+        get_refund_service,
         get_scoped_commerce,
         get_scoped_commerce_signed,
     )
@@ -92,10 +121,17 @@ def _client(
     app.dependency_overrides[get_commerce] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce] = lambda: commerce_core
     app.dependency_overrides[get_scoped_commerce_signed] = lambda: commerce_core
-    app.dependency_overrides[get_payment_service] = lambda: PaymentService(
-        commerce_core, razorpay_adapter()
+    rail = razorpay_adapter()
+    fake_refunds = _FakeRefundProvider()
+    app.dependency_overrides[get_payment_service] = lambda: PaymentService(commerce_core, rail)
+    app.dependency_overrides[get_refund_service] = lambda: RefundService(
+        commerce_core,
+        fake_refunds,
+        RefundRepository(commerce_core.order_repo._engine),
     )
-    return TestClient(app)
+    client = TestClient(app)
+    client._fake_refunds = fake_refunds
+    return client
 
 
 def _intent() -> dict:
@@ -144,6 +180,13 @@ def _settle(client: TestClient, order_id: str, amount_paise: int) -> dict:
 
     # A verified but unrelated user cannot approve another buyer's order.
     app = client.app
+    # Merchant-owner authentication is not buyer consent for this order.
+    app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
+        auth_user_id="human-test-user"
+    )
+    owner_consent = client.post(f"/console/orders/{order_id}/consent")
+    assert owner_consent.status_code == 404, owner_consent.text
+
     app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
         auth_user_id="attacker-test-user"
     )
@@ -271,12 +314,34 @@ def test_rest_sandbox_purchase_end_to_end(
 
         _settle(client, order_id, grand_total)
 
+        # A settled receipt binds the provider payment to this order and trace.
+        receipt = client.get(f"/orders/{order_id}/receipt", headers=H)
+        assert receipt.status_code == 200, receipt.text
+        assert receipt.json()["order_id"] == order_id
+        assert receipt.json()["amount_paise"] == grand_total
+        assert receipt.json()["provider_reference"].startswith("pay_sbx_")
+
+        # Refund is merchant-owner initiated; request replay must not create a
+        # second provider refund or duplicate the local refund record.
+        refund_key = f"idem_e2e_refund_{uuid4().hex}"
+        refund_url = f"/orders/{order_id}/refund?reason=e2e_sandbox&idempotency_key={refund_key}"
+        refunded = client.post(refund_url)
+        assert refunded.status_code == 200, refunded.text
+        refund_replay = client.post(refund_url)
+        assert refund_replay.status_code == 200, refund_replay.text
+        assert refund_replay.json()["refund_id"] == refunded.json()["refund_id"]
+        assert refunded.json()["refund_status"] == "processed"
+        assert len(client._fake_refunds.calls) == 1
+        assert commerce_core.get_order(order_id).status.value == "REFUNDED"
+
         # 4. Correlated audit: one trace carries the money trail.
         trace_id = client.get(f"/commerce/orders/{order_id}", headers=H).json()["trace_id"]
         actions = [e.action for e in commerce_core.ledger.for_trace(trace_id)]
         assert "webhook.reconciled" in actions
         assert actions.count("webhook.reconciled") == 1
         assert "order.paid" in actions
+        assert "refund.settled" in actions
+        assert actions.count("refund.settled") == 1
     finally:
         app.dependency_overrides.clear()
 
