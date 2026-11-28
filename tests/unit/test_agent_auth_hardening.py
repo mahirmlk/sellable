@@ -57,12 +57,17 @@ def signed_call(nonce_repo, *, nonce: str, key: str = PROD_KEY):
         timestamp=timestamp,
         nonce=nonce,
         secret=PROD_SECRET,
+        bearer_key=key,
         body=b"",
+    )
+    headers = SimpleNamespace(
+        getlist=lambda name: []
     )
     request = SimpleNamespace(
         method="POST",
         url=SimpleNamespace(path="/agent/orders.create", query=""),
         state=SimpleNamespace(sellable_body_sha256=""),
+        headers=headers,
     )
     return agent_auth.get_agent_api_key_signed(
         request,
@@ -72,6 +77,7 @@ def signed_call(nonce_repo, *, nonce: str, key: str = PROD_KEY):
         x_timestamp=timestamp,
         x_nonce=nonce,
         x_signature=signature,
+        x_signature_version="v2",
     )
 
 
@@ -105,6 +111,233 @@ def test_signed_write_accepted_in_production(monkeypatch, nonce_engine) -> None:
     resolved = signed_call(None, nonce=f"n_{uuid4().hex}")
     assert resolved.auth_method == "hmac"
     assert resolved.buyer_agent_id == "buyer_sec_01"
+
+
+def test_v2_encoding_prevents_delimiter_collisions_and_binds_bearer_key() -> None:
+    common = {
+        "timestamp": "1700000000",
+        "nonce": "nonce-v2-collision",
+        "secret": PROD_SECRET,
+        "bearer_key": PROD_KEY,
+    }
+    # These tuples produced the same dotted canonical string before v2.
+    first = sign_request(
+        agent_id="agent.POST./agent/refunds",
+        method="GET",
+        path="/orders/1",
+        **common,
+    )
+    second = sign_request(
+        agent_id="agent",
+        method="POST",
+        path="/agent/refunds.GET./orders/1",
+        **common,
+    )
+    assert first != second
+
+    changed_key = sign_request(
+        agent_id="agent",
+        method="GET",
+        path="/orders/1",
+        **{**common, "bearer_key": "another-valid-key"},
+    )
+    original_key = sign_request(
+        agent_id="agent",
+        method="GET",
+        path="/orders/1",
+        **common,
+    )
+    assert changed_key != original_key
+
+
+def test_production_rejects_legacy_dotted_signatures(monkeypatch, nonce_engine) -> None:
+    monkeypatch.setattr(agent_auth, "settings", prod_settings())
+    monkeypatch.setattr(agent_auth, "_nonce_repo", NonceRepository(nonce_engine))
+    timestamp = str(int(time.time()))
+    nonce = f"n_{uuid4().hex}"
+    signature = sign_request(
+        agent_id="buyer_sec_01",
+        method="POST",
+        path="/agent/orders.create",
+        timestamp=timestamp,
+        nonce=nonce,
+        secret=PROD_SECRET,
+        signature_version="v1",
+    )
+    request = SimpleNamespace(
+        method="POST",
+        url=SimpleNamespace(path="/agent/orders.create", query=""),
+        state=SimpleNamespace(sellable_body_sha256=""),
+        headers=SimpleNamespace(getlist=lambda _name: []),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        agent_auth.get_agent_api_key_signed(
+            request,
+            x_agent_key=None,
+            authorization=f"Bearer {PROD_KEY}",
+            x_agent_id="buyer_sec_01",
+            x_timestamp=timestamp,
+            x_nonce=nonce,
+            x_signature=signature,
+        )
+
+    assert exc.value.status_code == 401
+    assert "v2" in exc.value.detail
+
+
+def test_development_accepts_legacy_dotted_signatures(monkeypatch) -> None:
+    monkeypatch.setattr(
+        agent_auth,
+        "settings",
+        Settings(
+            environment="development",
+            agent_hmac_secret=PROD_SECRET,
+            agent_api_key_hashes=(_sha256(PROD_KEY),),
+        ),
+    )
+    monkeypatch.setattr(agent_auth, "_nonce_repo", None)
+    monkeypatch.setattr(agent_auth, "_nonce_repo_failed_at", time.time())
+    timestamp = str(int(time.time()))
+    nonce = f"n_{uuid4().hex}"
+    signature = sign_request(
+        agent_id="buyer_sec_01",
+        method="POST",
+        path="/agent/orders.create",
+        timestamp=timestamp,
+        nonce=nonce,
+        secret=PROD_SECRET,
+        signature_version="v1",
+    )
+    request = SimpleNamespace(
+        method="POST",
+        url=SimpleNamespace(path="/agent/orders.create", query=""),
+        state=SimpleNamespace(sellable_body_sha256=""),
+        headers=SimpleNamespace(getlist=lambda _name: []),
+    )
+
+    resolved = agent_auth.get_agent_api_key_signed(
+        request,
+        x_agent_key=None,
+        authorization=f"Bearer {PROD_KEY}",
+        x_agent_id="buyer_sec_01",
+        x_timestamp=timestamp,
+        x_nonce=nonce,
+        x_signature=signature,
+        x_signature_version=None,
+    )
+
+    assert resolved.auth_method == "hmac"
+
+
+def test_v2_signature_cannot_be_transplanted_to_another_bearer_key(
+    monkeypatch, nonce_engine
+) -> None:
+    second_key = "another-valid-production-key"
+    monkeypatch.setattr(
+        agent_auth,
+        "settings",
+        Settings(
+            environment="production",
+            agent_hmac_secret=PROD_SECRET,
+            agent_api_key_hashes=(_sha256(PROD_KEY), _sha256(second_key)),
+        ),
+    )
+    monkeypatch.setattr(agent_auth, "_nonce_repo", NonceRepository(nonce_engine))
+    timestamp = str(int(time.time()))
+    nonce = f"n_{uuid4().hex}"
+    signature = sign_request(
+        agent_id="buyer_sec_01",
+        method="POST",
+        path="/agent/orders.create",
+        timestamp=timestamp,
+        nonce=nonce,
+        secret=PROD_SECRET,
+        bearer_key=PROD_KEY,
+    )
+    request = SimpleNamespace(
+        method="POST",
+        url=SimpleNamespace(path="/agent/orders.create", query=""),
+        state=SimpleNamespace(sellable_body_sha256=""),
+        headers=SimpleNamespace(getlist=lambda _name: []),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        agent_auth.get_agent_api_key_signed(
+            request,
+            x_agent_key=None,
+            authorization=f"Bearer {second_key}",
+            x_agent_id="buyer_sec_01",
+            x_timestamp=timestamp,
+            x_nonce=nonce,
+            x_signature=signature,
+            x_signature_version="v2",
+        )
+    assert exc.value.status_code == 401
+
+
+def test_v2_signature_rejects_changed_authorization_context(monkeypatch, nonce_engine) -> None:
+    monkeypatch.setattr(agent_auth, "settings", prod_settings())
+    monkeypatch.setattr(agent_auth, "_nonce_repo", NonceRepository(nonce_engine))
+    timestamp = str(int(time.time()))
+    nonce = f"n_{uuid4().hex}"
+    signature = sign_request(
+        agent_id="buyer_context_01",
+        method="POST",
+        path="/agent/orders.create",
+        timestamp=timestamp,
+        nonce=nonce,
+        secret=PROD_SECRET,
+        bearer_key=PROD_KEY,
+        delegation_id="dlg_authorized",
+        session_id="sess_checkout",
+        protocol="ucp",
+        customer_id="cus_buyer",
+        trace_id="trc_request",
+    )
+    context = {
+        "x-delegation-id": "dlg_authorized",
+        "x-session-id": "sess_checkout",
+        "x-protocol": "ucp",
+        "x-customer-id": "cus_buyer",
+        "x-trace-id": "trc_request",
+    }
+
+    def request_with_context(values):
+        return SimpleNamespace(
+            method="POST",
+            url=SimpleNamespace(path="/agent/orders.create", query=""),
+            state=SimpleNamespace(sellable_body_sha256=""),
+            headers=SimpleNamespace(
+                getlist=lambda name: [values[name]] if name in values else []
+            ),
+        )
+
+    accepted = agent_auth.get_agent_api_key_signed(
+        request_with_context(context),
+        x_agent_key=None,
+        authorization=f"Bearer {PROD_KEY}",
+        x_agent_id="buyer_context_01",
+        x_timestamp=timestamp,
+        x_nonce=nonce,
+        x_signature=signature,
+        x_signature_version="v2",
+    )
+    assert accepted.auth_method == "hmac"
+
+    changed = {**context, "x-delegation-id": "dlg_other"}
+    with pytest.raises(HTTPException) as exc:
+        agent_auth.get_agent_api_key_signed(
+            request_with_context(changed),
+            x_agent_key=None,
+            authorization=f"Bearer {PROD_KEY}",
+            x_agent_id="buyer_context_01",
+            x_timestamp=timestamp,
+            x_nonce=nonce,
+            x_signature=signature,
+            x_signature_version="v2",
+        )
+    assert exc.value.status_code == 401
 
 
 def test_production_signed_write_fails_closed_when_nonce_store_is_unavailable(
@@ -245,3 +478,4 @@ def test_dev_environment_allowlist() -> None:
     assert Settings(environment="staging").is_dev_environment is False
     assert Settings(environment="prod").is_dev_environment is False
     assert Settings(environment="Production").is_dev_environment is False
+
