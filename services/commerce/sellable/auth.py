@@ -356,6 +356,21 @@ def get_agent_api_key(
     x_signature_version: str | None = Header(default=None),
 ) -> AgentApiKey:
     """FastAPI dependency that authenticates the calling buyer agent."""
+    if request is not None:
+        for name in (
+            "x-agent-key",
+            "authorization",
+            "x-agent-id",
+            "x-timestamp",
+            "x-nonce",
+            "x-signature",
+            "x-signature-version",
+            *_SIGNATURE_CONTEXT_HEADERS,
+        ):
+            if len(request.headers.getlist(name)) > 1:
+                raise HTTPException(
+                    status_code=401, detail="Duplicate authentication header"
+                )
     if x_agent_key:
         return _resolve_static_key(x_agent_key)
 
@@ -364,9 +379,6 @@ def get_agent_api_key(
         bearer = authorization[7:].strip()
     if not bearer:
         raise HTTPException(status_code=401, detail="Missing agent credentials")
-    if len(request.headers.getlist("authorization")) > 1:
-        raise HTTPException(status_code=401, detail="Duplicate Authorization header")
-
     return _resolve_signed_request(
         request=request,
         bearer_key=bearer,
