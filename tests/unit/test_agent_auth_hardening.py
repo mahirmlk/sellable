@@ -150,6 +150,30 @@ def test_v2_encoding_prevents_delimiter_collisions_and_binds_bearer_key() -> Non
     assert changed_key != original_key
 
 
+def test_duplicate_signature_version_header_is_rejected(monkeypatch) -> None:
+    monkeypatch.setattr(agent_auth, "settings", prod_settings())
+    request = SimpleNamespace(
+        headers=SimpleNamespace(
+            getlist=lambda name: ["v2", "v1"] if name == "x-signature-version" else []
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        agent_auth.get_agent_api_key(
+            request,
+            x_agent_key=None,
+            authorization=f"Bearer {PROD_KEY}",
+            x_agent_id="buyer_sec_01",
+            x_timestamp="1700000000",
+            x_nonce="nonce",
+            x_signature="invalid",
+            x_signature_version="v2",
+        )
+
+    assert exc.value.status_code == 401
+    assert "Duplicate authentication header" in exc.value.detail
+
+
 def test_production_rejects_legacy_dotted_signatures(monkeypatch, nonce_engine) -> None:
     monkeypatch.setattr(agent_auth, "settings", prod_settings())
     monkeypatch.setattr(agent_auth, "_nonce_repo", NonceRepository(nonce_engine))
