@@ -106,6 +106,7 @@ def test_hmac_signed_request_is_authenticated_and_replay_is_rejected(
                 timestamp=timestamp,
                 nonce=nonce,
                 secret=secret,
+                bearer_key=AGENT_KEY,
                 body=body,
             )
             headers = {
@@ -114,6 +115,7 @@ def test_hmac_signed_request_is_authenticated_and_replay_is_rejected(
                 "X-Timestamp": timestamp,
                 "X-Nonce": nonce,
                 "X-Signature": signature,
+                "X-Signature-Version": "v2",
                 "Content-Type": "application/json",
             }
             first = client.post("/agent/catalog.search", content=body, headers=headers)
@@ -465,3 +467,4 @@ def test_webhook_amount_mismatch_does_not_settle(commerce_core: CommerceCore) ->
     assert commerce_core.get_order(order.order_id).status is OrderStatus.PAYMENT_PENDING
     actions = [e.action for e in commerce_core.ledger.for_trace(order.trace_id)]
     assert "webhook.amount_mismatch" in actions
+
