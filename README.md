@@ -352,9 +352,10 @@ mock fallbacks in production:
   an authenticated user to another store. Every console endpoint is scoped
   to the resolved merchant; foreign order ids are 404s.
 - **Shopping agents** -- API key + HMAC request signing. Agent calls authenticate
-  with `X-Agent-Key` or an HMAC-SHA256 signature over
-  `timestamp.nonce.agent_id.method.path` with `X-Timestamp`, `X-Nonce`, and
-  `X-Signature` headers, including server-side replay protection. Two key
+  with `X-Agent-Key` in development/test or HMAC v2 in deployed environments.
+  V2 signs a length-prefixed request envelope bound to the bearer-key hash and
+  authorization context; legacy dotted signatures are development/test only.
+  Nonces are claimed persistently for replay protection. Two key
   sources are supported: merchant-issued keys (created in the console under
   Storefront → Agent API Keys; only a SHA-256 hash is stored, scoped to the
   issuing merchant) and platform-configured hashes
