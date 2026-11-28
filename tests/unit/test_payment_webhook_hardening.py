@@ -956,6 +956,40 @@ def test_stale_payment_order_cancels_link_before_releasing_stock(core_and_engine
     assert client.payment_link.cancelled == ["plink_test_0001"]
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        {},
+        {"id": "plink_other", "status": "cancelled"},
+        {"id": "plink_test_0001", "status": "created"},
+    ],
+)
+def test_cancel_payment_link_requires_matching_terminal_provider_response(
+    monkeypatch, response
+) -> None:
+    client = FakeRazorpayClient()
+    monkeypatch.setattr(client.payment_link, "cancel", lambda _link_id: response)
+    adapter = RazorpayAdapter(razorpay_settings(), client=client)
+
+    with pytest.raises(RazorpayRequestError) as error:
+        adapter.cancel_payment_link("plink_test_0001")
+
+    assert error.value.retryable is True
+
+
+def test_cancel_payment_link_accepts_confirmed_expired_response(monkeypatch) -> None:
+    client = FakeRazorpayClient()
+    monkeypatch.setattr(
+        client.payment_link,
+        "cancel",
+        lambda link_id: {"id": link_id, "status": "expired"},
+    )
+    adapter = RazorpayAdapter(razorpay_settings(), client=client)
+
+    adapter.cancel_payment_link("plink_test_0001")
+
+
 def test_cancel_provider_link_before_abort(core_and_engine) -> None:
     core, engine = core_and_engine
     order, _ = start_paid_flow(core, "trc_h_cxl", "idem_hardening_cxl_01")
