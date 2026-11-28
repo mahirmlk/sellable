@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Engine, delete, select
+from sqlalchemy import Engine, delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from sellable.ledger.database import (
     AgentNonceRecord,
     BuyerMissionRecord,
     CatalogProductRecord,
+    InventoryReservationRecord,
     CheckoutSessionRecord,
     ConsentRecord,
     MerchantRecord,
@@ -327,6 +329,28 @@ class OrderRepository:
                 )
                 for r in records
             ]
+
+    def stale_unpaid_ids(self, merchant_id: str, before: datetime) -> list[str]:
+        """Unpaid orders past their stock hold window; callers cancel any live provider link first."""
+        with Session(self._engine) as session:
+            query = (
+                select(OrderRecord.order_id)
+                .where(OrderRecord.merchant_id == merchant_id)
+                .where(
+                    OrderRecord.status.in_(
+                        [
+                            OrderStatus.AWAITING_CONSENT.value,
+                            OrderStatus.CONSENTED.value,
+                            OrderStatus.PAYMENT_PENDING.value,
+                            OrderStatus.PAYMENT_FAILED.value,
+                        ]
+                    )
+                )
+                .where(OrderRecord.created_at < before)
+                .order_by(OrderRecord.created_at.asc())
+                .limit(5000)
+            )
+            return list(session.scalars(query).all())
 
     def status_counts(self, merchant_id: str | None = None) -> dict[str, int]:
         """Count orders per status in ONE grouped query.
@@ -746,6 +770,352 @@ class CheckoutSessionRepository:
             return self._to_session(record)
 
 
+class InsufficientStockError(ValueError):
+    """The merchant catalog does not have enough unreserved units."""
+
+
+class InventoryReservationConflict(ValueError):
+    """An order's idempotency key was reused with different inventory lines."""
+
+
+class InventoryRepository:
+    """Atomically reserve catalog stock and settle or release it once per order."""
+
+    def __init__(self, engine: object | None = None) -> None:
+        self._engine = engine or make_engine()
+
+    @staticmethod
+    def _normalized(lines: Sequence[tuple[str, int]]) -> dict[str, int]:
+        normalized: dict[str, int] = {}
+        for sku, quantity in lines:
+            if not sku or not isinstance(quantity, int) or quantity < 1:
+                raise ValueError("inventory lines require a SKU and positive integer quantity")
+            normalized[sku] = normalized.get(sku, 0) + quantity
+        if not normalized:
+            raise ValueError("an order must reserve at least one catalog item")
+        return normalized
+
+    @staticmethod
+    def _assert_same_order(
+        records: Sequence[InventoryReservationRecord],
+        expected: dict[str, int],
+    ) -> None:
+        actual = {record.sku: record.quantity for record in records}
+        if actual != expected or any(record.status not in {"RESERVED", "COMMITTED"} for record in records):
+            raise InventoryReservationConflict(
+                "order inventory reservation does not match the requested lines"
+            )
+
+    def has_unreserved_active_payment_orders(self) -> bool:
+        """Detect payment attempts from before inventory reservations were enabled.
+
+        The rollout must drain/cancel these provider links before this version
+        starts accepting traffic; a captured legacy payment cannot be safely
+        assigned stock after the fact.
+        """
+        reservation_exists = (
+            select(InventoryReservationRecord.reservation_id)
+            .where(
+                InventoryReservationRecord.merchant_id == OrderRecord.merchant_id,
+                InventoryReservationRecord.order_id == OrderRecord.order_id,
+                InventoryReservationRecord.status == "RESERVED",
+            )
+            .exists()
+        )
+        query = (
+            select(OrderRecord.order_id)
+            .where(
+                OrderRecord.status.in_(
+                    [OrderStatus.PAYMENT_PENDING.value, OrderStatus.PAYMENT_FAILED.value]
+                )
+            )
+            .where(~reservation_exists)
+            .limit(1)
+        )
+        with Session(self._engine) as session:
+            return session.scalar(query) is not None
+
+    def reserve_for_order(
+        self, merchant_id: str, order_id: str, lines: Sequence[tuple[str, int]]
+    ) -> None:
+        expected = self._normalized(lines)
+        try:
+            with Session(self._engine) as session:
+                existing = session.scalars(
+                    select(InventoryReservationRecord).where(
+                        InventoryReservationRecord.merchant_id == merchant_id,
+                        InventoryReservationRecord.order_id == order_id,
+                    )
+                ).all()
+                if existing:
+                    self._assert_same_order(existing, expected)
+                    return
+
+                for sku, quantity in sorted(expected.items()):
+                    row_id = f"{merchant_id}:{sku}"
+                    updated = session.execute(
+                        update(CatalogProductRecord)
+                        .where(
+                            CatalogProductRecord.id == row_id,
+                            CatalogProductRecord.merchant_id == merchant_id,
+                            (
+                                CatalogProductRecord.stock
+                                - CatalogProductRecord.reserved_stock
+                                - CatalogProductRecord.committed_stock
+                            ) >= quantity,
+                        )
+                        .values(
+                            reserved_stock=CatalogProductRecord.reserved_stock + quantity
+                        )
+                    )
+                    if updated.rowcount != 1:
+                        raise InsufficientStockError(
+                            f"insufficient stock for SKU {sku}"
+                        )
+                    session.add(
+                        InventoryReservationRecord(
+                            reservation_id=hashlib.sha256(
+                                f"{merchant_id}:{order_id}:{sku}".encode("utf-8")
+                            ).hexdigest(),
+                            merchant_id=merchant_id,
+                            order_id=order_id,
+                            sku=sku,
+                            quantity=quantity,
+                            status="RESERVED",
+                            created_at=datetime.now(timezone.utc),
+                        )
+                    )
+                session.commit()
+        except IntegrityError:
+            # Concurrent replay with the same order ID: the loser rolls back
+            # every stock decrement and accepts only an exact winning reservation.
+            with Session(self._engine) as session:
+                existing = session.scalars(
+                    select(InventoryReservationRecord).where(
+                        InventoryReservationRecord.merchant_id == merchant_id,
+                        InventoryReservationRecord.order_id == order_id,
+                    )
+                ).all()
+            if not existing:
+                raise
+            self._assert_same_order(existing, expected)
+
+    def commit_order(self, merchant_id: str, order_id: str) -> None:
+        """Transfer active holds into a durable local-sale offset."""
+        with Session(self._engine) as session:
+            records = session.scalars(
+                select(InventoryReservationRecord).where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.order_id == order_id,
+                    InventoryReservationRecord.status == "RESERVED",
+                )
+            ).all()
+            for record in records:
+                claimed = session.execute(
+                    update(InventoryReservationRecord)
+                    .where(
+                        InventoryReservationRecord.reservation_id == record.reservation_id,
+                        InventoryReservationRecord.status == "RESERVED",
+                    )
+                    .values(status="COMMITTED")
+                )
+                if claimed.rowcount != 1:
+                    continue
+                committed = session.execute(
+                    update(CatalogProductRecord)
+                    .where(
+                        CatalogProductRecord.id == f"{merchant_id}:{record.sku}",
+                        CatalogProductRecord.merchant_id == merchant_id,
+                        CatalogProductRecord.reserved_stock >= record.quantity,
+                    )
+                    .values(
+                        reserved_stock=CatalogProductRecord.reserved_stock - record.quantity,
+                        committed_stock=CatalogProductRecord.committed_stock + record.quantity,
+                    )
+                )
+                if committed.rowcount != 1:
+                    raise RuntimeError(
+                        f"cannot commit inventory reservation for SKU {record.sku}"
+                    )
+            session.commit()
+
+    def acknowledge_source_order(self, merchant_id: str, order_id: str) -> list[str]:
+        """Clear committed offsets after an owner confirms the source applied this order.
+
+        Ordinary stock-count snapshots cannot identify which sales they include.
+        Only an explicit acknowledgement for the exact order may clear its offset.
+        Repeated acknowledgements are safe.
+        """
+        acknowledged_skus: list[str] = []
+        with Session(self._engine) as session:
+            records = session.scalars(
+                select(InventoryReservationRecord)
+                .where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.order_id == order_id,
+                    InventoryReservationRecord.status == "COMMITTED",
+                )
+                .with_for_update()
+            ).all()
+            if not records:
+                existing = session.scalars(
+                    select(InventoryReservationRecord).where(
+                        InventoryReservationRecord.merchant_id == merchant_id,
+                        InventoryReservationRecord.order_id == order_id,
+                    )
+                ).all()
+                if existing and all(record.status == "ACKNOWLEDGED" for record in existing):
+                    return []
+                raise InventoryReservationConflict(
+                    "source acknowledgement requires committed inventory for this order"
+                )
+
+            for record in records:
+                updated = session.execute(
+                    update(CatalogProductRecord)
+                    .where(
+                        CatalogProductRecord.id == f"{merchant_id}:{record.sku}",
+                        CatalogProductRecord.merchant_id == merchant_id,
+                        CatalogProductRecord.committed_stock >= record.quantity,
+                    )
+                    .values(
+                        committed_stock=CatalogProductRecord.committed_stock - record.quantity
+                    )
+                )
+                if updated.rowcount != 1:
+                    raise RuntimeError(
+                        f"cannot acknowledge inventory for SKU {record.sku}"
+                    )
+                claimed = session.execute(
+                    update(InventoryReservationRecord)
+                    .where(
+                        InventoryReservationRecord.reservation_id == record.reservation_id,
+                        InventoryReservationRecord.status == "COMMITTED",
+                    )
+                    .values(status="ACKNOWLEDGED")
+                )
+                if claimed.rowcount != 1:
+                    raise InventoryReservationConflict(
+                        "inventory acknowledgement changed concurrently"
+                    )
+                acknowledged_skus.append(record.sku)
+            session.commit()
+        return acknowledged_skus
+
+    def release_order(self, merchant_id: str, order_id: str) -> list[str]:
+        """Restore units only for an aborted order; repeated calls are harmless."""
+        released_skus: list[str] = []
+        with Session(self._engine) as session:
+            records = session.scalars(
+                select(InventoryReservationRecord).where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.order_id == order_id,
+                    InventoryReservationRecord.status == "RESERVED",
+                )
+            ).all()
+            for record in records:
+                claimed = session.execute(
+                    update(InventoryReservationRecord)
+                    .where(
+                        InventoryReservationRecord.reservation_id == record.reservation_id,
+                        InventoryReservationRecord.status == "RESERVED",
+                    )
+                    .values(status="RELEASED")
+                )
+                if claimed.rowcount != 1:
+                    continue
+                restored = session.execute(
+                    update(CatalogProductRecord)
+                    .where(
+                        CatalogProductRecord.id == f"{merchant_id}:{record.sku}",
+                        CatalogProductRecord.merchant_id == merchant_id,
+                        CatalogProductRecord.reserved_stock >= record.quantity,
+                    )
+                    .values(
+                        reserved_stock=CatalogProductRecord.reserved_stock - record.quantity
+                    )
+                )
+                if restored.rowcount != 1:
+                    raise RuntimeError(
+                        f"cannot release reservation: catalog SKU {record.sku} is missing"
+                    )
+                released_skus.append(record.sku)
+            session.commit()
+        return released_skus
+
+    def available_stock(self, merchant_id: str, sku: str) -> int | None:
+        with Session(self._engine) as session:
+            row = session.execute(
+                select(
+                    CatalogProductRecord.stock,
+                    CatalogProductRecord.reserved_stock,
+                    CatalogProductRecord.committed_stock,
+                ).where(
+                    CatalogProductRecord.id == f"{merchant_id}:{sku}",
+                    CatalogProductRecord.merchant_id == merchant_id,
+                    CatalogProductRecord.sku == sku,
+                )
+            ).first()
+        if row is None:
+            return None
+        return max(0, row[0] - row[1] - row[2])
+
+    def status_for_order(self, merchant_id: str, order_id: str) -> dict[str, str]:
+        with Session(self._engine) as session:
+            records = session.scalars(
+                select(InventoryReservationRecord).where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.order_id == order_id,
+                )
+            ).all()
+            return {record.sku: record.status for record in records}
+
+
+    def reconcile_aborted_orders(self, merchant_id: str) -> int:
+        """Release reservations left behind by a crash after an abort transition."""
+        with Session(self._engine) as session:
+            order_ids = session.scalars(
+                select(InventoryReservationRecord.order_id)
+                .join(
+                    OrderRecord,
+                    OrderRecord.order_id == InventoryReservationRecord.order_id,
+                )
+                .where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.status == "RESERVED",
+                    OrderRecord.merchant_id == merchant_id,
+                    OrderRecord.status == OrderStatus.ABORTED.value,
+                )
+                .distinct()
+            ).all()
+        for order_id in order_ids:
+            self.release_order(merchant_id, order_id)
+        return len(order_ids)
+
+    def release_orphaned_reservations(
+        self, merchant_id: str, *, before: datetime
+    ) -> int:
+        """Recover reservations committed before a process died before order insert."""
+        order_exists = select(OrderRecord.order_id).where(
+            OrderRecord.order_id == InventoryReservationRecord.order_id,
+            OrderRecord.merchant_id == InventoryReservationRecord.merchant_id,
+        ).exists()
+        with Session(self._engine) as session:
+            order_ids = session.scalars(
+                select(InventoryReservationRecord.order_id)
+                .where(
+                    InventoryReservationRecord.merchant_id == merchant_id,
+                    InventoryReservationRecord.status == "RESERVED",
+                    InventoryReservationRecord.created_at < before,
+                    ~order_exists,
+                )
+                .distinct()
+            ).all()
+        for order_id in order_ids:
+            self.release_order(merchant_id, order_id)
+        return len(order_ids)
+
+
 class CatalogRepository:
     """DB-backed, per-merchant product catalog (the real source of truth)."""
 
@@ -772,7 +1142,7 @@ class CatalogRepository:
                     description=r.description,
                     price_paise=r.price_paise,
                     floor_paise=r.floor_paise,
-                    stock=r.stock,
+                    stock=max(0, r.stock - r.reserved_stock - r.committed_stock),
                     category=r.category,
                     attributes=r.attributes or {},
                 )

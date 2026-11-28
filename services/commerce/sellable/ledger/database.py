@@ -311,9 +311,34 @@ class CatalogProductRecord(Base):
     description: Mapped[str] = mapped_column(String(1000), nullable=False, default="")
     price_paise: Mapped[int] = mapped_column(Integer, nullable=False)
     floor_paise: Mapped[int] = mapped_column(Integer, nullable=False)
+    # stock is the latest source-system on-hand quantity. Local orders apply
+    # offsets so connector refreshes cannot silently restore reserved/sold units.
     stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reserved_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    committed_stock: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     category: Mapped[str] = mapped_column(String(64), nullable=False)
     attributes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class InventoryReservationRecord(Base):
+    """Idempotent per-order reservations against the merchant's available stock."""
+
+    __tablename__ = "inventory_reservations"
+
+    reservation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    sku: Mapped[str] = mapped_column(String(64), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="RESERVED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "merchant_id", "order_id", "sku",
+            name="uq_inventory_reservation_order_sku",
+        ),
+    )
 
 
 class DelegationRecord(Base):
@@ -1240,6 +1265,10 @@ _LEDGER_ATTRIBUTION_COLUMNS: tuple[tuple[str, str], ...] = (
 _LATE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "ledger_events": _LEDGER_ATTRIBUTION_COLUMNS,
     "notifications": (("dedupe_key", "VARCHAR(160)"),),
+    "catalog_products": (
+        ("reserved_stock", "INTEGER NOT NULL DEFAULT 0"),
+        ("committed_stock", "INTEGER NOT NULL DEFAULT 0"),
+    ),
 }
 
 

@@ -104,6 +104,31 @@ redirects are disabled so integration credentials and webhook signatures are
 not forwarded to another host. Local HTTP integrations remain available only
 in `development` and `test` environments.
 
+**Inventory reservation rollout gate.** Before deploying a version that enables
+stock reservations over a database used by the previous backend, stop creating
+new checkouts and use the previous backend to cancel every open Razorpay payment
+link. Verify each cancellation with Razorpay and ensure its order reaches
+`ABORTED`; if cancellation is ambiguous or fails, keep the previous backend
+running and reconcile the payment outcome first. The new backend fails startup
+when it finds any `PAYMENT_PENDING` or `PAYMENT_FAILED` order without an active
+inventory reservation. Do not bypass this gate or accept a legacy link after
+rollout; it could capture payment without reserving stock.
+
+After rollout, every unpaid order holds stock for 15 minutes from order creation.
+The maintenance sweep aborts consent-stage orders directly. For payment-pending
+or payment-failed orders, it first reconciles the Razorpay link by the stable
+order reference, cancels any payable link, and releases stock only after the
+provider confirms the link is cancelled, expired, or absent. If the provider
+cannot confirm that state, the order and stock hold remain for the next retry
+or manual reconciliation.
+
+A lower catalog stock count does not acknowledge which order the source applied.
+After verifying that the source system has recorded a specific paid/fulfilled
+order, a merchant owner calls
+`POST /console/orders/{order_id}/inventory/acknowledge` to release that order's
+committed stock offset. Do not call it from a count-only sync. Repeated calls
+are safe; an unacknowledged offset remains deducted from availability.
+
 The first production release must run one Cloudflare Container instance. Keep `WEB_CONCURRENCY` and `UVICORN_WORKERS` unset or set to `1`; startup rejects multiple workers while consent and payment-attempt transitions remain process-local. Consent consumption
 and payment-attempt serialization still depend on process-local locks; the app
 rejects multiple workers but cannot detect multiple replicas. Do not scale the

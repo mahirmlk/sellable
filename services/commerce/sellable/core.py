@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
 
@@ -69,6 +70,8 @@ from sellable.repositories import (
     DelegationRepository,
     FraudRepository,
     FulfillmentRepository,
+    InventoryRepository,
+    InventoryReservationConflict,
     IdentityLinkRepository,
     MerchantOnboardingRepository,
     MerchantRepository,
@@ -126,6 +129,7 @@ class CommerceCore:
         policy: MerchantPolicy,
         ledger: LedgerRepository,
         order_repo: OrderRepository | None = None,
+        inventory_repo: InventoryRepository | None = None,
         consent_repo: ConsentRepository | None = None,
         consent_service: ConsentService | None = None,
         policy_engine: PolicyEngine | None = None,
@@ -171,6 +175,7 @@ class CommerceCore:
         self.policy = policy
         self.ledger = ledger
         self.order_repo = order_repo or OrderRepository(engine=engine)
+        self.inventory_repo = inventory_repo or InventoryRepository(engine=engine)
         self.consent_repo = consent_repo or ConsentRepository(engine=engine)
         self.consent_service = consent_service or ConsentService()
         self.policy_engine = policy_engine or PolicyEngine()
@@ -253,8 +258,12 @@ class CommerceCore:
         )
         self.case_service = case_service or CaseService(self.case_repo)
         self._idempotency_keys: dict[str, str] = {}
-        self._order_lock = threading.Lock()
+        # Reentrant because expiry holds this lock through the guarded abort transition.
+        self._order_lock = threading.RLock()
         self.merchant_scope = merchant_scope or policy.merchant_id
+        # Seed only missing catalog rows for direct/local core construction. Existing
+        # merchant inventory remains authoritative and is never overwritten here.
+        CatalogRepository(engine=engine).add_many(catalog.all())
 
         # Hydrate from database
         self._hydrate()
@@ -1528,6 +1537,17 @@ class CommerceCore:
                     raise IdempotencyReuseError(
                         "Idempotency key cannot be reused for a different transaction"
                     )
+                lines = [(line.sku, line.quantity) for line in checkout.lines]
+                if existing.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope, existing.order_id, lines
+                    )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 if checkout.order_id is None:
                     try:
                         self.checkout_service.link_order(
@@ -1620,11 +1640,14 @@ class CommerceCore:
                 idempotency_key=idempotency_key,
                 requires_approval=requires_approval,
             )
-            self._orders[order.order_id] = order
-            self._idempotency_keys[idempotency_key] = order.order_id
+            lines = [(line.sku, line.quantity) for line in checkout.lines]
+            self.inventory_repo.reserve_for_order(
+                self.merchant_scope, order.order_id, lines
+            )
             try:
                 self.order_repo.save(order)
             except IntegrityError:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
                 winner = self.order_repo.for_idempotency_key(
                     self.merchant_scope, idempotency_key
                 )
@@ -1634,9 +1657,25 @@ class CommerceCore:
                     raise IdempotencyReuseError(
                         "Idempotency key cannot be reused for a different transaction"
                     ) from None
+                if winner.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope, winner.order_id, lines
+                    )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 self._orders[winner.order_id] = winner
                 self._idempotency_keys[idempotency_key] = winner.order_id
                 return winner
+            except Exception:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
+                raise
+            self._orders[order.order_id] = order
+            self._idempotency_keys[idempotency_key] = order.order_id
+            self._refresh_inventory_stock([sku for sku, _ in lines])
             pending = self.checkout_service.mark_payment_pending(checkout_id, self.merchant_scope)
             _ = pending
             self.checkout_service.link_order(checkout_id, self.merchant_scope, order.order_id)
@@ -1763,6 +1802,17 @@ class CommerceCore:
                 # same order rather than 409ing a safe retry.
                 if existing.amount_paise != cart.total_paise:
                     raise IdempotencyReuseError("Idempotency key cannot be reused for a different transaction")
+                if existing.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    lines = [(item.sku, item.quantity) for item in cart.items]
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope, existing.order_id, lines
+                    )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 return existing
 
             # Delegation check (target §14): additive — orders without a
@@ -1842,14 +1892,17 @@ class CommerceCore:
                 idempotency_key=idempotency_key,
                 requires_approval=requires_approval,
             )
-            self._orders[order.order_id] = order
-            self._idempotency_keys[idempotency_key] = order.order_id
+            lines = [(item.sku, item.quantity) for item in cart.items]
+            self.inventory_repo.reserve_for_order(
+                self.merchant_scope, order.order_id, lines
+            )
             # Persist to database. The (merchant_id, idempotency_key) unique
             # constraint is the cross-worker backstop: if a concurrent process
             # won the race, resolve against the winner instead of duplicating.
             try:
                 self.order_repo.save(order)
             except IntegrityError:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
                 winner = self.order_repo.for_idempotency_key(
                     self.merchant_scope, idempotency_key
                 )
@@ -1859,9 +1912,25 @@ class CommerceCore:
                     raise IdempotencyReuseError(
                         "Idempotency key cannot be reused for a different transaction"
                     ) from None
+                if winner.status in {
+                    OrderStatus.AWAITING_CONSENT,
+                    OrderStatus.CONSENTED,
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }:
+                    self.inventory_repo.reserve_for_order(
+                        self.merchant_scope, winner.order_id, lines
+                    )
+                    self._refresh_inventory_stock([sku for sku, _ in lines])
                 self._orders[winner.order_id] = winner
                 self._idempotency_keys[idempotency_key] = winner.order_id
                 return winner
+            except Exception:
+                self.inventory_repo.release_order(self.merchant_scope, order.order_id)
+                raise
+            self._orders[order.order_id] = order
+            self._idempotency_keys[idempotency_key] = order.order_id
+            self._refresh_inventory_stock([sku for sku, _ in lines])
             self._record(
                 trace_id=trace_id,
                 actor=LedgerActor.COMMERCE_CORE,
@@ -1969,6 +2038,7 @@ class CommerceCore:
         # atomic DB transition (UPDATE ... WHERE status=ISSUED RETURNING).
         with self._order_lock:
             order = self.get_order(order_id)
+            self._require_inventory_reservation(order_id)
             # Validate the transition BEFORE burning the single-use consent:
             # a failed transition must leave the consent ISSUED so the order
             # stays recoverable instead of bricking.
@@ -2060,6 +2130,7 @@ class CommerceCore:
         return order
 
     def mark_payment_pending(self, order_id: str, *, provider_ref: str | None = None) -> Order:
+        self._require_inventory_reservation(order_id)
         return self._transition_order(
             order_id,
             OrderStatus.PAYMENT_PENDING,
@@ -2082,6 +2153,9 @@ class CommerceCore:
             explanation="A signature-verified provider event confirmed that payment was captured.",
             provider_ref=provider_ref,
         )
+        # Reconcile on every delivery, including duplicate paid webhooks after a
+        # crash between the order transition and inventory settlement.
+        self.inventory_repo.commit_order(self.merchant_scope, order_id)
         if before is not OrderStatus.PAID:
             self._publish_outbox(
                 event_type="order.paid",
@@ -2269,13 +2343,128 @@ class CommerceCore:
             )
         return updated
 
-    def mark_aborted(self, order_id: str, *, reason: str) -> Order:
-        return self._transition_order(
+    def _require_inventory_reservation(self, order_id: str) -> None:
+        statuses = self.inventory_repo.status_for_order(self.merchant_scope, order_id)
+        if not statuses or any(status != "RESERVED" for status in statuses.values()):
+            raise ValueError(
+                "order inventory must be reserved before consent or payment"
+            )
+
+    def _refresh_inventory_stock(self, skus: Sequence[str] | None = None) -> None:
+        target_skus = set(skus or (product.sku for product in self.catalog.all()))
+        for sku in target_skus:
+            available = self.inventory_repo.available_stock(self.merchant_scope, sku)
+            if available is not None:
+                try:
+                    self.catalog.set_available_stock(sku, available)
+                except ValueError:
+                    # A source sync may have removed the item from this cache.
+                    logger.debug("Inventory cache refresh skipped for unknown SKU %s", sku)
+
+    def acknowledge_inventory_source_order(
+        self, order_id: str, *, acknowledged_by: str
+    ) -> list[str]:
+        """Release committed offsets after a merchant owner confirms source sync."""
+        with self._order_lock:
+            order = self.get_order(order_id)
+            if order.status not in {OrderStatus.PAID, OrderStatus.FULFILLED}:
+                raise ValueError(
+                    "inventory source acknowledgement requires a paid or fulfilled order"
+                )
+            try:
+                acknowledged_skus = self.inventory_repo.acknowledge_source_order(
+                    self.merchant_scope, order_id
+                )
+            except InventoryReservationConflict as error:
+                raise ValueError(str(error)) from error
+            if not acknowledged_skus:
+                return []
+            self._refresh_inventory_stock(acknowledged_skus)
+            self._record(
+                trace_id=order.trace_id,
+                actor=LedgerActor.HUMAN,
+                action="inventory.source_acknowledged",
+                inputs={
+                    "order_id": order_id,
+                    "acknowledged_by": acknowledged_by,
+                    "skus": acknowledged_skus,
+                },
+                output={"status": "ACKNOWLEDGED"},
+                reasoning_summary=(
+                    "A merchant owner confirmed the catalog source has applied this order."
+                ),
+            )
+            return acknowledged_skus
+
+    def expire_stale_unpaid_orders(
+        self,
+        *,
+        expire_payment_order: Callable[[str, CommerceCore], bool] | None = None,
+    ) -> int:
+        """Abort unpaid orders 15 minutes after creation, after cancel confirmation.
+
+        Consent-stage orders have no payment link. Payment-pending/failed orders
+        stay reserved unless the provider confirms the link is cancelled, expired,
+        or absent. An uncertain provider result leaves the hold in place for retry.
+        """
+        cutoff = utc_now() - timedelta(minutes=15)
+        expired = 0
+        for order_id in self.order_repo.stale_unpaid_ids(self.merchant_scope, cutoff):
+            try:
+                order = self.get_order(order_id)
+                needs_provider_confirmation = order.status in {
+                    OrderStatus.PAYMENT_PENDING,
+                    OrderStatus.PAYMENT_FAILED,
+                }
+                if needs_provider_confirmation:
+                    # The payment service serializes link cancellation and
+                    # the ABORTED transition against retries and payment
+                    # settlement. It returns true only after both are complete.
+                    if expire_payment_order is None:
+                        continue
+                    if not expire_payment_order(order_id, self):
+                        continue
+                if not needs_provider_confirmation:
+                    self.mark_aborted(
+                        order_id,
+                        reason="Unpaid order exceeded the 15-minute stock hold window.",
+                    )
+                expired += 1
+            except Exception:  # noqa: BLE001 — one bad row must not stop the sweep
+                logger.exception("Could not expire stale unpaid order %s", order_id)
+        self.inventory_repo.reconcile_aborted_orders(self.merchant_scope)
+        self.inventory_repo.release_orphaned_reservations(
+            self.merchant_scope, before=utc_now() - timedelta(minutes=5)
+        )
+        self._refresh_inventory_stock()
+        return expired
+
+    def mark_aborted(
+        self,
+        order_id: str,
+        *,
+        reason: str,
+        provider_link_cancelled: bool = False,
+    ) -> Order:
+        current = self.get_order(order_id)
+        if current.status in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED}:
+            if not provider_link_cancelled:
+                raise ValueError(
+                    "provider link cancellation must be confirmed before releasing stock"
+                )
+        aborted = self._transition_order(
             order_id,
             OrderStatus.ABORTED,
             action="order.aborted",
             explanation=f"The order was aborted safely: {reason}",
         )
+        # Release is idempotent and happens after the state transition so failed
+        # persistence never makes reserved inventory available prematurely.
+        released_skus = self.inventory_repo.release_order(
+            self.merchant_scope, order_id
+        )
+        self._refresh_inventory_stock(released_skus)
+        return aborted
 
     def _transition_order(
         self,
@@ -2286,24 +2475,29 @@ class CommerceCore:
         explanation: str,
         provider_ref: str | None = None,
     ) -> Order:
-        order = self.get_order(order_id)
-        if order.status is target:
-            return order  # idempotent: duplicate webhook/delivery must not crash
-        updated_order = order.model_copy(update={"status": transition(order.status, target)})
-        self._orders[order_id] = updated_order
-        # Persist updated order
-        self.order_repo.save(updated_order)
-        self._record(
-            trace_id=order.trace_id,
-            actor=LedgerActor.COMMERCE_CORE,
-            action=action,
-            inputs={"order_id": order_id, "previous_status": order.status},
-            output={"status": updated_order.status},
-            reasoning_summary=explanation,
-            provider_ref=provider_ref,
-            outcome_effect={"order_state": updated_order.status},
-        )
-        return updated_order
+        # Serialize state transitions with consent consumption and order creation.
+        # The first release remains single-replica; this also closes thread races
+        # between a paid webhook and an abort/release in that process.
+        with self._order_lock:
+            order = self.get_order(order_id)
+            if order.status is target:
+                return order  # idempotent: duplicate webhook/delivery must not crash
+            updated_order = order.model_copy(
+                update={"status": transition(order.status, target)}
+            )
+            self._orders[order_id] = updated_order
+            self.order_repo.save(updated_order)
+            self._record(
+                trace_id=order.trace_id,
+                actor=LedgerActor.COMMERCE_CORE,
+                action=action,
+                inputs={"order_id": order_id, "previous_status": order.status},
+                output={"status": updated_order.status},
+                reasoning_summary=explanation,
+                provider_ref=provider_ref,
+                outcome_effect={"order_state": updated_order.status},
+            )
+            return updated_order
 
     def _publish_outbox(
         self,

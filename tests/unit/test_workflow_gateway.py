@@ -257,6 +257,7 @@ def test_refund_requires_paid_order(commerce_core: CommerceCore, monkeypatch: py
 class _FakePaymentLinks:
     def __init__(self) -> None:
         self.calls = 0
+        self.cancelled: list[str] = []
 
     def create(self, data: dict[str, object]) -> dict[str, object]:
         self.calls += 1
@@ -270,6 +271,10 @@ class _FakePaymentLinks:
             # payment.captured/failed webhooks reference it via order_id.
             "order_id": f"order_test_{self.calls}",
         }
+
+    def cancel(self, link_id: str) -> dict[str, object]:
+        self.cancelled.append(link_id)
+        return {"id": link_id, "status": "cancelled"}
 
 
 class _FakeUtility:
@@ -363,6 +368,7 @@ def test_bounded_retry_is_idempotent_and_aborts_after_limit(commerce_core: Comme
     with pytest.raises(ValueError, match="Retry limit"):
         payments.retry_payment(order_id=order.order_id)
     assert commerce_core.get_order(order.order_id).status is OrderStatus.ABORTED
+    assert len(client.payment_link.cancelled) == 1
 
     actions = [e.action for e in commerce_core.ledger.for_trace(order.trace_id)]
     assert "retry.started" in actions

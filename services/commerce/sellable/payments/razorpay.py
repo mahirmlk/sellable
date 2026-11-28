@@ -143,7 +143,9 @@ class RazorpayAdapter:
             provider_order_id=response.get("order_id"),
         )
 
-    def find_payment_link(self, order: Order) -> ProviderPaymentLink | None:
+    def find_payment_link(
+        self, order: Order, *, include_terminal: bool = False
+    ) -> ProviderPaymentLink | None:
         """Look up a prior link by the stable local order reference.
 
         This reconciles a create request whose response was lost before its
@@ -219,7 +221,7 @@ class RazorpayAdapter:
                 "Recovered Razorpay link does not match the local order",
                 retryable=False,
             )
-        if status in {"cancelled", "expired"}:
+        if status in {"cancelled", "expired"} and not include_terminal:
             raise RazorpayRequestError(
                 "Recovered Razorpay payment link is no longer payable",
                 retryable=False,
@@ -321,10 +323,10 @@ class RazorpayAdapter:
         )
 
     def cancel_payment_link(self, link_id: str) -> None:
-        """Cancel a live payment link so it can no longer be paid."""
+        """Cancel a payment link and require Razorpay to confirm a terminal state."""
         self.validate_configuration()
         try:
-            self._sdk_client.payment_link.cancel(link_id)
+            response = self._sdk_client.payment_link.cancel(link_id)
         except BadRequestError as error:
             raise RazorpayRequestError(
                 f"Razorpay rejected the link cancellation: {error}", retryable=False
@@ -333,6 +335,21 @@ class RazorpayAdapter:
             raise RazorpayRequestError(
                 f"Razorpay could not cancel the link: {error}", retryable=True
             ) from error
+
+        # A successful HTTP response alone is not enough to release reserved
+        # stock: only the provider's terminal link state proves that the URL
+        # can no longer accept payment. Treat malformed or still-payable
+        # responses as ambiguous so callers keep the order and reservation.
+        status = response.get("status") if isinstance(response, dict) else None
+        provider_link_id = response.get("id") if isinstance(response, dict) else None
+        if provider_link_id != link_id or str(status).lower() not in {
+            "cancelled",
+            "expired",
+        }:
+            raise RazorpayRequestError(
+                "Razorpay did not confirm that the payment link is no longer payable",
+                retryable=True,
+            )
 
     def verify_webhook(self, body: bytes, signature: str | None) -> None:
         self._ensure_webhook_configuration()

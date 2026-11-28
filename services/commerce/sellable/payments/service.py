@@ -232,6 +232,70 @@ class PaymentService:
         )
         return True
 
+    def cancel_provider_link_for_expiry(
+        self, order_id: str, *, commerce: CommerceCore | None = None
+    ) -> bool:
+        """Cancel/reconcile the provider link and abort a stale order atomically.
+
+        The service lock serializes expiry against payment creation and retries;
+        the core order lock serializes it against webhook settlement. Stock is
+        released only after a confirmed terminal/absent link and an ABORTED
+        order transition.
+        """
+        core = commerce or self._core_for(order_id)
+        with self._lock, core._order_lock:
+            order = core.get_order(order_id)
+            if order.status not in {
+                OrderStatus.PAYMENT_PENDING,
+                OrderStatus.PAYMENT_FAILED,
+            }:
+                return False
+
+            finder = getattr(self.rail, "find_payment_link", None)
+            if not callable(finder):
+                return False
+            provider_link = self.provider_breaker.call(
+                finder, order, include_terminal=True
+            )
+            if provider_link is not None:
+                if (
+                    order.provider_link_id
+                    and order.provider_link_id != provider_link.provider_link_id
+                ):
+                    return False
+
+                status = str(provider_link.status).lower()
+                if status in {"paid", "partially_paid"}:
+                    # Let the verified payment webhook reconcile the order.
+                    return False
+                if status not in {"cancelled", "expired"}:
+                    self.provider_breaker.call(
+                        self.rail.cancel_payment_link, provider_link.provider_link_id
+                    )
+
+                self._record(
+                    core=core,
+                    trace_id=order.trace_id,
+                    action="payment.link_cancelled",
+                    inputs={"order_id": order_id},
+                    output={
+                        "provider_link_id": provider_link.provider_link_id,
+                        "provider_status": status,
+                    },
+                    provider_ref=provider_link.provider_link_id,
+                    explanation=(
+                        "Confirmed the provider payment link cannot be paid before "
+                        "releasing the order's inventory reservation."
+                    ),
+                )
+
+            core.mark_aborted(
+                order_id,
+                reason="Unpaid order exceeded the 15-minute stock hold window.",
+                provider_link_cancelled=True,
+            )
+            return True
+
     def retry_payment(self, *, order_id: str, commerce: CommerceCore | None = None) -> PaymentAttempt:
         """Perform at most one bounded, idempotent retry after a verified failure."""
         core = commerce or self._core_for(order_id)
@@ -242,12 +306,32 @@ class PaymentService:
                 f"Retry requires a PAYMENT_FAILED order; current status is {order.status}"
             )
         with self._lock:
+            # Expiry may have cancelled the link and aborted this order while
+            # the retry request waited for the serialization lock.
+            order = core.get_order(order_id)
+            if order.status is not OrderStatus.PAYMENT_FAILED:
+                raise ValueError(
+                    f"Retry requires a PAYMENT_FAILED order; current status is {order.status}"
+                )
             # Restart-proof budget: count `retry.started` ledger events for
             # this trace instead of trusting process memory. Checked under the
             # lock so concurrent retries cannot both pass.
             retries = core.ledger.count_actions(order.trace_id, "retry.started")
             if retries >= self.MAX_RETRIES:
-                core.mark_aborted(order_id, reason="Retry limit reached")
+                # The previous Payment Link may still accept payment even after
+                # a failed attempt. Never release stock until Razorpay confirms
+                # the link cancellation.
+                cancelled = self.cancel_provider_link(order_id, commerce=core)
+                if not cancelled:
+                    raise ValueError(
+                        "Retry limit reached, but the provider link could not be confirmed "
+                        "cancelled; inventory remains reserved for reconciliation"
+                    )
+                core.mark_aborted(
+                    order_id,
+                    reason="Retry limit reached",
+                    provider_link_cancelled=True,
+                )
                 self._record(
                     core=core,
                     trace_id=order.trace_id,

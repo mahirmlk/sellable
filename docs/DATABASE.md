@@ -104,6 +104,39 @@ CREATE INDEX ix_ledger_events_merchant_id ON ledger_events(merchant_id);
 
 ---
 
+### `catalog_products` and `inventory_reservations`
+
+`catalog_products.stock` stores the latest source-system on-hand quantity.
+`reserved_stock` and `committed_stock` are local offsets, so available units
+are `max(0, stock - reserved_stock - committed_stock)`. A catalog refresh
+updates source stock without clearing active reservations or committed
+sale offsets. A stock count cannot identify which local order it includes, so
+ordinary lower snapshots never acknowledge a Sellable sale. After the source
+system has applied a specific paid/fulfilled order, a merchant owner can
+acknowledge that order through
+`POST /console/orders/{order_id}/inventory/acknowledge`; this atomically clears
+that order's committed offsets and is idempotent. Until then, availability is
+conservative and may temporarily understate stock.
+
+Before an order is inserted, a conditional database update reserves every SKU
+only when its available quantity is sufficient, and a unique
+`(merchant_id, order_id, sku)` row records the reservation. The transaction
+rolls back all lines if any SKU is short. Verified payment moves reserved
+quantities to committed offsets. An abort releases reserved quantities once;
+refunded orders do not restock automatically because a physical return is not
+implied by a money refund.
+
+Every unpaid order is considered for abort after a 15-minute hold from
+order creation. Consent-stage orders have no payment link and release their
+reservation when aborted. Payment-pending and payment-failed orders first
+reconcile the Razorpay link by the stable order reference, cancel any payable
+link, and release stock only after the provider confirms that the link is
+cancelled, expired, or absent. Uncertain outcomes retain the reservation for
+the next retry or manual reconciliation. Expiry serializes cancellation and
+abort against payment retries and webhook settlement. The maintenance sweep
+also repairs interrupted releases and removes orphan reservations left by a
+process crash before order insertion.
+
 ### `orders`
 
 Persisted order state. Created when a buyer accepts a quote and the policy engine allows the transaction. Updated on every status transition.

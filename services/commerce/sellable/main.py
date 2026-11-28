@@ -114,6 +114,7 @@ from sellable.registry import (
 )
 from sellable.repositories import (
     CatalogRepository,
+    InventoryRepository,
     CheckoutSessionRepository,
     IdentityLinkRepository,
     MerchantRepository,
@@ -304,6 +305,13 @@ def _maintenance_tick() -> bool:
             core = registry.get(merchant_id)
             core.cart_service.expire_due(merchant_id)
             core.checkout_service.expire_due(merchant_id)
+            core.expire_stale_unpaid_orders(
+                expire_payment_order=lambda order_id, scoped_core: (
+                    payment_service.cancel_provider_link_for_expiry(
+                        order_id, commerce=scoped_core
+                    )
+                )
+            )
             session_service.expire_due(merchant_id)
         except Exception as error:  # noqa: BLE001 — sweeps never kill the worker
             failed = True
@@ -382,6 +390,15 @@ async def lifespan(_: FastAPI):
     _assert_production_configuration()
     initialise_database()
     logger.info("Database initialized")
+    if (
+        not settings.is_dev_environment
+        and InventoryRepository().has_unreserved_active_payment_orders()
+    ):
+        raise RuntimeError(
+            "Startup refused: legacy PAYMENT_PENDING/PAYMENT_FAILED orders lack "
+            "inventory reservations. Stop new checkouts and cancel/verify every "
+            "open provider link on the previous version before rolling out."
+        )
     # Non-blocking JWKS warm: daemon thread only, startup never waits on it.
     try:
         from sellable.supabase_jwt import warm_jwks_cache
@@ -1978,10 +1995,13 @@ def commerce_order_cancel_request(
             status_code=409,
             detail="settled orders cannot be cancelled by an agent; use returns/refunds",
         )
-    if order.provider_link_id:
+    if order.provider_link_id or order.status in {
+        OrderStatus.PAYMENT_PENDING,
+        OrderStatus.PAYMENT_FAILED,
+    }:
         raise HTTPException(
             status_code=409,
-            detail="a live payment link exists; only the merchant can cancel this order",
+            detail="a provider link may still be payable; only the merchant can cancel it",
         )
     try:
         aborted = core.mark_aborted(
@@ -4229,19 +4249,27 @@ def console_reject_order(
         order = core.get_order(order_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    if order.status is OrderStatus.PAYMENT_PENDING and order.provider_link_id:
-        # A live provider link exists: cancel it first so the aborted order
-        # can never be paid afterwards. Fail closed — no abort while the
-        # link may still be payable.
+    if order.status in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED}:
+        # Fail closed if a possibly live link cannot be positively cancelled.
         try:
-            payments.cancel_provider_link(order_id, commerce=core)
+            cancelled = payments.cancel_provider_link(order_id, commerce=core)
+            if not cancelled:
+                raise HTTPException(
+                    status_code=502,
+                    detail="Cannot abort until the provider confirms link cancellation.",
+                )
         except (RazorpayConfigurationError, RazorpayRequestError) as error:
             raise HTTPException(
                 status_code=502,
                 detail=f"Could not cancel the live payment link: {error}",
             ) from error
     try:
-        core.mark_aborted(order_id, reason="Order rejected by merchant via console.")
+        core.mark_aborted(
+            order_id,
+            reason="Order rejected by merchant via console.",
+            provider_link_cancelled=order.status
+            in {OrderStatus.PAYMENT_PENDING, OrderStatus.PAYMENT_FAILED},
+        )
         return {"status": "rejected", "order_id": order_id}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -4269,6 +4297,30 @@ def console_fulfill_order(
         return {"status": order.status, "order_id": order_id}
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/console/orders/{order_id}/inventory/acknowledge", tags=["console"])
+@limiter.limit("30/minute")
+def console_acknowledge_inventory_source(
+    request: Request,
+    order_id: str,
+    session: MerchantSession = Depends(get_merchant_session),
+) -> dict[str, object]:
+    """Acknowledge source sync after the merchant owner confirms this order is applied."""
+    require_owner(session)
+    core = merchant_core(session)
+    try:
+        skus = core.acknowledge_inventory_source_order(
+            order_id,
+            acknowledged_by=session.auth_user_id or "demo-owner",
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {
+        "status": "acknowledged" if skus else "already_acknowledged",
+        "order_id": order_id,
+        "skus": skus,
+    }
 
 
 @app.get("/console/insights", response_model=ConsoleGrowthMetrics, tags=["console"])

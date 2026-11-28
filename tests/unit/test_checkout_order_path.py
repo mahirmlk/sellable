@@ -9,10 +9,13 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from sellable.contracts import (
     CheckoutStatus,
     IntentMandate,
+    Order,
     OrderStatus,
     Promotion,
     PromotionType,
@@ -20,8 +23,9 @@ from sellable.contracts import (
     utc_now,
 )
 from sellable.core import CommerceCore
-from sellable.ledger.database import Base
+from sellable.ledger.database import Base, CatalogProductRecord, InventoryReservationRecord
 from sellable.ledger.service import LedgerRepository
+from sellable.repositories import CatalogRepository, InsufficientStockError
 
 
 @pytest.fixture
@@ -217,6 +221,325 @@ def test_order_from_checkout_gates(commerce_core: CommerceCore) -> None:
         trace_id=trace_id,
     )
     assert first.order_id == second.order_id
+
+
+
+def test_inventory_reservation_prevents_oversell_and_releases_aborted_order(
+    commerce_core: CommerceCore,
+) -> None:
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+
+    first_checkout = _authorized_checkout(commerce_core, _trace())
+    second_checkout = _authorized_checkout(commerce_core, _trace())
+    first_key = f"idem_stock_first_{uuid4().hex}"
+    first_order = commerce_core.create_order_from_checkout(
+        first_checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=first_key,
+        trace_id=_trace(),
+    )
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+    assert commerce_core.catalog.get("AUDIO-CASE-01").stock == 0
+
+    # A retry for the same order reuses its reservation and never decrements twice.
+    replay = commerce_core.create_order_from_checkout(
+        first_checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=first_key,
+        trace_id=_trace(),
+    )
+    assert replay.order_id == first_order.order_id
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, first_order.order_id
+    ) == {"AUDIO-CASE-01": "RESERVED"}
+
+    with pytest.raises(InsufficientStockError, match="insufficient stock"):
+        commerce_core.inventory_repo.reserve_for_order(
+            commerce_core.merchant_scope,
+            f"ord_competing_{uuid4().hex}",
+            [("AUDIO-CASE-01", 1)],
+        )
+    with pytest.raises(ValueError, match="INSUFFICIENT_STOCK"):
+        commerce_core.create_order_from_checkout(
+            second_checkout.checkout_id,
+            intent=_intent(),
+            idempotency_key=f"idem_stock_second_{uuid4().hex}",
+            trace_id=_trace(),
+        )
+
+    # An aborted order releases exactly once; the next distinct order can reserve.
+    commerce_core.mark_aborted(first_order.order_id, reason="test cancellation")
+    commerce_core.mark_aborted(first_order.order_id, reason="duplicate cancellation")
+    available = next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    )
+    assert available == 1
+    assert commerce_core.catalog.get("AUDIO-CASE-01").stock == 1
+
+    second_order = commerce_core.create_order_from_checkout(
+        second_checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_retry_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+    consent = commerce_core.issue_consent(second_order.order_id)
+    commerce_core.consume_consent(consent.consent_id, order_id=second_order.order_id)
+    commerce_core.mark_payment_pending(second_order.order_id)
+    commerce_core.mark_payment_failed(second_order.order_id, reason="retryable test failure")
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+    commerce_core.mark_payment_pending(second_order.order_id)
+    commerce_core.mark_paid(second_order.order_id, provider_ref="pay_stock_1")
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, second_order.order_id
+    ) == {"AUDIO-CASE-01": "COMMITTED"}
+
+    # Count-only snapshots, even lower values, cannot identify this order and
+    # therefore never clear its committed offset.
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 0})])
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 0
+
+    acknowledged = commerce_core.acknowledge_inventory_source_order(
+        second_order.order_id, acknowledged_by="test-owner"
+    )
+    assert acknowledged == ["AUDIO-CASE-01"]
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, second_order.order_id
+    ) == {"AUDIO-CASE-01": "ACKNOWLEDGED"}
+    assert commerce_core.acknowledge_inventory_source_order(
+        second_order.order_id, acknowledged_by="test-owner"
+    ) == []
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 1
+
+
+def test_inventory_source_acknowledgement_is_owner_only_and_idempotent(
+    commerce_core: CommerceCore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sellable import main as main_module
+    from sellable.main import app, get_merchant_session
+    from sellable.merchant_auth import MerchantSession
+
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    checkout = _authorized_checkout(commerce_core, _trace())
+    order = commerce_core.create_order_from_checkout(
+        checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_api_ack_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    consent = commerce_core.issue_consent(order.order_id)
+    commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
+    commerce_core.mark_payment_pending(order.order_id)
+    commerce_core.mark_paid(order.order_id, provider_ref="pay_stock_api_ack")
+
+    monkeypatch.setattr(main_module, "merchant_core", lambda _session: commerce_core)
+    app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
+        merchant_id=commerce_core.merchant_scope,
+        auth_user_id="usr_inventory_owner",
+        role="owner",
+    )
+    try:
+        with TestClient(app) as client:
+            path = f"/console/orders/{order.order_id}/inventory/acknowledge"
+            acknowledged = client.post(path)
+            assert acknowledged.status_code == 200, acknowledged.text
+            assert acknowledged.json()["status"] == "acknowledged"
+            replay = client.post(path)
+            assert replay.status_code == 200, replay.text
+            assert replay.json()["status"] == "already_acknowledged"
+
+            app.dependency_overrides[get_merchant_session] = lambda: MerchantSession(
+                merchant_id=commerce_core.merchant_scope,
+                auth_user_id="usr_inventory_member",
+                role="member",
+            )
+            denied = client.post(path)
+            assert denied.status_code == 403, denied.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_external_stock_decrease_does_not_acknowledge_local_sale(
+    commerce_core: CommerceCore,
+) -> None:
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 2})])
+    checkout = _authorized_checkout(commerce_core, _trace())
+    order = commerce_core.create_order_from_checkout(
+        checkout.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_external_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    consent = commerce_core.issue_consent(order.order_id)
+    commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
+    commerce_core.mark_payment_pending(order.order_id)
+    commerce_core.mark_paid(order.order_id, provider_ref="pay_stock_external")
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
+    ) == 1
+
+    # An unrelated source sale lowers the count from 2 to 1. It cannot be
+    # assumed to include this local sale, so both units remain accounted for.
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
+    ) == 0
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, order.order_id
+    ) == {product.sku: "COMMITTED"}
+
+    # Once the source has applied this exact order, the owner acknowledges it.
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 0})])
+    assert commerce_core.acknowledge_inventory_source_order(
+        order.order_id, acknowledged_by="test-owner"
+    ) == [product.sku]
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
+    ) == 0
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    assert commerce_core.inventory_repo.available_stock(
+        commerce_core.merchant_scope, product.sku
+    ) == 1
+
+
+def test_rollout_gate_detects_legacy_payment_orders_without_inventory_holds(
+    commerce_core: CommerceCore,
+) -> None:
+    merchant_id = commerce_core.merchant_scope
+    order = Order(
+        trace_id=_trace(),
+        quote_id="legacy_quote",
+        buyer_agent_id="legacy_agent",
+        merchant_id=merchant_id,
+        amount_paise=100,
+        idempotency_key=f"legacy_payment_{uuid4().hex}",
+        status=OrderStatus.PAYMENT_PENDING,
+        provider_link_id="legacy_provider_link",
+    )
+    commerce_core.order_repo.save(order)
+
+    assert commerce_core.inventory_repo.has_unreserved_active_payment_orders()
+
+    # Rollout is safe only after an active reservation exists for every old
+    # payment-capable order; cancellation is the documented pre-deploy path.
+    commerce_core.inventory_repo.reserve_for_order(
+        merchant_id, order.order_id, [("AUDIO-CASE-01", 1)]
+    )
+    assert not commerce_core.inventory_repo.has_unreserved_active_payment_orders()
+
+
+def test_orphaned_reservation_is_released_after_order_insert_crash(
+    commerce_core: CommerceCore,
+) -> None:
+    merchant_id = commerce_core.merchant_scope
+    order_id = f"ord_missing_{uuid4().hex}"
+    sku = "AUDIO-CASE-01"
+    with Session(commerce_core.order_repo._engine) as session:
+        catalog_row = session.get(CatalogProductRecord, f"{merchant_id}:{sku}")
+        assert catalog_row is not None
+        catalog_row.reserved_stock = 1
+        session.add(
+            InventoryReservationRecord(
+                reservation_id="a" * 64,
+                merchant_id=merchant_id,
+                order_id=order_id,
+                sku=sku,
+                quantity=1,
+                status="RESERVED",
+                created_at=utc_now() - timedelta(minutes=10),
+            )
+        )
+        session.commit()
+
+    released = commerce_core.inventory_repo.release_orphaned_reservations(
+        merchant_id, before=utc_now() - timedelta(minutes=5)
+    )
+    assert released == 1
+    assert commerce_core.inventory_repo.status_for_order(merchant_id, order_id) == {
+        sku: "RELEASED"
+    }
+
+
+def test_stale_consent_stage_order_releases_its_stock_hold(
+    commerce_core: CommerceCore,
+) -> None:
+    catalog_repo = CatalogRepository(engine=commerce_core.order_repo._engine)
+    product = commerce_core.catalog.get("AUDIO-CASE-01")
+    catalog_repo.upsert_many([product.model_copy(update={"stock": 1})])
+    authorized = _authorized_checkout(commerce_core, _trace())
+    order = commerce_core.create_order_from_checkout(
+        authorized.checkout_id,
+        intent=_intent(),
+        idempotency_key=f"idem_stock_expire_{uuid4().hex}",
+        trace_id=_trace(),
+    )
+    stale = order.model_copy(update={"created_at": utc_now() - timedelta(minutes=16)})
+    commerce_core.order_repo.save(stale)
+
+    assert commerce_core.expire_stale_unpaid_orders() == 1
+    assert commerce_core.get_order(order.order_id).status is OrderStatus.ABORTED
+    assert commerce_core.inventory_repo.status_for_order(
+        commerce_core.merchant_scope, order.order_id
+    ) == {"AUDIO-CASE-01": "RELEASED"}
+    assert next(
+        p.stock
+        for p in catalog_repo.list(commerce_core.merchant_scope)
+        if p.sku == "AUDIO-CASE-01"
+    ) == 1
+
+
+def test_payment_consent_fails_closed_without_inventory_reservation(
+    commerce_core: CommerceCore,
+) -> None:
+    order = Order(
+        trace_id=_trace(),
+        quote_id="legacy_quote",
+        buyer_agent_id="buyer_legacy",
+        merchant_id=commerce_core.merchant_scope,
+        amount_paise=5_000,
+        idempotency_key=f"idem_legacy_unreserved_{uuid4().hex}",
+    )
+    commerce_core.order_repo.save(order)
+    consent = commerce_core.issue_consent(order.order_id)
+
+    with pytest.raises(ValueError, match="inventory must be reserved"):
+        commerce_core.consume_consent(consent.consent_id, order_id=order.order_id)
+    assert commerce_core.consent_repo.get(consent.consent_id).status.value == "ISSUED"
 
 
 def test_legacy_orders_do_not_touch_checkouts(commerce_core: CommerceCore) -> None:
