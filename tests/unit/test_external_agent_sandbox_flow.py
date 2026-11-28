@@ -180,6 +180,13 @@ def _settle(client: TestClient, order_id: str, amount_paise: int) -> dict:
 
     # A verified but unrelated user cannot approve another buyer's order.
     app = client.app
+    # Merchant-owner authentication is not buyer consent for this order.
+    app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
+        auth_user_id="human-test-user"
+    )
+    owner_consent = client.post(f"/console/orders/{order_id}/consent")
+    assert owner_consent.status_code == 404, owner_consent.text
+
     app.dependency_overrides[get_authenticated_user] = lambda: AuthenticatedUser(
         auth_user_id="attacker-test-user"
     )
