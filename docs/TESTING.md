@@ -119,10 +119,12 @@ Tests the full API + commerce core stack:
 - Catalog search endpoint (with auth)
 - Quote create endpoint (with auth)
 
-All agent-facing endpoints require `X-Agent-Key: sellable_demo_key_001` header (or an
-HMAC-signed request with `Authorization: Bearer`, `X-Agent-Id`, `X-Timestamp`,
-`X-Nonce`, and `X-Signature` headers). Console endpoints require a merchant
-session (Supabase JWT in production, the demo `X-Agent-Key` in local demo mode).
+Agent-facing endpoints accept the local demo `X-Agent-Key` in development/test
+or an HMAC-signed request. Deployed signed requests require
+`X-Signature-Version: v2`; v2 binds the bearer-key hash, request body, and
+authorization-context headers. Legacy dotted signatures are rejected outside
+development/test. Console endpoints require a merchant session (Supabase JWT
+in production, the demo `X-Agent-Key` in local demo mode).
 
 ### test_workflow_gateway.py
 
@@ -244,3 +246,4 @@ python -m pytest tests/ -v && python -m evals.runner.scenario_runner
 ```
 
 All 29 tests + 7 eval scenarios must pass.
+
