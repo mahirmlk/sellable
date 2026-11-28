@@ -21,8 +21,12 @@ SELLABLE keeps two authentication surfaces separate (`WORKFLOW.md` §55):
 - **Agent-facing endpoints** (`/agent/*`, `/orders/*`) require an agent API key
   (`X-Agent-Key` header) or an HMAC-SHA256 signed request with
   `Authorization: Bearer <key>`, `X-Agent-Id`, `X-Timestamp`, `X-Nonce`, and
-  `X-Signature` headers. The signature binds `timestamp.nonce.agent_id.method.path.query.body-sha256`.
-  Nonces are claimed persistently, so replays fail across restarts and replicas.
+  `X-Signature-Version: v2` and `X-Signature` headers. V2 uses domain-separated
+  length-prefixed fields and binds the bearer-key hash, request, body, and
+  authorization context (`X-Delegation-Id`, `X-Session-Id`, `X-Protocol`,
+  `X-Customer-Id`, and `X-Trace-Id`). Legacy dotted v1 signatures are limited
+  to development/test. Nonces are claimed persistently, so replays fail across
+  restarts and replicas.
 - **Mutating agent routes require signed requests outside dev/test:**
   `/agent/orders.create`, `/agent/consents.request`, `/agent/buyer/run`,
   `/orders/{id}/payment`, `/orders/{id}/payment/retry` accept a static
@@ -581,3 +585,4 @@ echoed when the caller supplies a valid one, minted otherwise
 (`services/commerce/sellable/tracing.py:78-90`). The console captures it as
 `ApiError.traceId` and shows it as `Reference: trc_…` on Settings/Selling
 rules errors for support.
+

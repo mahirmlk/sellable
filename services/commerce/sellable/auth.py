@@ -5,10 +5,10 @@ Two methods are supported (§55.6):
 1. Static API key — ``X-Agent-Key: <key>`` (legacy/demo; the plaintext key is
    matched against the SHA-256 hashes configured via ``BUYER_AGENT_API_KEY_HASH``
    or the built-in demo key).
-2. Signed request — an HMAC-SHA256 signature over a canonical string built from
-   ``agent_id``, ``timestamp``, ``nonce``, ``method`` and ``path``, using the
-   shared ``BUYER_AGENT_HMAC_SECRET``. This verifies secret possession, request
-   freshness, and prevents replay via a server-side nonce cache.
+2. Signed request — production uses the versioned v2 HMAC-SHA256 envelope,
+   length-prefixing every field and binding the bearer credential, request,
+   body, and authorization-context headers. Legacy dotted signing is accepted
+   only in development/test.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from collections.abc import Sequence
 
 from fastapi import Header, HTTPException, Request
 
@@ -33,6 +34,37 @@ logger = logging.getLogger("sellable.auth")
 #: window must agree — otherwise a nonce can be valid in one layer while
 #: already pruned in another.
 NONCE_TTL_SECONDS = 300
+SIGNATURE_VERSION_V2 = "v2"
+_SIGNATURE_CONTEXT_HEADERS = (
+    "x-delegation-id",
+    "x-session-id",
+    "x-protocol",
+    "x-customer-id",
+    "x-trace-id",
+)
+
+
+def _encode_signature_fields_v2(fields: Sequence[str]) -> bytes:
+    """Encode fields without delimiter ambiguity for v2 agent signatures."""
+    encoded = bytearray(b"SELLABLE-AGENT-REQUEST\x00v2\x00")
+    for field in fields:
+        value = field.encode("utf-8")
+        if len(value) > 0xFFFFFFFF:
+            raise ValueError("HMAC field exceeds the v2 size limit")
+        encoded.extend(len(value).to_bytes(4, "big"))
+        encoded.extend(value)
+    return bytes(encoded)
+
+
+def _signature_context(request: Request) -> tuple[str, ...]:
+    """Read security-affecting headers once and reject duplicate instances."""
+    values: list[str] = []
+    for name in _SIGNATURE_CONTEXT_HEADERS:
+        found = request.headers.getlist(name)
+        if len(found) > 1:
+            raise HTTPException(status_code=401, detail="Duplicate signed context header")
+        values.append(found[0] if found else "")
+    return tuple(values)
 
 
 @dataclass(frozen=True)
@@ -181,6 +213,7 @@ def _resolve_signed_request(
     timestamp: str | None,
     nonce: str | None,
     signature: str | None,
+    signature_version: str | None,
 ) -> AgentApiKey:
     if settings.agent_hmac_secret is None:
         raise HTTPException(status_code=401, detail="HMAC verification is not configured")
@@ -218,19 +251,35 @@ def _resolve_signed_request(
     if abs(time.time() - ts) > NONCE_TTL_SECONDS:
         raise HTTPException(status_code=401, detail="Request timestamp expired")
 
-    canonical_parts = [
-        timestamp,
-        nonce,
-        agent_id,
-        request.method,
-        request.url.path,
-        request.url.query,
-        getattr(request.state, "sellable_body_sha256", "") or "",
-    ]
-    canonical = ".".join(canonical_parts)
+    body_hash = getattr(request.state, "sellable_body_sha256", "") or ""
+    if signature_version == SIGNATURE_VERSION_V2:
+        canonical = _encode_signature_fields_v2(
+            (
+                timestamp,
+                nonce,
+                agent_id,
+                request.method.upper(),
+                request.url.path,
+                request.url.query,
+                body_hash,
+                bearer_hash,
+                *_signature_context(request),
+            )
+        )
+    elif signature_version in (None, "", "v1") and settings.is_dev_environment:
+        # Compatibility for local clients only. Deployed environments never
+        # fall back from a missing/legacy marker to ambiguous dotted signing.
+        canonical = ".".join(
+            [timestamp, nonce, agent_id, request.method, request.url.path, request.url.query, body_hash]
+        ).encode("utf-8")
+    else:
+        raise HTTPException(
+            status_code=401,
+            detail="Production signed requests require X-Signature-Version: v2",
+        )
     expected = hmac.new(
         settings.agent_hmac_secret.encode("utf-8"),
-        canonical.encode("utf-8"),
+        canonical,
         hashlib.sha256,
     ).hexdigest()
 
@@ -304,8 +353,24 @@ def get_agent_api_key(
     x_timestamp: str | None = Header(default=None),
     x_nonce: str | None = Header(default=None),
     x_signature: str | None = Header(default=None),
+    x_signature_version: str | None = Header(default=None),
 ) -> AgentApiKey:
     """FastAPI dependency that authenticates the calling buyer agent."""
+    if request is not None:
+        for name in (
+            "x-agent-key",
+            "authorization",
+            "x-agent-id",
+            "x-timestamp",
+            "x-nonce",
+            "x-signature",
+            "x-signature-version",
+            *_SIGNATURE_CONTEXT_HEADERS,
+        ):
+            if len(request.headers.getlist(name)) > 1:
+                raise HTTPException(
+                    status_code=401, detail="Duplicate authentication header"
+                )
     if x_agent_key:
         return _resolve_static_key(x_agent_key)
 
@@ -314,7 +379,6 @@ def get_agent_api_key(
         bearer = authorization[7:].strip()
     if not bearer:
         raise HTTPException(status_code=401, detail="Missing agent credentials")
-
     return _resolve_signed_request(
         request=request,
         bearer_key=bearer,
@@ -322,6 +386,7 @@ def get_agent_api_key(
         timestamp=x_timestamp,
         nonce=x_nonce,
         signature=x_signature,
+        signature_version=x_signature_version,
     )
 
 
@@ -333,6 +398,7 @@ def get_agent_api_key_signed(
     x_timestamp: str | None = Header(default=None),
     x_nonce: str | None = Header(default=None),
     x_signature: str | None = Header(default=None),
+    x_signature_version: str | None = Header(default=None),
 ) -> AgentApiKey:
     """FastAPI dependency for money-adjacent agent writes.
 
@@ -349,6 +415,7 @@ def get_agent_api_key_signed(
         x_timestamp=x_timestamp,
         x_nonce=x_nonce,
         x_signature=x_signature,
+        x_signature_version=x_signature_version,
     )
     if resolved.auth_method != "hmac" and not settings.is_dev_environment:
         raise HTTPException(
@@ -366,15 +433,48 @@ def sign_request(
     timestamp: str,
     nonce: str,
     secret: str,
+    bearer_key: str | None = None,
     body: bytes = b"",
     query: str = "",
+    signature_version: str = SIGNATURE_VERSION_V2,
+    delegation_id: str = "",
+    session_id: str = "",
+    protocol: str = "",
+    customer_id: str = "",
+    trace_id: str = "",
 ) -> str:
-    """Compute the HMAC-SHA256 signature a client must send (used by tests/DX).
+    """Compute an agent request HMAC (used by tests and client examples).
 
-    The canonical string binds timestamp, nonce, agent id, method, path, query,
-    and a SHA-256 of the request body, so replaying a captured request with a
-    modified body fails verification.
+    V2 length-prefixes every field and binds the bearer key hash plus
+    authorization-context headers. V1 exists only for development/test
+    compatibility and is rejected by deployed environments.
     """
     body_hash = hashlib.sha256(body).hexdigest() if body else ""
-    canonical = ".".join([timestamp, nonce, agent_id, method, path, query, body_hash])
-    return hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    if signature_version == SIGNATURE_VERSION_V2:
+        if not bearer_key:
+            raise ValueError("v2 signatures require the bearer_key being authenticated")
+        canonical = _encode_signature_fields_v2(
+            (
+                timestamp,
+                nonce,
+                agent_id,
+                method.upper(),
+                path,
+                query,
+                body_hash,
+                _sha256(bearer_key),
+                delegation_id,
+                session_id,
+                protocol,
+                customer_id,
+                trace_id,
+            )
+        )
+    elif signature_version == "v1":
+        canonical = ".".join(
+            [timestamp, nonce, agent_id, method, path, query, body_hash]
+        ).encode("utf-8")
+    else:
+        raise ValueError("unsupported agent signature version")
+    return hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+
